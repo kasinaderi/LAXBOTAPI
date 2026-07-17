@@ -1,0 +1,6 @@
+mobile_app/
+.git/
+node_modules/
+.next/
+laxo1/
+backups/

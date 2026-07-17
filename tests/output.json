@@ -1,0 +1,157 @@
+[
+  "Connected!",
+  {
+    "rx": {
+      "type": "hello",
+      "ts": 1772557503276,
+      "status": {
+        "connected": true,
+        "authorized": true,
+        "lastError": "InputValidationFailed: Input validation failed: Properties not allowed: prediction.",
+        "defaults": {
+          "symbol": "R_50",
+          "currency": "USD",
+          "basis": "stake"
+        },
+        "trade": {
+          "maxConcurrent": 1,
+          "whenFull": "queue",
+          "active_count": 0,
+          "queue_length": 0
+        },
+        "tick": {
+          "ask": 109.0372,
+          "bid": 109.0172,
+          "epoch": 1772557502,
+          "id": "54a04ff6-786d-6411-f307-04086d6848dd",
+          "pip_size": 4,
+          "quote": 109.0272,
+          "symbol": "R_50"
+        }
+      }
+    }
+  },
+  {
+    "tx": {
+      "type": "trade",
+      "payload": {
+        "requestId": "loc_123",
+        "req_id": "loc_123",
+        "symbol": "R_100",
+        "contract_type": "DIGITDIFF",
+        "stake": 0.35,
+        "duration": 1,
+        "duration_unit": "t",
+        "barrier": "4",
+        "currency": "USD"
+      }
+    }
+  },
+  {
+    "rx": {
+      "type": "trade_ack",
+      "ok": true,
+      "accepted": true,
+      "queued": false,
+      "request_id": 939009639
+    }
+  },
+  {
+    "rx": {
+      "type": "trade_started",
+      "trade": {
+        "request_id": 939009639,
+        "contract_id": 308031018928
+      }
+    }
+  },
+  {
+    "rx": {
+      "type": "trade_started",
+      "trade": {
+        "request_id": 939009639,
+        "contract_id": 308031018928
+      }
+    }
+  },
+  {
+    "rx": {
+      "type": "contract_update",
+      "update": {
+        "contract_id": 308031018928,
+        "status": "open",
+        "is_sold": 0,
+        "profit": -0.04,
+        "payout": 0.37,
+        "buy_price": 0.35,
+        "current_spot": 762.33,
+        "current_spot_time": 1772557506,
+        "transaction_ids": {
+          "buy": 612846290848
+        },
+        "request_id": 939009639
+      }
+    }
+  },
+  {
+    "rx": {
+      "type": "contract_update",
+      "update": {
+        "contract_id": 308031018928,
+        "status": "open",
+        "is_sold": 0,
+        "profit": -0.04,
+        "payout": 0.37,
+        "buy_price": 0.35,
+        "current_spot": 762.33,
+        "current_spot_time": 1772557506,
+        "transaction_ids": {
+          "buy": 612846290848
+        },
+        "request_id": 939009639
+      }
+    }
+  },
+  {
+    "rx": {
+      "type": "contract_update",
+      "update": {
+        "contract_id": 308031018928,
+        "status": "open",
+        "is_sold": 0,
+        "profit": -0.35,
+        "payout": 0.37,
+        "buy_price": 0.35,
+        "exit_tick": 762.24,
+        "exit_tick_time": 1772557508,
+        "current_spot": 762.24,
+        "current_spot_time": 1772557508,
+        "transaction_ids": {
+          "buy": 612846290848
+        },
+        "request_id": 939009639
+      }
+    }
+  },
+  {
+    "rx": {
+      "type": "contract_update",
+      "update": {
+        "contract_id": 308031018928,
+        "status": "open",
+        "is_sold": 0,
+        "profit": -0.35,
+        "payout": 0.37,
+        "buy_price": 0.35,
+        "exit_tick": 762.24,
+        "exit_tick_time": 1772557508,
+        "current_spot": 761.82,
+        "current_spot_time": 1772557510,
+        "transaction_ids": {
+          "buy": 612846290848
+        },
+        "request_id": 939009639
+      }
+    }
+  }
+]
