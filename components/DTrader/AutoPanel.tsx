@@ -109,12 +109,17 @@ function BotControlBar() {
     isRunning, status, startBot, stopBot, account,
     triggerStatus, isBackendAuthorized, isTradeAuthorized,
     executionMode, virtualSettings, toggleManualMode, stats,
+    setSidebarView,
   } = useDerivStore();
 
   const isConnected = status === 'connected';
   const isVirtualMode = virtualSettings?.isVirtualMode;
-  const isTradeReady = isTradeAuthorized;
-  const canStart = isConnected && !!account && (isVirtualMode || isTradeReady);
+  const canStart = isConnected && !!account;
+
+  const handleStart = () => {
+    setSidebarView('logs');
+    startBot();
+  };
 
   return (
     <div className="px-3 py-2.5 border-b border-white/5 bg-black/20 flex-shrink-0">
@@ -141,7 +146,7 @@ function BotControlBar() {
       {/* START / STOP  +  Virtual/Real — side by side */}
       <div className="flex gap-1.5">
         <button
-          onClick={isRunning ? stopBot : startBot}
+          onClick={isRunning ? stopBot : handleStart}
           disabled={!isRunning && !canStart}
           className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg font-black text-xs uppercase tracking-widest transition-all active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed ${
             isRunning

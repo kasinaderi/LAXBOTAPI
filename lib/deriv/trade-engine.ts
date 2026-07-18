@@ -222,7 +222,13 @@ class TradeEngine {
 
     public onTick(tick: TickData, state: any) {
         // 0. Global Safety (Bot Stopped or Disconnected)
-        if (!state.isRunning || !derivWS.isStable) return;
+        if (!state.isRunning) return;
+
+        if (!derivWS.isStable) {
+            console.warn(`[TradeEngine Debug] Skipping tick ${tick.quote} because derivWS connection is not stable yet.`);
+            state.setTriggerStatus("Wait: Ticks connecting...");
+            return;
+        }
 
         const tickId = `${tick.epoch}_${tick.quote}`;
         if (this.lastProcessedTickId === tickId) return;
@@ -272,21 +278,20 @@ class TradeEngine {
         // So 'state.ticks' is lagging by 1 tick.
         // We must calculate the current digit from the raw 'tick' object here.
 
+        const activeMarket = state.tradingApp === 'dtrader' ? state.manualMarket : state.market;
         const precision = (tick.pip_size !== undefined && tick.pip_size > 0 && tick.pip_size < 1)
             ? Math.abs(Math.log10(1 / tick.pip_size))
-            : (tick.pip_size || ticksToDecimals(state.market));
+            : (tick.pip_size || ticksToDecimals(activeMarket));
         const factor = Math.pow(10, precision);
         const roundedPrice = Math.round(tick.quote * factor) / factor;
         const priceString = roundedPrice.toFixed(precision);
         const currentDigit = parseInt(priceString[priceString.length - 1]);
 
-        // console.log(`[TradeEngine] Tick: ${tick.quote} -> Digit: ${currentDigit} (Precision: ${precision})`);
 
         // Construct the TRUE history including the potential new digit
         // We handle the array generically to match store limit (though only last N matter for patterns)
         const latestTicks = [...ticks, currentDigit];
 
-        // console.log(`[TradeEngine] Tick: ${currentDigit} | History: ${latestTicks.slice(-5).join(', ')} | Armed: ${this.hasFirstTriggerHit}`);
         const domState = this.dominanceFilter.update(currentDigit);
 
         // --- WAIT FOR OPPOSITE (NO CONTRADICTION) RESET ---
@@ -599,6 +604,7 @@ class TradeEngine {
         let tradeContractType = isDTrader ? state.manualContractType : state.contractType;
         let tradePrediction = isDTrader ? (state.manualPrediction !== undefined ? state.manualPrediction : state.prediction) : state.prediction;
         const symbol = isDTrader ? state.manualMarket : state.market;
+
 
         // Multi-Entry Custom Contract Override
         if (state.triggers?.digitPattern?.multiEntry?.enabled && state.triggers.digitPattern.multiEntry.useCustomContracts) {

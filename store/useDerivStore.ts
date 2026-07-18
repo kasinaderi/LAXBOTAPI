@@ -488,6 +488,9 @@ export const useDerivStore = create<DerivState>()(
             setManualMarket: (manualMarket: string) => {
                 if (typeof window !== 'undefined') localStorage.setItem('lax_manual_market', manualMarket);
                 set({ manualMarket });
+                if (get().tradingApp === 'dtrader') {
+                    get().subscribeToMarket(manualMarket);
+                }
             },
             setManualContractType: (manualContractType: string) => {
                 if (typeof window !== 'undefined') localStorage.setItem('lax_manual_contract_type', manualContractType);
@@ -509,7 +512,12 @@ export const useDerivStore = create<DerivState>()(
                 manualPositions: typeof update === 'function' ? update(state.manualPositions) : update
             })),
             setSidebarView: (sidebarView: 'markets' | 'logs') => set({ sidebarView }),
-            setTradingApp: (tradingApp: 'laxsniper' | 'dtrader') => set({ tradingApp }),
+            setTradingApp: (tradingApp: 'laxsniper' | 'dtrader') => {
+                set({ tradingApp });
+                const state = get();
+                const activeMarket = tradingApp === 'dtrader' ? state.manualMarket : state.market;
+                state.subscribeToMarket(activeMarket);
+            },
             setTrigger: (type: 'entryDigit' | 'digitPattern', config: any) => set((state: DerivState) => ({
                 triggers: {
                     ...state.triggers,
@@ -544,11 +552,14 @@ export const useDerivStore = create<DerivState>()(
                 tradeLogs: [log, ...state.tradeLogs].slice(0, 100)
             })),
 
-            updateTradeLog: (requestId: string, updates: any) => set((state: DerivState) => ({
-                tradeLogs: state.tradeLogs.map(log => 
-                    log.requestId === requestId ? { ...log, ...updates } : log
-                )
-            })),
+            updateTradeLog: (requestId: string, updates: any) => set((state: DerivState) => {
+                const reqIdStr = String(requestId);
+                return {
+                    tradeLogs: state.tradeLogs.map(log =>
+                        String(log.requestId) === reqIdStr ? { ...log, ...updates } : log
+                    )
+                };
+            }),
 
             toggleManualMode: () => {
                 const currentState = get();
@@ -777,8 +788,9 @@ export const useDerivStore = create<DerivState>()(
             },
 
             addTick: (tick: TickData) => set((state: DerivState) => {
-                // Symbol Guard
-                if (tick.symbol !== state.market) {
+                // Symbol Guard - app aware
+                const activeMarket = state.tradingApp === 'dtrader' ? state.manualMarket : state.market;
+                if (tick.symbol !== activeMarket) {
                     return state;
                 }
 
@@ -870,10 +882,11 @@ export const useDerivStore = create<DerivState>()(
                                     return; // authorize will subscribe to market after connecting
                                 }
                             }
-                            // Subscribe to market ticks once connected
-                            if (state.market) {
-                                get().subscribeToMarket(state.market);
-                            }
+                            // Subscribe to market ticks once connected - app aware
+                             const activeMarket = state.tradingApp === 'dtrader' ? state.manualMarket : state.market;
+                             if (activeMarket) {
+                                 get().subscribeToMarket(activeMarket);
+                             }
                         }
                     });
 
@@ -945,9 +958,10 @@ export const useDerivStore = create<DerivState>()(
                                 localStorage.setItem('deriv_token', get().token);
                             }
                             const state = get();
-                            if (state.market) {
-                                derivWS.subscribeTicks(state.market);
-                            }
+                             const activeMarket = state.tradingApp === 'dtrader' ? state.manualMarket : state.market;
+                             if (activeMarket) {
+                                 derivWS.subscribeTicks(activeMarket);
+                             }
                             // Subscribe to real-time balance updates separately
                             derivWS.send({ balance: 1, subscribe: 1 });
                             return;

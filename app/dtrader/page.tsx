@@ -238,7 +238,7 @@ function MobileBottomPanel({
   }, [sidebarView]);
 
   return (
-    <div className="flex flex-col w-full h-[17.5rem] bg-[#0d1117]">
+    <div className="flex flex-col w-full h-[20rem] bg-[#0d1117]">
       {/* Tab bar */}
       <div className="flex border-b border-white/5 flex-shrink-0">
         <button

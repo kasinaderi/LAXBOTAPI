@@ -41,8 +41,7 @@ export function BotControl() {
     //  - Main connection is live AND account is set
     //  - For REAL execution (standard mode): tradeWS must also be authorized
     //  - For VIRTUAL mode: can start regardless of tradeWS auth (no real trades placed)
-    const isTradeReady = isTradeAuthorized;
-    const canStart = isConnected && !!account && (isVirtualMode || isTradeReady);
+    const canStart = isConnected && !!account;
 
     const renderRunButton = (isMobile = false) => {
         if (!isRunning) {

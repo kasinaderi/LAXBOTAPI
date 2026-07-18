@@ -137,6 +137,15 @@ export interface DurationLimits {
   dayOptions?: number[];          // allowed day values
 }
 
+export interface DurationLimits {
+  allowedUnits: string[];         // e.g. ['t', 's', 'm', 'h', 'd']
+  tickOptions?: number[];         // allowed tick counts
+  secondOptions?: number[];       // allowed second values
+  minuteOptions?: number[];       // allowed minute values
+  hourOptions?: number[];         // allowed hour values
+  dayOptions?: number[];          // allowed day values
+}
+
 export function getContractLimits(sym: string, contractId: string): DurationLimits {
   const isDigit = contractId.startsWith('DIGIT');
   const isTouch = contractId === 'ONETOUCH' || contractId === 'NOTOUCH';
@@ -144,73 +153,167 @@ export function getContractLimits(sym: string, contractId: string): DurationLimi
   const isHighLow = contractId === 'CALL_HIGHER' || contractId === 'PUT_LOWER' ||
                     contractId === 'HIGHER'       || contractId === 'LOWER';
 
-  // Digit contracts: ONLY on Volatility 1t = ticks only
+  // Digit contracts: ONLY on Volatility, 1-10 ticks
   if (isDigit) {
     return { allowedUnits: ['t'], tickOptions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] };
   }
 
   // Crash/Boom: Rise/Fall ONLY, 1 tick ONLY
   if (isCrashBoom(sym)) {
-    if (isRiseFall) return { allowedUnits: ['t'], tickOptions: [1] };
-    // No other contracts supported
     return { allowedUnits: ['t'], tickOptions: [1] };
   }
 
-  // Forex: time-based ONLY (no ticks), min 1 minute
+  // Forex: time-based ONLY (no ticks), min 15s/1m/2m
   if (isForex(sym)) {
     if (isTouch) return {
       allowedUnits: ['m', 'h', 'd'],
-      minuteOptions: [15, 30, 45, 60, 90, 120, 180, 240, 360, 480, 720, 1440],
+      minuteOptions: [2, 3, 5, 10, 15, 30, 45, 60],
       hourOptions:   [1, 2, 3, 4, 6, 8, 12, 24],
       dayOptions:    [1, 2, 3, 7, 14, 30, 60, 90, 180, 365],
     };
+    // Rise/Fall or High/Low on Forex
     return {
-      allowedUnits: ['m', 'h', 'd'],
-      minuteOptions: [1, 2, 3, 5, 10, 15, 30, 60, 120, 240, 480, 1440],
+      allowedUnits: ['s', 'm', 'h', 'd'],
+      secondOptions: [15, 20, 30, 45, 60],
+      minuteOptions: [1, 2, 3, 5, 10, 15, 30, 45, 60],
       hourOptions:   [1, 2, 3, 4, 6, 8, 12, 24],
       dayOptions:    [1, 2, 3, 7, 14, 30, 60, 90, 180, 365],
     };
   }
 
-  // Jump Indices: ticks + time, no digits
-  if (isJumpIndex(sym)) {
-    if (isTouch) return {
+  // Touch/NoTouch (all other volatility/jump indices)
+  if (isTouch) {
+    return {
       allowedUnits: ['t', 'm', 'h', 'd'],
       tickOptions:   [5, 6, 7, 8, 9, 10],
-      minuteOptions: [15, 30, 60, 120, 240, 480, 1440],
-      hourOptions:   [1, 2, 3, 4, 6, 8, 12, 24],
-      dayOptions:    [1, 2, 3, 7, 14, 30, 60, 90, 180, 365],
-    };
-    return {
-      allowedUnits: ['t', 'm', 'h', 'd'],
-      tickOptions:   [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-      minuteOptions: [1, 2, 3, 5, 10, 15, 30, 60, 120, 240, 480, 1440],
+      minuteOptions: [2, 3, 5, 10, 15, 30, 45, 60],
       hourOptions:   [1, 2, 3, 4, 6, 8, 12, 24],
       dayOptions:    [1, 2, 3, 7, 14, 30, 60, 90, 180, 365],
     };
   }
 
-  // Volatility Indices (default / most full-featured)
-  if (isTouch) return {
-    allowedUnits: ['t', 'm', 'h', 'd'],
-    tickOptions:   [5, 6, 7, 8, 9, 10],
-    minuteOptions: [15, 30, 60, 120, 240, 480, 1440],
-    hourOptions:   [1, 2, 3, 4, 6, 8, 12, 24],
-    dayOptions:    [1, 2, 3, 7, 14, 30, 60, 90, 180, 365],
-  };
+  // Higher/Lower
+  if (isHighLow) {
+    return {
+      allowedUnits: ['t', 's', 'm', 'h', 'd'],
+      tickOptions:   [5, 6, 7, 8, 9, 10],
+      secondOptions: [15, 20, 30, 45, 60],
+      minuteOptions: [1, 2, 3, 5, 10, 15, 30, 45, 60],
+      hourOptions:   [1, 2, 3, 4, 6, 8, 12, 24],
+      dayOptions:    [1, 2, 3, 7, 14, 30, 60, 90, 180, 365],
+    };
+  }
 
-  // Rise/Fall + Higher/Lower on Volatility
+  // Rise/Fall (default)
   return {
-    allowedUnits: ['t', 'm', 'h', 'd'],
+    allowedUnits: ['t', 's', 'm', 'h', 'd'],
     tickOptions:   [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-    minuteOptions: [1, 2, 3, 5, 10, 15, 30, 60, 120, 240, 480, 1440],
+    secondOptions: [15, 20, 30, 45, 60],
+    minuteOptions: [1, 2, 3, 5, 10, 15, 30, 45, 60],
     hourOptions:   [1, 2, 3, 4, 6, 8, 12, 24],
     dayOptions:    [1, 2, 3, 7, 14, 30, 60, 90, 180, 365],
   };
 }
 
-// Barrier presets (offsets from current price)
-const BARRIER_PRESETS = ['-2.0', '-1.0', '-0.5', '-0.3', '-0.1', '+0.1', '+0.3', '+0.5', '+1.0', '+2.0'];
+// ── Per-symbol barrier lookup table ───────────────────────────────────────────
+// Deriv pip_sizes: R_10/R_25/1HZ10V/1HZ25V ≈ 0.001 | R_50/R_75/R_100/1HZ50V+ ≈ 0.01
+// Minimum pip distances are enforced server-side; these defaults exceed all known minimums.
+type BarrierEntry = { default: string; presets: string[] };
+type SymbolBarriers = { touch: BarrierEntry; highlow: BarrierEntry };
+
+const SYMBOL_BARRIERS: Record<string, SymbolBarriers> = {
+  // ── 1s Volatilities ──────────────────────────────────────────────────────────
+  '1HZ10V':  {
+    touch:   { default: '+1.5',  presets: ['-4.0','-2.5','-1.5','-1.0','+1.0','+1.5','+2.5','+4.0'] },
+    highlow: { default: '+0.8',  presets: ['-2.0','-1.2','-0.8','-0.5','+0.5','+0.8','+1.2','+2.0'] },
+  },
+  '1HZ25V':  {
+    touch:   { default: '+2.5',  presets: ['-6.0','-4.0','-2.5','-2.0','+2.0','+2.5','+4.0','+6.0'] },
+    highlow: { default: '+1.5',  presets: ['-5.0','-3.0','-1.5','-1.0','+1.0','+1.5','+3.0','+5.0'] },
+  },
+  '1HZ50V':  {
+    touch:   { default: '+25.0', presets: ['-80','-50','-30','-25','+25','+30','+50','+80'] },
+    highlow: { default: '+15.0', presets: ['-50','-30','-20','-15','+15','+20','+30','+50'] },
+  },
+  '1HZ75V':  {
+    touch:   { default: '+40.0', presets: ['-120','-80','-50','-40','+40','+50','+80','+120'] },
+    highlow: { default: '+25.0', presets: ['-80','-50','-30','-25','+25','+30','+50','+80'] },
+  },
+  '1HZ100V': {
+    touch:   { default: '+55.0', presets: ['-160','-100','-70','-55','+55','+70','+100','+160'] },
+    highlow: { default: '+35.0', presets: ['-110','-70','-45','-35','+35','+45','+70','+110'] },
+  },
+  // ── Standard Volatilities ────────────────────────────────────────────────────
+  'R_10':    {
+    touch:   { default: '+1.0',  presets: ['-3.0','-2.0','-1.0','-0.5','+0.5','+1.0','+2.0','+3.0'] },
+    highlow: { default: '+0.5',  presets: ['-1.5','-0.8','-0.5','-0.2','+0.2','+0.5','+0.8','+1.5'] },
+  },
+  'R_25':    {
+    touch:   { default: '+1.5',  presets: ['-5.0','-3.0','-1.5','-0.8','+0.8','+1.5','+3.0','+5.0'] },
+    highlow: { default: '+0.75', presets: ['-3.0','-1.5','-0.75','-0.3','+0.3','+0.75','+1.5','+3.0'] },
+  },
+  'R_50':    {
+    touch:   { default: '+3.0',  presets: ['-10','-5','-3','-2','+2','+3','+5','+10'] },
+    highlow: { default: '+2.0',  presets: ['-8','-4','-2','-1','+1','+2','+4','+8'] },
+  },
+  'R_75':    {
+    touch:   { default: '+5.0',  presets: ['-20','-10','-5','-3','+3','+5','+10','+20'] },
+    highlow: { default: '+3.0',  presets: ['-12','-6','-3','-1.5','+1.5','+3','+6','+12'] },
+  },
+  'R_100':   {
+    touch:   { default: '+8.0',  presets: ['-30','-15','-8','-4','+4','+8','+15','+30'] },
+    highlow: { default: '+5.0',  presets: ['-20','-10','-5','-2.5','+2.5','+5','+10','+20'] },
+  },
+  // ── Jump Indices ─────────────────────────────────────────────────────────────
+  'JD10':    {
+    touch:   { default: '+1.0',  presets: ['-3','-2','-1','-0.5','+0.5','+1','+2','+3'] },
+    highlow: { default: '+0.5',  presets: ['-2','-1','-0.5','-0.2','+0.2','+0.5','+1','+2'] },
+  },
+  'JD25':    {
+    touch:   { default: '+2.0',  presets: ['-6','-4','-2','-1','+1','+2','+4','+6'] },
+    highlow: { default: '+1.0',  presets: ['-4','-2','-1','-0.5','+0.5','+1','+2','+4'] },
+  },
+  'JD50':    {
+    touch:   { default: '+6.0',  presets: ['-20','-12','-6','-3','+3','+6','+12','+20'] },
+    highlow: { default: '+3.0',  presets: ['-10','-5','-3','-1.5','+1.5','+3','+5','+10'] },
+  },
+  'JD75':    {
+    touch:   { default: '+10.0', presets: ['-30','-18','-10','-5','+5','+10','+18','+30'] },
+    highlow: { default: '+5.0',  presets: ['-15','-8','-5','-2.5','+2.5','+5','+8','+15'] },
+  },
+  'JD100':   {
+    touch:   { default: '+14.0', presets: ['-45','-25','-14','-7','+7','+14','+25','+45'] },
+    highlow: { default: '+8.0',  presets: ['-25','-13','-8','-4','+4','+8','+13','+25'] },
+  },
+};
+
+export function getBarriersForSymbolAndContract(sym: string, contractId: string): { default: string; presets: string[] } {
+  const isTouch   = contractId === 'ONETOUCH' || contractId === 'NOTOUCH';
+  const isHighLow = contractId === 'HIGHER'   || contractId === 'LOWER' ||
+                    contractId === 'CALL_HIGHER' || contractId === 'PUT_LOWER';
+
+  // Contracts that don't use a barrier
+  if (!isTouch && !isHighLow) {
+    return { default: '+0.3', presets: ['-2.0','-1.0','-0.5','-0.3','-0.1','+0.1','+0.3','+0.5','+1.0','+2.0'] };
+  }
+
+  const entry = SYMBOL_BARRIERS[sym];
+  if (entry) {
+    return isTouch ? entry.touch : entry.highlow;
+  }
+
+  // Fallback: detect 1s vol by name pattern and use sensible defaults
+  if (sym.includes('1HZ') || sym.startsWith('JD')) {
+    return isTouch
+      ? { default: '+5.0',  presets: ['-20','-10','-5','-3','+3','+5','+10','+20'] }
+      : { default: '+3.0',  presets: ['-10','-5','-3','-1.5','+1.5','+3','+5','+10'] };
+  }
+
+  // Fallback standard vol
+  return isTouch
+    ? { default: '+2.0',  presets: ['-8','-4','-2','-1','+1','+2','+4','+8'] }
+    : { default: '+1.0',  presets: ['-4','-2','-1','-0.5','+0.5','+1','+2','+4'] };
+}
 
 // ─── WebSocket helper ─────────────────────────────────────────────────────────
 
@@ -289,15 +392,15 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
   const duration = { value: durationValue, unit: durationUnit };
 
   // Load saved setup from localStorage on mount (hydration safe)
+  // NOTE: barrier is intentionally NOT persisted — it must always reset to the
+  // symbol/contract-aware default to prevent "too close" API errors.
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const savedStake = localStorage.getItem('lax_dtrader_stake');
-      const savedBarrier = localStorage.getItem('lax_dtrader_barrier');
       const savedCatId = localStorage.getItem('lax_dtrader_category_id');
       const savedContractId = localStorage.getItem('lax_dtrader_contract_id');
 
       if (savedStake) setStake(savedStake);
-      if (savedBarrier) setBarrier(savedBarrier);
 
       if (savedCatId) {
         const cat = CONTRACT_CATEGORIES.find(c => c.id === savedCatId);
@@ -309,6 +412,8 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
           }
         }
       }
+      // Evict any legacy barrier value from older sessions — barrier is now always computed fresh.
+      localStorage.removeItem('lax_dtrader_barrier');
     }
     setHasLoaded(true);
   }, []);
@@ -320,11 +425,7 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
     }
   }, [stake, hasLoaded]);
 
-  useEffect(() => {
-    if (hasLoaded) {
-      localStorage.setItem('lax_dtrader_barrier', barrier);
-    }
-  }, [barrier, hasLoaded]);
+  // Barrier is NOT saved to localStorage — it must always be fresh per market/contract.
 
   useEffect(() => {
     if (hasLoaded) {
@@ -337,20 +438,12 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
       localStorage.setItem('lax_dtrader_contract_id', selectedContract.id);
     }
   }, [selectedContract, hasLoaded]);
-  // Helper for setting dynamic default barriers based on index price scale
-  const getDefaultBarrierForSymbol = (sym: string): string => {
-    if (['R_25', 'R_75', 'R_100', '1HZ25V', '1HZ75V', '1HZ100V'].includes(sym)) {
-      return '+20.0';
-    }
-    return '+0.3';
-  };
-
-  // Dynamically update default barrier when market changes (after load is complete)
+  // Always reset barrier to the correct default whenever symbol OR contract changes.
+  // No hasLoaded guard — stale barriers from prev sessions must never carry over.
   useEffect(() => {
-    if (hasLoaded) {
-      setBarrier(getDefaultBarrierForSymbol(symbol));
-    }
-  }, [symbol, hasLoaded]);
+    const info = getBarriersForSymbolAndContract(symbol, selectedContract.shortCode);
+    setBarrier(info.default);
+  }, [symbol, selectedContract]);
 
   // Auto-reset trade category when market changes and current category is unsupported
   useEffect(() => {
@@ -467,13 +560,18 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
 
   // Duration options for current unit (market-aware)
   const getDurationOptions = (unit: string): number[] => {
-    if (unit === 't') return marketLimits.tickOptions   ?? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-    if (unit === 'm') return marketLimits.minuteOptions ?? [1, 2, 3, 5, 10, 15, 30, 60, 120, 240, 480, 1440];
-    if (unit === 'h') return marketLimits.hourOptions   ?? [1, 2, 3, 4, 6, 8, 12, 24];
-    if (unit === 'd') return marketLimits.dayOptions    ?? [1, 2, 3, 7, 14, 30, 60, 90, 180, 365];
+    if (unit === 't') return marketLimits.tickOptions    ?? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    if (unit === 's') return marketLimits.secondOptions  ?? [15, 20, 30, 45, 60];
+    if (unit === 'm') return marketLimits.minuteOptions  ?? [1, 2, 3, 5, 10, 15, 30, 60];
+    if (unit === 'h') return marketLimits.hourOptions    ?? [1, 2, 3, 4, 6, 8, 12, 24];
+    if (unit === 'd') return marketLimits.dayOptions     ?? [1, 2, 3, 7, 14, 30, 60, 90, 180, 365];
     return [1];
   };
   const durationOptions = getDurationOptions(durationUnit);
+
+  // Dynamic barrier presets based on active market + contract
+  const activeBarrierInfo = getBarriersForSymbolAndContract(symbol, selectedContract.shortCode);
+  const dynamicBarrierPresets = activeBarrierInfo.presets;
 
   // Snap duration to valid value when unit changes
   const snapDuration = (unit: string, current: number): number => {
@@ -483,24 +581,53 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
     return opts.find(o => o >= current) ?? opts[opts.length - 1];
   };
 
-  // Reset duration to a valid unit/value whenever contract or market changes
+  // Reset duration to minimum setup whenever contract changes
   useEffect(() => {
-    const units = marketLimits.allowedUnits;
+    const limits = getContractLimits(symbol, selectedContract.shortCode);
+    const defaultUnit = limits.allowedUnits[0] || 't';
+    setDurationUnit(defaultUnit);
+    
+    // Get options for this default unit
+    let opts = [1];
+    if (defaultUnit === 't') opts = limits.tickOptions ?? [1];
+    else if (defaultUnit === 's') opts = limits.secondOptions ?? [15];
+    else if (defaultUnit === 'm') opts = limits.minuteOptions ?? [1];
+    else if (defaultUnit === 'h') opts = limits.hourOptions ?? [1];
+    else if (defaultUnit === 'd') opts = limits.dayOptions ?? [1];
+
+    setDurationValue(opts[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedContract]);
+
+  // Keep duration snapped to valid values when symbol changes
+  useEffect(() => {
+    const limits = getContractLimits(symbol, selectedContract.shortCode);
+    const units = limits.allowedUnits;
 
     if (!units.includes(durationUnit)) {
       const newUnit = units[0];
-      const newOpts = getDurationOptions(newUnit);
       setDurationUnit(newUnit);
-      setDurationValue(newOpts[0]);
+      
+      let opts = [1];
+      if (newUnit === 't') opts = limits.tickOptions ?? [1];
+      else if (newUnit === 's') opts = limits.secondOptions ?? [15];
+      else if (newUnit === 'm') opts = limits.minuteOptions ?? [1];
+      
+      setDurationValue(opts[0]);
     } else {
-      // Snap duration value to a valid option
-      const opts = getDurationOptions(durationUnit);
+      let opts = [1];
+      if (durationUnit === 't') opts = limits.tickOptions ?? [1];
+      else if (durationUnit === 's') opts = limits.secondOptions ?? [15];
+      else if (durationUnit === 'm') opts = limits.minuteOptions ?? [1];
+      else if (durationUnit === 'h') opts = limits.hourOptions ?? [1];
+      else if (durationUnit === 'd') opts = limits.dayOptions ?? [1];
+
       if (!opts.includes(durationValue)) {
         setDurationValue(opts[0]);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedContract, symbol]);
+  }, [symbol]);
 
   // Sync positions globally for TradeChart
   useEffect(() => {
@@ -688,7 +815,7 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
   const isRise = selectedContract.shortCode === 'CALL';
   const isDigit = selectedCategory.id === 'digits';
 
-  const unitLabel: Record<string, string> = { t: 'Ticks', m: 'Minutes', h: 'Hours', d: 'Days' };
+  const unitLabel: Record<string, string> = { t: 'Ticks', s: 'Seconds', m: 'Minutes', h: 'Hours', d: 'Days' };
 
   return (
     <div className="flex flex-col h-full gap-3 overflow-y-auto pr-1 pb-16 trade-form-scroll">
@@ -781,7 +908,7 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
             className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-white/3 border border-white/8 hover:border-teal-500/40 hover:bg-teal-500/8 transition-all"
           >
             <span className="text-teal-300 font-mono font-black text-[11px]">
-              {durationValue}{durationUnit === 't' ? 'T' : durationUnit === 'm' ? 'M' : durationUnit === 'h' ? 'H' : 'D'}
+              {durationValue}{durationUnit === 't' ? 'T' : durationUnit === 's' ? 'S' : durationUnit === 'm' ? 'M' : durationUnit === 'h' ? 'H' : 'D'}
             </span>
             <span className="text-gray-600 text-[9px]">{durationOpen ? '▲' : '▼'}</span>
           </button>
@@ -806,7 +933,7 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
                       : 'bg-white/3 border-white/5 text-gray-500 hover:text-gray-300'
                   }`}
                 >
-                  {u === 't' ? 'Ticks' : u === 'm' ? 'Mins' : u === 'h' ? 'Hrs' : 'Days'}
+                  {u === 't' ? 'Ticks' : u === 's' ? 'Secs' : u === 'm' ? 'Mins' : u === 'h' ? 'Hrs' : 'Days'}
                 </button>
               ))}
             </div>
@@ -822,7 +949,7 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
                       : 'bg-white/3 border-white/5 text-gray-500 hover:text-gray-300 hover:border-white/15'
                   }`}
                 >
-                  {val}{durationUnit === 't' ? 'T' : durationUnit === 'm' ? 'M' : durationUnit === 'h' ? 'H' : 'D'}
+                  {val}{durationUnit === 't' ? 'T' : durationUnit === 's' ? 'S' : durationUnit === 'm' ? 'M' : durationUnit === 'h' ? 'H' : 'D'}
                 </button>
               ))}
             </div>
@@ -878,10 +1005,15 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
             </>
           ) : (
             <>
-              <p className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-2">Barrier (offset from spot)</p>
-              {/* Barrier presets */}
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Barrier (offset from spot)</p>
+                <span className="text-[8px] text-gray-600 font-mono bg-white/5 px-1.5 py-0.5 rounded border border-white/5">
+                  {symbol.includes('1HZ') || symbol.endsWith('V') ? '1s Vol' : 'Standard Vol'}
+                </span>
+              </div>
+              {/* Dynamic barrier presets — auto-calibrated for this market + contract */}
               <div className="flex gap-1 flex-wrap mb-2">
-                {BARRIER_PRESETS.map(b => (
+                {dynamicBarrierPresets.map(b => (
                   <button
                     key={b}
                     onClick={() => { setBarrier(b); setProposalData(null); }}
@@ -895,14 +1027,17 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
                   </button>
                 ))}
               </div>
+              {/* Manual barrier input */}
               <input
                 type="text"
                 value={barrier}
                 onChange={e => { setBarrier(e.target.value); setProposalData(null); }}
-                placeholder="e.g. +0.5"
+                placeholder={activeBarrierInfo.default}
                 className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white font-mono text-sm focus:outline-none focus:border-teal-500/50"
               />
-              <p className="text-[9px] text-gray-600 mt-1">Use +/- offset from current price, e.g. +0.5</p>
+              <p className="text-[9px] text-gray-600 mt-1">
+                Default for {symbol}: <span className="font-mono text-teal-500/70">{activeBarrierInfo.default}</span> · Type custom offset or pick above
+              </p>
             </>
           )}
         </div>
