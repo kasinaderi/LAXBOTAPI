@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import { Card, CardHeader, CardContent, Button, Badge, StatusIndicator } from '@/components/ui';
 import { DerivConnection } from '@/components/DerivConnection';
 import { TradeSetup } from '@/components/TradeSetup';
@@ -17,7 +18,11 @@ import { TrendingUp, ShieldCheck } from 'lucide-react';
 import { useDerivStore } from '@/store/useDerivStore';
 
 export default function LaxSniperXV() {
-    const { status, account, ticks } = useDerivStore();
+    const { status, account, ticks, setTradingApp } = useDerivStore();
+
+    React.useEffect(() => {
+        setTradingApp('laxsniper');
+    }, [setTradingApp]);
 
     return (
         <div className="space-y-6">

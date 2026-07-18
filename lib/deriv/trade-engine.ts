@@ -120,8 +120,9 @@ class TradeEngine {
 
         // 2. Refresh each one if missing or stale
         formattedStakesToFetch.forEach(formattedStake => {
-            let contract_type = state.contractType;
-            let prediction = state.prediction;
+            const isDTrader = state.tradingApp === 'dtrader';
+            let contract_type = isDTrader ? state.manualContractType : state.contractType;
+            let prediction = isDTrader ? state.manualPrediction : state.prediction;
 
             if (state.triggers?.digitPattern?.multiEntry?.enabled && state.triggers.digitPattern.multiEntry.useCustomContracts) {
                 const multi = state.triggers.digitPattern.multiEntry;
@@ -144,7 +145,7 @@ class TradeEngine {
                 prediction = recoverySettings.recoveryPrediction;
             }
 
-            const symbol = isRecoveryActive ? recoverySettings.recoveryMarket : state.market;
+            const symbol = isRecoveryActive ? recoverySettings.recoveryMarket : (isDTrader ? state.manualMarket : state.market);
             const barrier = ['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(contract_type) ? String(prediction) : undefined;
             
             const stakeKey = `${formattedStake}_${contract_type}`;
@@ -594,9 +595,10 @@ class TradeEngine {
         // Snapshot current values
         const { virtualSettings } = state;
         const tradeStake = stake;
-        let tradeContractType = state.manualContractType || state.contractType;
-        let tradePrediction = state.manualPrediction !== undefined ? state.manualPrediction : state.prediction;
-        const symbol = state.market;
+        const isDTrader = state.tradingApp === 'dtrader';
+        let tradeContractType = isDTrader ? state.manualContractType : state.contractType;
+        let tradePrediction = isDTrader ? (state.manualPrediction !== undefined ? state.manualPrediction : state.prediction) : state.prediction;
+        const symbol = isDTrader ? state.manualMarket : state.market;
 
         // Multi-Entry Custom Contract Override
         if (state.triggers?.digitPattern?.multiEntry?.enabled && state.triggers.digitPattern.multiEntry.useCustomContracts) {

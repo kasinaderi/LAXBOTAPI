@@ -102,19 +102,112 @@ const CONTRACT_CATEGORIES: ContractCategory[] = [
   },
 ];
 
-// ─── Duration options per unit ────────────────────────────────────────────────
+// ─── Market classification helpers ────────────────────────────────────────────
 
-const TICK_OPTIONS   = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-const MINUTE_OPTIONS = [1, 2, 3, 5, 10, 15, 30, 45, 60, 90, 120, 180, 240, 300, 360, 480, 600, 720, 1440];
-const HOUR_OPTIONS   = [1, 2, 3, 4, 5, 6, 8, 12, 24];
-const DAY_OPTIONS    = [1, 2, 3, 7, 14, 30, 60, 90, 180, 365];
+const isVolatilityIndex = (sym: string) =>
+  /^R_(10|25|50|75|100)$/.test(sym) || /^1HZ(10|25|50|75|100)V$/.test(sym);
 
-// Touch/NoTouch minimum is 15 minutes (900s). For convenience show only valid ones:
-const TOUCH_MINUTE_OPTIONS = MINUTE_OPTIONS.filter(m => m >= 15);
-const TOUCH_HOUR_OPTIONS   = HOUR_OPTIONS;
-const TOUCH_DAY_OPTIONS    = DAY_OPTIONS;
+const isJumpIndex = (sym: string) =>
+  /^JD(10|25|50|75|100)$/.test(sym);
 
-const TOUCH_TICK_OPTIONS = [5, 6, 7, 8, 9, 10];
+const isCrashBoom = (sym: string) =>
+  /^(CRASH|BOOM)(300|500|1000)$/.test(sym);
+
+const isForex = (sym: string) =>
+  sym.startsWith('frx');
+
+const isStepIndex = (sym: string) => sym === 'stpRNG';
+
+// ─── Market-aware contract availability ────────────────────────────────────────
+// Returns which contract categories are supported for this market
+export function getAvailableCategories(sym: string): string[] {
+  if (isForex(sym))          return ['rise_fall', 'touch', 'higher_lower'];
+  if (isCrashBoom(sym))      return ['rise_fall'];
+  if (isJumpIndex(sym))      return ['rise_fall', 'touch', 'higher_lower'];
+  if (isVolatilityIndex(sym)) return ['rise_fall', 'digits', 'touch', 'higher_lower'];
+  return ['rise_fall', 'digits', 'touch', 'higher_lower'];
+}
+
+// ─── Market-aware duration limits per contract ────────────────────────────────
+export interface DurationLimits {
+  allowedUnits: string[];         // e.g. ['t', 'm', 'h', 'd']
+  tickOptions?: number[];         // allowed tick counts
+  minuteOptions?: number[];       // allowed minute values
+  hourOptions?: number[];         // allowed hour values
+  dayOptions?: number[];          // allowed day values
+}
+
+export function getContractLimits(sym: string, contractId: string): DurationLimits {
+  const isDigit = contractId.startsWith('DIGIT');
+  const isTouch = contractId === 'ONETOUCH' || contractId === 'NOTOUCH';
+  const isRiseFall = contractId === 'CALL' || contractId === 'PUT';
+  const isHighLow = contractId === 'CALL_HIGHER' || contractId === 'PUT_LOWER' ||
+                    contractId === 'HIGHER'       || contractId === 'LOWER';
+
+  // Digit contracts: ONLY on Volatility 1t = ticks only
+  if (isDigit) {
+    return { allowedUnits: ['t'], tickOptions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] };
+  }
+
+  // Crash/Boom: Rise/Fall ONLY, 1 tick ONLY
+  if (isCrashBoom(sym)) {
+    if (isRiseFall) return { allowedUnits: ['t'], tickOptions: [1] };
+    // No other contracts supported
+    return { allowedUnits: ['t'], tickOptions: [1] };
+  }
+
+  // Forex: time-based ONLY (no ticks), min 1 minute
+  if (isForex(sym)) {
+    if (isTouch) return {
+      allowedUnits: ['m', 'h', 'd'],
+      minuteOptions: [15, 30, 45, 60, 90, 120, 180, 240, 360, 480, 720, 1440],
+      hourOptions:   [1, 2, 3, 4, 6, 8, 12, 24],
+      dayOptions:    [1, 2, 3, 7, 14, 30, 60, 90, 180, 365],
+    };
+    return {
+      allowedUnits: ['m', 'h', 'd'],
+      minuteOptions: [1, 2, 3, 5, 10, 15, 30, 60, 120, 240, 480, 1440],
+      hourOptions:   [1, 2, 3, 4, 6, 8, 12, 24],
+      dayOptions:    [1, 2, 3, 7, 14, 30, 60, 90, 180, 365],
+    };
+  }
+
+  // Jump Indices: ticks + time, no digits
+  if (isJumpIndex(sym)) {
+    if (isTouch) return {
+      allowedUnits: ['t', 'm', 'h', 'd'],
+      tickOptions:   [5, 6, 7, 8, 9, 10],
+      minuteOptions: [15, 30, 60, 120, 240, 480, 1440],
+      hourOptions:   [1, 2, 3, 4, 6, 8, 12, 24],
+      dayOptions:    [1, 2, 3, 7, 14, 30, 60, 90, 180, 365],
+    };
+    return {
+      allowedUnits: ['t', 'm', 'h', 'd'],
+      tickOptions:   [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      minuteOptions: [1, 2, 3, 5, 10, 15, 30, 60, 120, 240, 480, 1440],
+      hourOptions:   [1, 2, 3, 4, 6, 8, 12, 24],
+      dayOptions:    [1, 2, 3, 7, 14, 30, 60, 90, 180, 365],
+    };
+  }
+
+  // Volatility Indices (default / most full-featured)
+  if (isTouch) return {
+    allowedUnits: ['t', 'm', 'h', 'd'],
+    tickOptions:   [5, 6, 7, 8, 9, 10],
+    minuteOptions: [15, 30, 60, 120, 240, 480, 1440],
+    hourOptions:   [1, 2, 3, 4, 6, 8, 12, 24],
+    dayOptions:    [1, 2, 3, 7, 14, 30, 60, 90, 180, 365],
+  };
+
+  // Rise/Fall + Higher/Lower on Volatility
+  return {
+    allowedUnits: ['t', 'm', 'h', 'd'],
+    tickOptions:   [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    minuteOptions: [1, 2, 3, 5, 10, 15, 30, 60, 120, 240, 480, 1440],
+    hourOptions:   [1, 2, 3, 4, 6, 8, 12, 24],
+    dayOptions:    [1, 2, 3, 7, 14, 30, 60, 90, 180, 365],
+  };
+}
 
 // Barrier presets (offsets from current price)
 const BARRIER_PRESETS = ['-2.0', '-1.0', '-0.5', '-0.3', '-0.1', '+0.1', '+0.3', '+0.5', '+1.0', '+2.0'];
@@ -258,8 +351,24 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
       setBarrier(getDefaultBarrierForSymbol(symbol));
     }
   }, [symbol, hasLoaded]);
-  // Allowed units for selected contract
-  const allowedUnits = selectedContract.allowedUnits ?? ['t', 'm', 'h', 'd'];
+
+  // Auto-reset trade category when market changes and current category is unsupported
+  useEffect(() => {
+    const available = getAvailableCategories(symbol);
+    if (!available.includes(selectedCategory.id)) {
+      const riseFall = CONTRACT_CATEGORIES.find(c => c.id === 'rise_fall') ?? CONTRACT_CATEGORIES[0];
+      setSelectedCategory(riseFall);
+      const first = riseFall.contracts[0];
+      setSelectedContract(first);
+      setManualContractType(first.shortCode);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol]);
+
+  // ─── Market-aware limits ───────────────────────────────────────────
+  const marketLimits = getContractLimits(symbol, selectedContract.shortCode);
+  const allowedUnits = marketLimits.allowedUnits;
+  const availableCategories = getAvailableCategories(symbol);
   const isTouch = selectedCategory.id === 'touch';
 
   // Refs to prevent duplicate listeners & stale closures in WebSocket handlers
@@ -356,12 +465,12 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
     };
   }, [socket, setManualContractType, setManualPrediction, setSidebarView]);
 
-  // Duration options for current unit
+  // Duration options for current unit (market-aware)
   const getDurationOptions = (unit: string): number[] => {
-    if (unit === 't') return isTouch ? TOUCH_TICK_OPTIONS : TICK_OPTIONS;
-    if (unit === 'm') return isTouch ? TOUCH_MINUTE_OPTIONS : MINUTE_OPTIONS;
-    if (unit === 'h') return isTouch ? TOUCH_HOUR_OPTIONS : HOUR_OPTIONS;
-    if (unit === 'd') return isTouch ? TOUCH_DAY_OPTIONS : DAY_OPTIONS;
+    if (unit === 't') return marketLimits.tickOptions   ?? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    if (unit === 'm') return marketLimits.minuteOptions ?? [1, 2, 3, 5, 10, 15, 30, 60, 120, 240, 480, 1440];
+    if (unit === 'h') return marketLimits.hourOptions   ?? [1, 2, 3, 4, 6, 8, 12, 24];
+    if (unit === 'd') return marketLimits.dayOptions    ?? [1, 2, 3, 7, 14, 30, 60, 90, 180, 365];
     return [1];
   };
   const durationOptions = getDurationOptions(durationUnit);
@@ -374,25 +483,24 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
     return opts.find(o => o >= current) ?? opts[opts.length - 1];
   };
 
-  // Reset duration unit when switching to a category that doesn't support ticks
+  // Reset duration to a valid unit/value whenever contract or market changes
   useEffect(() => {
-    const units = selectedContract.allowedUnits ?? ['t', 'm', 'h', 'd'];
-    const isTouchContract = selectedCategory.id === 'touch';
+    const units = marketLimits.allowedUnits;
 
-    if (isTouchContract && durationUnit === 't') {
-      // Default to 5 Ticks for Touch/NoTouch
-      setDurationValue(5);
-    } else if (!units.includes(durationUnit)) {
+    if (!units.includes(durationUnit)) {
       const newUnit = units[0];
+      const newOpts = getDurationOptions(newUnit);
       setDurationUnit(newUnit);
-      setDurationValue(snapDuration(newUnit, durationValue));
+      setDurationValue(newOpts[0]);
     } else {
-      // Snap duration to valid option for current unit
-      const snapped = snapDuration(durationUnit, durationValue);
-      if (snapped !== durationValue) setDurationValue(snapped);
+      // Snap duration value to a valid option
+      const opts = getDurationOptions(durationUnit);
+      if (!opts.includes(durationValue)) {
+        setDurationValue(opts[0]);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedContract]);
+  }, [selectedContract, symbol]);
 
   // Sync positions globally for TradeChart
   useEffect(() => {
@@ -603,28 +711,38 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
 
         {categoryDropdownOpen && (
           <div className="border border-white/8 rounded-xl bg-black/40 p-2 grid grid-cols-2 gap-1.5 animate-[fadeIn_0.15s_ease] z-20 relative">
-            {CONTRACT_CATEGORIES.map(cat => (
-              <button
-                key={cat.id}
-                onClick={() => {
-                  setSelectedCategory(cat);
-                  const first = cat.contracts[0];
-                  setSelectedContract(first);
-                  setManualContractType(first.shortCode);
-                  setProposalData(null);
-                  setError(null);
-                  setCategoryDropdownOpen(false);
-                }}
-                className={`flex items-center gap-2 px-2 py-2 rounded-lg text-xs font-bold transition-all border ${
-                  selectedCategory.id === cat.id
-                    ? 'bg-teal-500/15 border-teal-500/40 text-teal-400'
-                    : 'bg-white/3 border-white/5 text-gray-400 hover:border-white/15 hover:text-gray-200'
-                }`}
-              >
-                <span>{cat.icon}</span>
-                <span>{cat.label}</span>
-              </button>
-            ))}
+            {CONTRACT_CATEGORIES.map(cat => {
+              const supported = availableCategories.includes(cat.id);
+              return (
+                <button
+                  key={cat.id}
+                  disabled={!supported}
+                  onClick={() => {
+                    if (!supported) return;
+                    setSelectedCategory(cat);
+                    const first = cat.contracts[0];
+                    setSelectedContract(first);
+                    setManualContractType(first.shortCode);
+                    setProposalData(null);
+                    setError(null);
+                    setCategoryDropdownOpen(false);
+                  }}
+                  className={`flex items-center justify-between gap-2 px-2 py-2 rounded-lg text-xs font-bold transition-all border ${
+                    !supported
+                      ? 'bg-white/2 border-white/4 text-gray-600 cursor-not-allowed opacity-50'
+                      : selectedCategory.id === cat.id
+                        ? 'bg-teal-500/15 border-teal-500/40 text-teal-400'
+                        : 'bg-white/3 border-white/5 text-gray-400 hover:border-white/15 hover:text-gray-200'
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span>{cat.icon}</span>
+                    <span>{cat.label}</span>
+                  </span>
+                  {!supported && <span className="text-[9px] text-red-400/70 font-bold">N/A</span>}
+                </button>
+              );
+            })}
           </div>
         )}
       </div>

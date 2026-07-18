@@ -113,7 +113,7 @@ function BotControlBar() {
 
   const isConnected = status === 'connected';
   const isVirtualMode = virtualSettings?.isVirtualMode;
-  const isTradeReady = executionMode === 'fast' ? isBackendAuthorized : isTradeAuthorized;
+  const isTradeReady = isTradeAuthorized;
   const canStart = isConnected && !!account && (isVirtualMode || isTradeReady);
 
   return (

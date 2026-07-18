@@ -31,6 +31,8 @@ interface DerivState {
     isRunning: boolean;
     isSwitchingMarket: boolean;
     rtt: number;
+    tradingApp: 'laxsniper' | 'dtrader';
+    setTradingApp: (app: 'laxsniper' | 'dtrader') => void;
     triggers: {
         entryDigit: EntryDigitTrigger;
         digitPattern: DigitPatternTrigger;
@@ -291,6 +293,7 @@ export const useDerivStore = create<DerivState>()(
             isRunning: false,
             isSwitchingMarket: false,
             rtt: 0,
+            tradingApp: 'laxsniper',
             isBackendAuthorized: false,
 
             // Direct Execution Init
@@ -506,6 +509,7 @@ export const useDerivStore = create<DerivState>()(
                 manualPositions: typeof update === 'function' ? update(state.manualPositions) : update
             })),
             setSidebarView: (sidebarView: 'markets' | 'logs') => set({ sidebarView }),
+            setTradingApp: (tradingApp: 'laxsniper' | 'dtrader') => set({ tradingApp }),
             setTrigger: (type: 'entryDigit' | 'digitPattern', config: any) => set((state: DerivState) => ({
                 triggers: {
                     ...state.triggers,
@@ -1324,8 +1328,9 @@ export const useDerivStore = create<DerivState>()(
             getActiveAdaptiveContract: () => {
                 const state = get();
                 const config = state.triggers?.adaptiveEvenOdd;
-                const baseContractType = state.manualContractType || state.contractType;
-                const basePrediction = state.manualPrediction !== undefined ? state.manualPrediction : state.prediction;
+                const isDTrader = state.tradingApp === 'dtrader';
+                const baseContractType = isDTrader ? state.manualContractType : state.contractType;
+                const basePrediction = isDTrader ? (state.manualPrediction !== undefined ? state.manualPrediction : state.prediction) : state.prediction;
 
                 if (!config?.enabled) {
                     return { type: baseContractType, prediction: basePrediction };

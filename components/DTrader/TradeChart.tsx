@@ -655,13 +655,24 @@ export default function TradeChart({ symbol, displayName, token }: Props) {
     setLastPrice(last);
     setPriceChange(((last - first) / first) * 100);
 
+    // Auto-position: fit all content then zoom to show last 40% of history centered
     const timeScale = chartRef.current?.timeScale();
     if (timeScale) {
-      timeScale.applyOptions({
-        rightOffset: 45,
-        barSpacing: 16,
+      // Step 1: fit all data so we know the full logical range
+      timeScale.fitContent();
+
+      // Step 2: after a microtask (chart needs one frame to compute range)
+      requestAnimationFrame(() => {
+        const full = timeScale.getVisibleLogicalRange();
+        if (!full) return;
+        const totalBars = full.to - full.from;
+        // Show last 40% of history; keep 15% right-side buffer
+        const windowSize = totalBars * 0.40;
+        timeScale.setVisibleLogicalRange({
+          from: full.to - windowSize,
+          to:   full.to + windowSize * 0.15,
+        });
       });
-      timeScale.scrollToPosition(0, false);
     }
     setIsLoading(false);
   }, [indicators]);

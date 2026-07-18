@@ -79,9 +79,13 @@ function RightSidebarTabs({
 }
 
 export default function TradingStation() {
-  const { token, account, manualMarket: storeSymbol, setManualMarket: setMarket, sidebarView, setSidebarView, isRunning, startBot, stopBot, virtualSettings, setVirtualSettings } = useDerivStore();
+  const { token, account, manualMarket: storeSymbol, setManualMarket: setMarket, sidebarView, setSidebarView, isRunning, startBot, stopBot, virtualSettings, setVirtualSettings, setTradingApp } = useDerivStore();
   const symbol = storeSymbol || 'R_100';
   const displayName = DISPLAY_NAMES[symbol] ?? symbol;
+
+  React.useEffect(() => {
+    setTradingApp('dtrader');
+  }, [setTradingApp]);
 
   const handleMarketSelect = (sym: string) => setMarket(sym);
 
@@ -100,7 +104,7 @@ export default function TradingStation() {
       style={{ fontFamily: "'Inter', sans-serif" }}
     >
       {/* ── Page header ── */}
-      <div className="flex items-center justify-between px-3 py-1.5 md:px-4 md:py-2 border-b border-white/5 flex-shrink-0 bg-[#0a0f18]">
+      <div className="hidden md:flex items-center justify-between px-3 py-1.5 md:px-4 md:py-2 border-b border-white/5 flex-shrink-0 bg-[#0a0f18]">
         <div className="flex items-center gap-2">
           <h1 className="text-sm md:text-base font-black text-white tracking-tight">
             STATION<span className="text-teal-400"> LX</span>
@@ -164,7 +168,7 @@ export default function TradingStation() {
       </div>
 
       {/* ── Mobile: bottom tabs for market + trade + auto ── */}
-      <div className="flex md:hidden border-t border-white/5 bg-[#0d1117]">
+      <div className="flex md:hidden border-t border-white/5 bg-[#0d1117] flex-shrink-0">
         <MobileBottomPanel
           symbol={symbol}
           displayName={displayName}
@@ -174,7 +178,7 @@ export default function TradingStation() {
       </div>
 
       {/* Floating Bot Control Pill — bottom center */}
-      {token && (
+      {token && isRunning && (
         <div className="fixed bottom-16 left-1/2 -translate-x-1/2 md:bottom-4 z-50 flex items-center gap-1 bg-[#0d121f]/90 backdrop-blur-md border border-white/10 rounded-full px-2 py-1.5 shadow-2xl">
           <button
             onClick={() => setVirtualSettings({ isVirtualMode: !virtualSettings.isVirtualMode })}
@@ -234,9 +238,9 @@ function MobileBottomPanel({
   }, [sidebarView]);
 
   return (
-    <div className="flex flex-col w-full">
+    <div className="flex flex-col w-full h-[17.5rem] bg-[#0d1117]">
       {/* Tab bar */}
-      <div className="flex border-b border-white/5">
+      <div className="flex border-b border-white/5 flex-shrink-0">
         <button
           onClick={() => setTab('trade')}
           className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest transition-all ${
@@ -268,9 +272,7 @@ function MobileBottomPanel({
       </div>
 
       {/* Panel */}
-      <div className={`overflow-y-auto pb-2 transition-all duration-300 ${
-        tab === 'auto' ? 'max-h-[16rem]' : isDigitMode ? 'max-h-[12rem]' : 'max-h-[14rem]'
-      }`}>
+      <div className="flex-1 min-h-0 overflow-y-auto pb-4">
         {tab === 'trade' ? (
           <TradeForm symbol={symbol} displayName={displayName} token={token} />
         ) : tab === 'auto' ? (
