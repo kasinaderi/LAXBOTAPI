@@ -1045,32 +1045,57 @@ function VirtualSection() {
                 className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-indigo-500" />
             </div>
           ) : (
-            <div className="flex items-center gap-2">
-              <div className="flex-1">
-                <div className="text-[8px] text-gray-500 mb-0.5">Stage 1</div>
-                <div className="flex gap-1">
-                  <select value={sm.sequence?.step1Type || 'Wins'} onChange={e => setVirtualSettings({ smartSettings: { ...sm, sequence: { ...sm.sequence, step1Type: e.target.value as any } } })}
-                    className="flex-1 bg-black/30 border border-white/10 rounded px-1 py-0.5 text-[9px] text-white outline-none">
-                    <option value="Wins">Wins</option><option value="Losses">Losses</option>
-                  </select>
-                  <input type="number" min="1" value={sm.sequence?.step1Qty || 2}
-                    onChange={e => setVirtualSettings({ smartSettings: { ...sm, sequence: { ...sm.sequence, step1Qty: parseInt(e.target.value) || 1 } } })}
-                    className="w-10 bg-black/30 border border-white/10 rounded px-1 py-0.5 text-[9px] text-indigo-400 text-center outline-none" />
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="flex-1">
+                  <div className="text-[8px] text-gray-500 mb-0.5">Stage 1</div>
+                  <div className="flex gap-1 mb-1">
+                    <select value={sm.sequence?.step1Type || 'Wins'} onChange={e => setVirtualSettings({ smartSettings: { ...sm, sequence: { ...sm.sequence, step1Type: e.target.value as any } } })}
+                      className="flex-1 bg-black/30 border border-white/10 rounded px-1 py-0.5 text-[9px] text-white outline-none">
+                      <option value="Wins">Wins</option><option value="Losses">Losses</option>
+                    </select>
+                    <input type="number" min="1" value={sm.sequence?.step1Qty || 2}
+                      onChange={e => setVirtualSettings({ smartSettings: { ...sm, sequence: { ...sm.sequence, step1Qty: parseInt(e.target.value) || 1 } } })}
+                      className="w-10 bg-black/30 border border-white/10 rounded px-1 py-0.5 text-[9px] text-indigo-400 text-center outline-none" />
+                  </div>
+                  <div className="flex bg-black/40 rounded border border-white/10 p-0.5">
+                    <button onClick={() => setVirtualSettings({ smartSettings: { ...sm, sequence: { ...sm.sequence, step1Mode: 'consecutive' } } })}
+                      className={`flex-1 py-0.5 rounded text-[8px] font-black uppercase transition-all ${(sm.sequence?.step1Mode || 'consecutive') === 'consecutive' ? 'bg-indigo-500 text-white' : 'text-gray-500'}`}>
+                      Consec
+                    </button>
+                    <button onClick={() => setVirtualSettings({ smartSettings: { ...sm, sequence: { ...sm.sequence, step1Mode: 'total' } } })}
+                      className={`flex-1 py-0.5 rounded text-[8px] font-black uppercase transition-all ${(sm.sequence?.step1Mode || 'consecutive') === 'total' ? 'bg-indigo-500 text-white' : 'text-gray-500'}`}>
+                      Total
+                    </button>
+                  </div>
+                </div>
+                <ArrowRight className="w-3 h-3 text-gray-600 flex-shrink-0" />
+                <div className="flex-1">
+                  <div className="text-[8px] text-gray-500 mb-0.5">Stage 2</div>
+                  <div className="flex gap-1 mb-1">
+                    <select value={sm.sequence?.step2Type || 'Losses'} onChange={e => setVirtualSettings({ smartSettings: { ...sm, sequence: { ...sm.sequence, step2Type: e.target.value as any } } })}
+                      className="flex-1 bg-black/30 border border-white/10 rounded px-1 py-0.5 text-[9px] text-white outline-none">
+                      <option value="Wins">Wins</option><option value="Losses">Losses</option>
+                    </select>
+                    <input type="number" min="1" value={sm.sequence?.step2Qty || 2}
+                      onChange={e => setVirtualSettings({ smartSettings: { ...sm, sequence: { ...sm.sequence, step2Qty: parseInt(e.target.value) || 1 } } })}
+                      className="w-10 bg-black/30 border border-white/10 rounded px-1 py-0.5 text-[9px] text-indigo-400 text-center outline-none" />
+                  </div>
+                  <div className="flex bg-black/40 rounded border border-white/10 p-0.5">
+                    <button onClick={() => setVirtualSettings({ smartSettings: { ...sm, sequence: { ...sm.sequence, step2Mode: 'consecutive' } } })}
+                      className={`flex-1 py-0.5 rounded text-[8px] font-black uppercase transition-all ${(sm.sequence?.step2Mode || 'consecutive') === 'consecutive' ? 'bg-indigo-500 text-white' : 'text-gray-500'}`}>
+                      Consec
+                    </button>
+                    <button onClick={() => setVirtualSettings({ smartSettings: { ...sm, sequence: { ...sm.sequence, step2Mode: 'total' } } })}
+                      className={`flex-1 py-0.5 rounded text-[8px] font-black uppercase transition-all ${(sm.sequence?.step2Mode || 'consecutive') === 'total' ? 'bg-indigo-500 text-white' : 'text-gray-500'}`}>
+                      Total
+                    </button>
+                  </div>
                 </div>
               </div>
-              <ArrowRight className="w-3 h-3 text-gray-600 flex-shrink-0" />
-              <div className="flex-1">
-                <div className="text-[8px] text-gray-500 mb-0.5">Stage 2</div>
-                <div className="flex gap-1">
-                  <select value={sm.sequence?.step2Type || 'Losses'} onChange={e => setVirtualSettings({ smartSettings: { ...sm, sequence: { ...sm.sequence, step2Type: e.target.value as any } } })}
-                    className="flex-1 bg-black/30 border border-white/10 rounded px-1 py-0.5 text-[9px] text-white outline-none">
-                    <option value="Wins">Wins</option><option value="Losses">Losses</option>
-                  </select>
-                  <input type="number" min="1" value={sm.sequence?.step2Qty || 2}
-                    onChange={e => setVirtualSettings({ smartSettings: { ...sm, sequence: { ...sm.sequence, step2Qty: parseInt(e.target.value) || 1 } } })}
-                    className="w-10 bg-black/30 border border-white/10 rounded px-1 py-0.5 text-[9px] text-indigo-400 text-center outline-none" />
-                </div>
-              </div>
+              <p className="text-[8px] text-gray-500 italic text-center leading-normal">
+                Real switch after {sm.sequence?.step1Qty} {(sm.sequence?.step1Mode || 'consecutive') === 'consecutive' ? 'Consecutive' : 'Total'} {sm.sequence?.step1Type} followed immediately by {sm.sequence?.step2Qty} {(sm.sequence?.step2Mode || 'consecutive') === 'consecutive' ? 'Consecutive' : 'Total'} {sm.sequence?.step2Type}.
+              </p>
             </div>
           )}
         </div>

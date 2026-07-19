@@ -217,8 +217,10 @@ interface DerivState {
             sequence: {
                 step1Type: 'Wins' | 'Losses';
                 step1Qty: number;
+                step1Mode: 'consecutive' | 'total';
                 step2Type: 'Wins' | 'Losses';
                 step2Qty: number;
+                step2Mode: 'consecutive' | 'total';
             };
             alternating: {
                 count: number;
@@ -420,10 +422,12 @@ export const useDerivStore = create<DerivState>()(
                     enabled: false,
                     type: 'sequence',
                     sequence: {
-                        step1Type: 'Wins',
+                        step1Type: 'Losses',
                         step1Qty: 2,
-                        step2Type: 'Losses',
+                        step1Mode: 'consecutive',
+                        step2Type: 'Wins',
                         step2Qty: 2,
+                        step2Mode: 'consecutive',
                     },
                     alternating: {
                         count: 2,

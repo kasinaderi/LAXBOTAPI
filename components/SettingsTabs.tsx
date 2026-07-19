@@ -476,6 +476,21 @@ export function SettingsTabs() {
                                                             className="w-full bg-transparent px-2 py-2 text-xs font-black text-indigo-400 outline-none text-center"
                                                         />
                                                     </div>
+                                                    {/* Stage 1 Mode Toggle */}
+                                                    <div className="flex bg-dark rounded-xl border border-dark-hover overflow-hidden p-0.5 mt-1">
+                                                        <button
+                                                            onClick={() => settings.setVirtualSettings({ smartSettings: { ...virtual.smartSettings!, sequence: { ...virtual.smartSettings!.sequence, step1Mode: 'consecutive' } } })}
+                                                            className={`flex-1 py-1 rounded-md text-[8px] font-black uppercase tracking-tight transition-all ${(virtual.smartSettings?.sequence?.step1Mode || 'consecutive') === 'consecutive' ? 'bg-indigo-500 text-white' : 'text-gray-500'}`}
+                                                        >
+                                                            Consec
+                                                        </button>
+                                                        <button
+                                                            onClick={() => settings.setVirtualSettings({ smartSettings: { ...virtual.smartSettings!, sequence: { ...virtual.smartSettings!.sequence, step1Mode: 'total' } } })}
+                                                            className={`flex-1 py-1 rounded-md text-[8px] font-black uppercase tracking-tight transition-all ${(virtual.smartSettings?.sequence?.step1Mode || 'consecutive') === 'total' ? 'bg-indigo-500 text-white' : 'text-gray-500'}`}
+                                                        >
+                                                            Total
+                                                        </button>
+                                                    </div>
                                                 </div>
                                                 <ArrowRight className="w-4 h-4 text-gray-600 mt-4" />
                                                 <div className="flex-1 space-y-1">
@@ -496,10 +511,25 @@ export function SettingsTabs() {
                                                             className="w-full bg-transparent px-2 py-2 text-xs font-black text-indigo-400 outline-none text-center"
                                                         />
                                                     </div>
+                                                    {/* Stage 2 Mode Toggle */}
+                                                    <div className="flex bg-dark rounded-xl border border-dark-hover overflow-hidden p-0.5 mt-1">
+                                                        <button
+                                                            onClick={() => settings.setVirtualSettings({ smartSettings: { ...virtual.smartSettings!, sequence: { ...virtual.smartSettings!.sequence, step2Mode: 'consecutive' } } })}
+                                                            className={`flex-1 py-1 rounded-md text-[8px] font-black uppercase tracking-tight transition-all ${(virtual.smartSettings?.sequence?.step2Mode || 'consecutive') === 'consecutive' ? 'bg-indigo-500 text-white' : 'text-gray-500'}`}
+                                                        >
+                                                            Consec
+                                                        </button>
+                                                        <button
+                                                            onClick={() => settings.setVirtualSettings({ smartSettings: { ...virtual.smartSettings!, sequence: { ...virtual.smartSettings!.sequence, step2Mode: 'total' } } })}
+                                                            className={`flex-1 py-1 rounded-md text-[8px] font-black uppercase tracking-tight transition-all ${(virtual.smartSettings?.sequence?.step2Mode || 'consecutive') === 'total' ? 'bg-indigo-500 text-white' : 'text-gray-500'}`}
+                                                        >
+                                                            Total
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             </div>
                                             <p className="text-[9px] text-gray-500 italic text-center px-2">
-                                                Bot will switch to Real only after {virtual.smartSettings?.sequence?.step1Qty} {virtual.smartSettings?.sequence?.step1Type} followed immediately by {virtual.smartSettings?.sequence?.step2Qty} {virtual.smartSettings?.sequence?.step2Type}.
+                                                Bot will switch to Real only after {virtual.smartSettings?.sequence?.step1Qty} {(virtual.smartSettings?.sequence?.step1Mode || 'consecutive') === 'consecutive' ? 'Consecutive' : 'Total'} {virtual.smartSettings?.sequence?.step1Type} followed immediately by {virtual.smartSettings?.sequence?.step2Qty} {(virtual.smartSettings?.sequence?.step2Mode || 'consecutive') === 'consecutive' ? 'Consecutive' : 'Total'} {virtual.smartSettings?.sequence?.step2Type}.
                                             </p>
                                         </div>
                                     ) : (

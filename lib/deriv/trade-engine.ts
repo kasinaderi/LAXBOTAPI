@@ -216,6 +216,14 @@ class TradeEngine {
             case 'DIGITODD': return digit % 2 === 0;
             case 'DIGITMATCH': return digit !== pred;
             case 'DIGITDIFF': return digit === pred;
+            case 'CALL':
+            case 'HIGHER':
+            case 'CALL_HIGHER':
+                return this.rfHistory.length > 0 && this.rfHistory[this.rfHistory.length - 1] === 'F';
+            case 'PUT':
+            case 'LOWER':
+            case 'CALL_LOWER':
+                return this.rfHistory.length > 0 && this.rfHistory[this.rfHistory.length - 1] === 'R';
             default: return false;
         }
     }
@@ -882,36 +890,76 @@ class TradeEngine {
 
         if (smart?.enabled) {
             if (smart.type === 'sequence' && smart.sequence) {
-                const step1Req = smart.sequence.step1Type === 'Wins' ? 'W' : 'L';
-                const step2Req = smart.sequence.step2Type === 'Wins' ? 'W' : 'L';
+                const seq = smart.sequence;
+                const step1Req = seq.step1Type === 'Wins' ? 'W' : 'L';
+                const step2Req = seq.step2Type === 'Wins' ? 'W' : 'L';
+                const step1Mode = seq.step1Mode || 'consecutive';
+                const step2Mode = seq.step2Mode || 'consecutive';
 
                 if (vSmartStage === 1) {
-                    if (currentRes === step1Req) {
-                        vSmartCount++;
-                        if (vSmartCount >= smart.sequence.step1Qty) {
-                            vSmartStage = 2;
-                            vSmartCount = 0;
+                    let step1Met = false;
+                    if (step1Mode === 'consecutive') {
+                        const streak = step1Req === 'W' ? vConsecWins : vConsecLosses;
+                        if (streak >= seq.step1Qty) {
+                            step1Met = true;
                         }
                     } else {
+                        // Total Mode
+                        if (currentRes === step1Req) {
+                            vSmartCount++;
+                        }
+                        if (vSmartCount >= seq.step1Qty) {
+                            step1Met = true;
+                        }
+                    }
+
+                    if (step1Met) {
+                        vSmartStage = 2;
                         vSmartCount = 0;
                     }
                 } else {
                     // Stage 2
-                    if (currentRes === step2Req) {
-                        vSmartCount++;
-                        if (vSmartCount >= smart.sequence.step2Qty) {
-                            shouldSwitch = true;
-                            vSmartStage = 1;
-                            vSmartCount = 0;
+                    let step2Met = false;
+                    let step2Failed = false;
+
+                    if (step2Mode === 'consecutive') {
+                        if (currentRes === step2Req) {
+                            vSmartCount++;
+                            if (vSmartCount >= seq.step2Qty) {
+                                step2Met = true;
+                            }
+                        } else {
+                            step2Failed = true;
                         }
                     } else {
-                        // Strict sequence reset
+                        // Total Mode in Stage 2
+                        if (currentRes === step2Req) {
+                            vSmartCount++;
+                        }
+                        if (vSmartCount >= seq.step2Qty) {
+                            step2Met = true;
+                        }
+                        if (currentRes === step1Req) {
+                            step2Failed = true;
+                        }
+                    }
+
+                    if (step2Met) {
+                        shouldSwitch = true;
                         vSmartStage = 1;
-                        vSmartCount = (currentRes === step1Req) ? 1 : 0;
-                        // If it immediately met Step 1 Qty on the reset (e.g. Qty=1)
-                        if (vSmartCount >= (smart.sequence.step1Qty || 1)) {
-                            vSmartStage = 2;
-                            vSmartCount = 0;
+                        vSmartCount = 0;
+                    } else if (step2Failed) {
+                        vSmartStage = 1;
+                        if (step1Mode === 'consecutive') {
+                            const streak = step1Req === 'W' ? vConsecWins : vConsecLosses;
+                            if (streak >= seq.step1Qty) {
+                                vSmartStage = 2;
+                                vSmartCount = 0;
+                            } else {
+                                vSmartCount = 0;
+                            }
+                        } else {
+                            vSmartCount = (currentRes === step1Req) ? 1 : 0;
                         }
                     }
                 }
