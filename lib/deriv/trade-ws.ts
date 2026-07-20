@@ -60,6 +60,8 @@ class TradeWS {
         buyRecvTime?: number;
         settleRecvTime?: number;
         contractId?: number;
+        contractType?: string; // e.g. 'CALL', 'PUT', 'DIGITEVEN' etc.
+        entrySpot?: string;   // Full entry price for Rise/Fall display
     }>();
 
     // Reconnection State
@@ -433,56 +435,74 @@ class TradeWS {
                 data: poc
             });
 
-            // Always update UI log for real-time "flicker" feedback
-            let runningExit = '-';
-            const spotToUse = poc.exit_spot ?? poc.current_spot;
-            if (spotToUse !== undefined && spotToUse !== null) {
-                const spotStr = spotToUse.toString().trim();
-                if (spotStr.length > 0) runningExit = spotStr.charAt(spotStr.length - 1);
-            } else {
-                const tickToUse = poc.exit_tick_display_value ?? poc.exit_tick_display;
-                if (tickToUse !== undefined && tickToUse !== null) {
-                    const tickStr = tickToUse.toString().trim();
-                    runningExit = tickStr.charAt(tickStr.length - 1);
-                }
+            // Capture entry spot from POC update if available
+            if (poc.entry_spot_display_value !== undefined && poc.entry_spot_display_value !== null) {
+                matchedTrade.entrySpot = poc.entry_spot_display_value.toString();
+            } else if (poc.entry_spot !== undefined && poc.entry_spot !== null) {
+                matchedTrade.entrySpot = poc.entry_spot.toString();
             }
-            store.updateTradeLog(matchedTrade.requestId, {
-                profit: parseFloat(poc.profit),
-                exit: runningExit,
-                result: (poc.status === 'won' || poc.status === 'lost' || poc.is_sold === 1)
-                    ? (poc.status === 'won' ? 'WON' : 'LOST')
-                    : 'RUNNING...'
-            });
+
+            // Detect Rise/Fall contract type
+            const isRiseFall = matchedTrade.contractType === 'CALL' || matchedTrade.contractType === 'PUT';
+
+            // For Rise/Fall: use the full exit spot price. For Digits: use the last digit.
+            // For Rise/Fall: use exit_tick_display_value or exit_spot ONLY when the contract is settled.
+            // NEVER use current_spot as an exit proxy — during the running phase current_spot == entry spot.
+            const extractExitDisplay = (poc: any, full: boolean): string => {
+                // Prefer explicit exit tick / exit spot from settled contract
+                const exitTick = poc.exit_tick_display_value ?? poc.exit_tick_display;
+                if (exitTick !== undefined && exitTick !== null) {
+                    const t = exitTick.toString().trim();
+                    return full ? t : (t.charAt(t.length - 1) || '-');
+                }
+                const exitSpot = poc.exit_spot;
+                if (exitSpot !== undefined && exitSpot !== null) {
+                    const s = exitSpot.toString().trim();
+                    return full ? s : (s.charAt(s.length - 1) || '-');
+                }
+                // Do NOT fall back to current_spot for Rise/Fall — it equals entry during open state.
+                // For digit contracts the caller passes full=false so last digit still works.
+                if (!full) {
+                    const cur = poc.current_spot;
+                    if (cur !== undefined && cur !== null) {
+                        const c = cur.toString().trim();
+                        return c.charAt(c.length - 1) || '-';
+                    }
+                }
+                return '-';
+            };
+
+            const runningExit = extractExitDisplay(poc, isRiseFall);
 
             const rawProfit = parseFloat(poc.profit);
             const stake = parseFloat(poc.buy_price);
             const payout = parseFloat(poc.payout);
 
-            // RESOLUTION LOGIC:
-            // 1. Profit matches full loss (negative stake) -> Final Loss
-            // 2. Profit is positive -> Final Win
-            // 3. Status is final (won/lost) or is_sold -> Final Result
-            const isFinalWin = rawProfit > 0 || poc.status === 'won';
-            const isFinalLoss = (stake > 0 && Math.abs(rawProfit + stake) < 0.01) || poc.status === 'lost';
+            const isFinalWin = poc.status === 'won';
+            const isFinalLoss = poc.status === 'lost';
             const isResolved = isFinalWin || isFinalLoss || poc.is_sold === 1;
+
+            // Build result label — for Rise/Fall show directional label
+            const buildResultLabel = (isWin: boolean, isRF: boolean, contractType?: string): string => {
+                if (!isRF) return isWin ? 'WON' : 'LOST';
+                if (contractType === 'CALL') return isWin ? 'RISE WIN' : 'RISE LOSS';
+                if (contractType === 'PUT')  return isWin ? 'FALL WIN' : 'FALL LOSS';
+                return isWin ? 'WON' : 'LOST';
+            };
 
             if (isResolved) {
                 matchedTrade.settleRecvTime = Date.now();
-                const settlementLatency = matchedTrade.settleRecvTime - matchedTrade.buyRecvTime!;
+                store.updateTradeMetrics({ settlementLatency: matchedTrade.settleRecvTime - matchedTrade.buyRecvTime! });
 
-                store.updateTradeMetrics({ settlementLatency });
-
-                const isWin = isFinalWin;
-                
-                // NORMALIZE PROFIT for the FINAL result log and logic
+                const isWin = isFinalWin || (poc.status !== 'lost' && rawProfit > 0);
                 let finalProfit = rawProfit;
-                if (isWin) {
-                    finalProfit = (payout && stake) ? (payout - stake) : rawProfit;
-                } else {
-                    finalProfit = stake ? -stake : rawProfit;
-                }
+                if (isWin) finalProfit = (payout && stake) ? (payout - stake) : rawProfit;
+                else finalProfit = stake ? -stake : rawProfit;
 
-                // EMIT FINAL RESULT INSTANTLY (to TradeEngine for Martingale)
+                const finalExit = extractExitDisplay(poc, isRiseFall);
+                const resultLabel = buildResultLabel(isWin, isRiseFall, matchedTrade.contractType);
+
+                // EMIT FINAL RESULT INSTANTLY (martingale / adaptive / compounding fire here)
                 this.emitEvent('TRADE_RESULT', {
                     requestId: matchedTrade.requestId,
                     contractId: poc.contract_id,
@@ -491,20 +511,43 @@ class TradeWS {
                     poc
                 });
 
-                const existingLog = store.tradeLogs?.find((l: any) => l.requestId === matchedTrade.requestId);
-                let finalExit = poc.exit_spot?.toString().trim().slice(-1) ||
-                    poc.exit_tick_display_value?.toString().trim().slice(-1) ||
-                    poc.exit_tick_display?.toString().trim().slice(-1) || '-';
-                if (finalExit === '-' && existingLog && existingLog.exit && existingLog.exit !== '-') finalExit = existingLog.exit;
+                // ── Final settled update — 100% from Deriv's official POC data ──────────
+                // entry_spot_display_value and exit_tick_display_value are Deriv's
+                // authoritative figures. Use them directly, no local tick involvement.
+                const derivEntry = poc.entry_spot_display_value
+                    || (poc.entry_spot != null ? String(poc.entry_spot) : null)
+                    || matchedTrade.entrySpot
+                    || '-';
+                const derivExit = poc.exit_tick_display_value
+                    || (poc.exit_tick != null ? String(poc.exit_tick) : null)
+                    || (poc.exit_spot != null ? String(poc.exit_spot) : null)
+                    || finalExit
+                    || '-';
 
-                // FINAL UI update
                 store.updateTradeLog(matchedTrade.requestId, {
-                    result: isWin ? 'WON' : 'LOST',
+                    result: resultLabel,
                     profit: finalProfit,
-                    exit: finalExit
+                    exit: isRiseFall ? derivExit : finalExit,
+                    entrySpot: derivEntry
                 });
 
                 this.tradePool.delete(matchedTrade.requestId);
+            } else {
+                // Mid-contract update for digit trades only
+                if (!isRiseFall) {
+                    store.updateTradeLog(matchedTrade.requestId, {
+                        profit: isNaN(rawProfit) ? null : rawProfit,
+                        exit: extractExitDisplay(poc, false),
+                        result: 'RUNNING...'
+                    });
+                } else {
+                    if (!isNaN(rawProfit)) {
+                        store.updateTradeLog(matchedTrade.requestId, {
+                            profit: rawProfit,
+                            result: 'RUNNING...'
+                        });
+                    }
+                }
             }
             return;
         }
@@ -520,22 +563,25 @@ class TradeWS {
         if (msg.msg_type === 'buy') {
             pendingTrade.buyRecvTime = Date.now();
             pendingTrade.contractId = msg.buy.contract_id;
-            
-            // Latency Calculation: from whenever the specific action was triggered
-            const latency = pendingTrade.buySentTime 
+            // Capture entry spot from buy response for Rise/Fall display
+            if (msg.buy.start_spot !== undefined) {
+                pendingTrade.entrySpot = msg.buy.start_spot.toString();
+            }
+
+            const latency = pendingTrade.buySentTime
                 ? (pendingTrade.buyRecvTime - pendingTrade.buySentTime)
-                : (pendingTrade.buyRecvTime - pendingTrade.proposalSentTime!); 
+                : (pendingTrade.buyRecvTime - pendingTrade.proposalSentTime!);
 
             store.updateTradeMetrics({ buyLatency: latency });
-            store.updateTradeLog(pendingTrade.requestId, { result: 'BUYING...' });
+            store.updateTradeLog(pendingTrade.requestId, {
+                result: 'BUYING...',
+                entrySpot: pendingTrade.entrySpot || '-'
+            });
 
-            // TRACE START EVENT
             this.emitEvent('TRADE_STARTED', {
                 requestId: pendingTrade.requestId,
                 contractId: pendingTrade.contractId
             });
-
-            // NOTE: Manual POC subscription is no longer needed because we used 'subscribe: 1' in the buy command.
             return;
         }
 
@@ -543,55 +589,68 @@ class TradeWS {
         if (msg.msg_type === 'proposal_open_contract' && requestId) {
             const poc = msg.proposal_open_contract;
 
-            // STREAM EVENT
             this.emitEvent('CONTRACT_UPDATE', {
                 requestId: pendingTrade.requestId,
                 data: poc
             });
 
-            // Always update UI log for real-time "flicker" feedback
-            let runningExitT = '-';
-            const spotToUseT = poc.exit_spot ?? poc.current_spot;
-            if (spotToUseT !== undefined && spotToUseT !== null) {
-                const spotStrT = spotToUseT.toString().trim();
-                if (spotStrT.length > 0) runningExitT = spotStrT.charAt(spotStrT.length - 1);
-            } else {
-                const tickToUseT = poc.exit_tick_display_value ?? poc.exit_tick_display;
-                if (tickToUseT !== undefined && tickToUseT !== null) {
-                    const tickStrT = tickToUseT.toString().trim();
-                    runningExitT = tickStrT.charAt(tickStrT.length - 1);
-                }
+            // Capture entry spot from POC update if available
+            if (poc.entry_spot_display_value !== undefined && poc.entry_spot_display_value !== null) {
+                pendingTrade.entrySpot = poc.entry_spot_display_value.toString();
+            } else if (poc.entry_spot !== undefined && poc.entry_spot !== null) {
+                pendingTrade.entrySpot = poc.entry_spot.toString();
             }
-            store.updateTradeLog(pendingTrade.requestId, {
-                profit: parseFloat(poc.profit),
-                exit: runningExitT,
-                result: (poc.status === 'won' || poc.status === 'lost' || poc.is_sold === 1)
-                    ? (poc.status === 'won' ? 'WON' : 'LOST')
-                    : 'RUNNING...'
-            });
+
+            const isRiseFall = pendingTrade.contractType === 'CALL' || pendingTrade.contractType === 'PUT';
+
+            // For Rise/Fall: NEVER use current_spot as exit fallback during open state.
+            const extractExitDisplay = (poc: any, full: boolean): string => {
+                const exitTick = poc.exit_tick_display_value ?? poc.exit_tick_display;
+                if (exitTick !== undefined && exitTick !== null) {
+                    const t = exitTick.toString().trim();
+                    return full ? t : (t.charAt(t.length - 1) || '-');
+                }
+                const exitSpot = poc.exit_spot;
+                if (exitSpot !== undefined && exitSpot !== null) {
+                    const s = exitSpot.toString().trim();
+                    return full ? s : (s.charAt(s.length - 1) || '-');
+                }
+                if (!full) {
+                    const cur = poc.current_spot;
+                    if (cur !== undefined && cur !== null) {
+                        const c = cur.toString().trim();
+                        return c.charAt(c.length - 1) || '-';
+                    }
+                }
+                return '-';
+            };
 
             const rawProfit = parseFloat(poc.profit);
             const stake = parseFloat(poc.buy_price);
             const payout = parseFloat(poc.payout);
 
-            const isFinalWin = rawProfit > 0 || poc.status === 'won';
-            const isFinalLoss = (stake > 0 && Math.abs(rawProfit + stake) < 0.01) || poc.status === 'lost';
+            const isFinalWin = poc.status === 'won';
+            const isFinalLoss = poc.status === 'lost';
             const isResolved = isFinalWin || isFinalLoss || poc.is_sold === 1;
+
+            const buildResultLabel = (isWin: boolean, isRF: boolean, contractType?: string): string => {
+                if (!isRF) return isWin ? 'WON' : 'LOST';
+                if (contractType === 'CALL') return isWin ? 'RISE WIN' : 'RISE LOSS';
+                if (contractType === 'PUT')  return isWin ? 'FALL WIN' : 'FALL LOSS';
+                return isWin ? 'WON' : 'LOST';
+            };
 
             if (isResolved) {
                 pendingTrade.settleRecvTime = Date.now();
-                const settlementLatency = pendingTrade.settleRecvTime - pendingTrade.buyRecvTime!;
+                store.updateTradeMetrics({ settlementLatency: pendingTrade.settleRecvTime - pendingTrade.buyRecvTime! });
 
-                store.updateTradeMetrics({ settlementLatency });
-
-                const isWin = isFinalWin;
-                
+                const isWin = isFinalWin || (poc.status !== 'lost' && rawProfit > 0);
                 let finalProfit = rawProfit;
-                if (isWin) {
-                    finalProfit = (payout && stake) ? (payout - stake) : rawProfit;
-                } else {
-                    finalProfit = stake ? -stake : rawProfit;
-                }
+                if (isWin) finalProfit = (payout && stake) ? (payout - stake) : rawProfit;
+                else finalProfit = stake ? -stake : rawProfit;
+
+                const finalExit = extractExitDisplay(poc, isRiseFall);
+                const resultLabel = buildResultLabel(isWin, isRiseFall, pendingTrade.contractType);
 
                 // EMIT FINAL RESULT INSTANTLY
                 this.emitEvent('TRADE_RESULT', {
@@ -602,40 +661,61 @@ class TradeWS {
                     poc
                 });
 
-                const existingLog = store.tradeLogs?.find((l: any) => l.requestId === pendingTrade.requestId);
-                let finalExit = poc.exit_spot?.toString().trim().slice(-1) ||
-                    poc.exit_tick_display_value?.toString().trim().slice(-1) ||
-                    poc.exit_tick_display?.toString().trim().slice(-1) || '-';
-                if (finalExit === '-' && existingLog && existingLog.exit && existingLog.exit !== '-') finalExit = existingLog.exit;
+                // ── Final settled update — 100% from Deriv's official POC data ──────────
+                const derivEntry = poc.entry_spot_display_value
+                    || (poc.entry_spot != null ? String(poc.entry_spot) : null)
+                    || pendingTrade.entrySpot
+                    || '-';
+                const derivExit = poc.exit_tick_display_value
+                    || (poc.exit_tick != null ? String(poc.exit_tick) : null)
+                    || (poc.exit_spot != null ? String(poc.exit_spot) : null)
+                    || finalExit
+                    || '-';
 
-                // FINAL UI update
                 store.updateTradeLog(pendingTrade.requestId, {
-                    result: isWin ? 'WON' : 'LOST',
+                    result: resultLabel,
                     profit: finalProfit,
-                    exit: finalExit
+                    exit: isRiseFall ? derivExit : finalExit,
+                    entrySpot: derivEntry
                 });
 
                 this.tradePool.delete(pendingTrade.requestId);
+            } else {
+                // Mid-contract update for digit trades only
+                if (!isRiseFall) {
+                    store.updateTradeLog(pendingTrade.requestId, {
+                        profit: isNaN(rawProfit) ? null : rawProfit,
+                        exit: extractExitDisplay(poc, false),
+                        result: 'RUNNING...'
+                    });
+                } else {
+                    if (!isNaN(rawProfit)) {
+                        store.updateTradeLog(pendingTrade.requestId, {
+                            profit: rawProfit,
+                            result: 'RUNNING...'
+                        });
+                    }
+                }
             }
             return;
         }
     }
 
-    public executeDirectTrade(payload: any) {
+    public executeDirectTrade(payload: any): string {
         if (this.tradePool.size >= 5) {
-            return;
+            return '';
         }
 
-        const requestId = Date.now(); // MUST BE INTEGER
-        const pendingTrade = {
-            requestId: String(requestId),
+        const requestId = String(Date.now()); // Always string — consistent with tradePool key
+        const isRiseFall = payload.contract_type === 'CALL' || payload.contract_type === 'PUT';
+        const pendingTrade: any = {
+            requestId,
             startTime: Date.now(),
-            proposalSentTime: Date.now()
+            proposalSentTime: Date.now(),
+            contractType: payload.contract_type,
         };
         this.tradePool.set(pendingTrade.requestId, pendingTrade);
 
-        // STEP 1: DIRECT BUY WITH PARAMETERS
-        // Options API buy uses nested `parameters` object with `underlying` (not `symbol`)
         const buyReq: any = {
             buy: 1,
             price: Number(payload.stake),
@@ -649,32 +729,32 @@ class TradeWS {
                 underlying_symbol: payload.symbol || payload.underlying || payload.underlying_symbol,
             },
             subscribe: 1,
-            passthrough: { requestId: pendingTrade.requestId },
-            req_id: requestId
+            passthrough: { requestId },
+            req_id: Number(requestId)
         };
 
-        // barrier goes inside parameters if provided
         if (payload.barrier !== undefined && payload.barrier !== null) {
             buyReq.parameters.barrier = String(payload.barrier);
         }
 
         this.socket?.send(JSON.stringify(buyReq));
 
-        // UI Feedback
         const store = this.getState ? this.getState() : null;
         if (store) {
             store.addTradeLog({
-                requestId,
+                requestId,               // string — matches tradePool key
                 time: Date.now(),
                 contract: payload.contract_type,
                 result: '',
                 stake: payload.stake.toString(),
-                profit: null, // null = Pending (No flickering 0.00)
-                digit: (payload.barrier !== undefined && payload.barrier !== null) ? payload.barrier : '-',
+                profit: null,
+                digit: (!isRiseFall && payload.barrier !== undefined && payload.barrier !== null) ? payload.barrier : '-',
                 exit: '-',
+                entrySpot: '-',
                 currency: payload.currency || 'USD'
             });
         }
+        return requestId;
     }
 
     public forgetProposalByStake(stake: number, contractType?: string) {
@@ -774,7 +854,8 @@ class TradeWS {
                     requestId: payload.requestId,
                     startTime: Date.now(),
                     params: payload,
-                    proposalSentTime: Date.now()
+                    proposalSentTime: Date.now(),
+                    contractType: payload.contract_type
                 });
             }
         }
@@ -815,13 +896,17 @@ class TradeWS {
 
         const sentTime = Date.now();
         const existingEntry = this.tradePool.get(requestId);
+        const resolvedParams = params || existingEntry?.params;
+        const contractType = resolvedParams?.contract_type || resolvedParams?.contractType || existingEntry?.contractType;
 
         const pendingTrade = {
             requestId: requestId,
             startTime: existingEntry?.startTime || sentTime,
             buySentTime: sentTime,
-            proposalId: proposalId, // Track which ID we used
-            params: params || existingEntry?.params // Ensure params are preserved/updated
+            proposalId: proposalId,
+            params: resolvedParams,
+            contractType: contractType,
+            entrySpot: existingEntry?.entrySpot
         };
         this.tradePool.set(requestId, pendingTrade);
 

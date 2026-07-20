@@ -430,6 +430,10 @@ function TradeLogSidebar() {
           ) : (
             tradeLogs.map((log: any, idx: number) => {
               const profit = Number(log.profit) || 0;
+              const isRiseFall = log.contract === 'CALL' || log.contract === 'PUT';
+              const isWon = log.result === 'WON' || log.result === 'RISE WIN' || log.result === 'FALL WIN';
+              const isLost = log.result === 'LOST' || log.result === 'RISE LOSS' || log.result === 'FALL LOSS';
+              const isSettled = isWon || isLost;
               return (
                 <div key={idx} className={`border rounded-lg p-2 flex flex-col gap-1 text-[10px] font-medium ${
                   log.isVirtual ? 'border-indigo-500/20 bg-indigo-500/5' : 'border-white/5 bg-white/3'
@@ -443,8 +447,8 @@ function TradeLogSidebar() {
                       )}
                       <span className="text-gray-400 uppercase tracking-wider">{log.contract}</span>
                     </div>
-                    {log.result && log.result !== 'BUYING...' && log.result !== 'PROPOSING...' ? (
-                      <span className={log.result === 'WON' ? 'text-emerald-400 font-mono font-black' : 'text-rose-400 font-mono font-black'}>
+                    {isSettled ? (
+                      <span className={isWon ? 'text-emerald-400 font-mono font-black' : 'text-rose-400 font-mono font-black'}>
                         {profit >= 0 ? `+$${profit.toFixed(2)}` : `-$${Math.abs(profit).toFixed(2)}`}
                       </span>
                     ) : (
@@ -453,14 +457,30 @@ function TradeLogSidebar() {
                       </span>
                     )}
                   </div>
+                  {isSettled && (
+                    <div className="flex justify-end">
+                      <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wide ${
+                        isWon ? 'text-emerald-400 bg-emerald-500/10' : 'text-rose-400 bg-rose-500/10'
+                      }`}>
+                        {log.result}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-gray-500 text-[9px] font-mono">
                     <span>Time: {new Date(log.time).toLocaleTimeString([], { hour12: false })}</span>
                     <span>Stake: ${Number(log.stake || 0).toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between text-gray-500 text-[9px] font-mono">
-                    <span>Exit Digit: {log.exit !== undefined && log.exit !== null ? log.exit : '-'}</span>
-                    {log.digit !== undefined && log.digit !== '-' && <span>Pred: {log.digit}</span>}
-                  </div>
+                  {isRiseFall ? (
+                    <div className="flex justify-between text-gray-500 text-[9px] font-mono">
+                      <span>Entry: <span className="text-gray-300">{log.entrySpot || '-'}</span></span>
+                      <span>Exit: <span className="text-gray-300">{log.exit || '-'}</span></span>
+                    </div>
+                  ) : (
+                    <div className="flex justify-between text-gray-500 text-[9px] font-mono">
+                      <span>Exit Digit: {log.exit !== undefined && log.exit !== null ? log.exit : '-'}</span>
+                      {log.digit !== undefined && log.digit !== '-' && <span>Pred: {log.digit}</span>}
+                    </div>
+                  )}
                 </div>
               );
             })

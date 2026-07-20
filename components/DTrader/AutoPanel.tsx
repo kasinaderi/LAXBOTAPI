@@ -1176,27 +1176,40 @@ function BotTradeLogSection() {
         {tradeLogs.length === 0 ? (
           <div className="text-center py-4 text-gray-600 text-[10px]">No bot trades yet</div>
         ) : (
-          tradeLogs.map((log: any, i: number) => (
-            <div key={i} className={`flex items-center justify-between p-1.5 rounded border text-[9px] ${log.isVirtual ? 'border-indigo-500/20 bg-indigo-500/5' : 'border-white/5 bg-white/2'}`}>
-              <div className="flex items-center gap-1.5">
-                {log.isVirtual && <span className="text-[7px] font-black text-indigo-400 bg-indigo-500/15 border border-indigo-500/20 px-1 py-0.5 rounded">V</span>}
-                <span className="font-bold text-gray-300">{log.contract}</span>
-                <span className="text-gray-600 font-mono">{log.stake}</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                {log.profit != null && (
-                  <span className={`font-mono font-bold ${Number(log.profit) >= 0 ? 'text-teal-400' : 'text-rose-400'}`}>
-                    {Number(log.profit) >= 0 ? '+' : ''}{Number(log.profit).toFixed(2)}
-                  </span>
-                )}
-                {log.result && log.result !== 'BUYING...' && (
-                  <span className={`text-[8px] font-black px-1 py-0.5 rounded ${log.result === 'WON' ? 'text-emerald-400 bg-emerald-500/15' : log.result === 'LOST' ? 'text-rose-400 bg-rose-500/15' : 'text-gray-400'}`}>
-                    {log.result}
-                  </span>
-                )}
-              </div>
-            </div>
-          ))
+            tradeLogs.map((log: any, i: number) => {
+              const isRiseFall = log.contract === 'CALL' || log.contract === 'PUT';
+              const isWon = log.result === 'WON' || log.result === 'RISE WIN' || log.result === 'FALL WIN';
+              const isLost = log.result === 'LOST' || log.result === 'RISE LOSS' || log.result === 'FALL LOSS';
+              const isSettled = isWon || isLost;
+              return (
+                <div key={i} className={`flex items-center justify-between p-1.5 rounded border text-[9px] ${log.isVirtual ? 'border-indigo-500/20 bg-indigo-500/5' : 'border-white/5 bg-white/2'}`}>
+                  <div className="flex items-center gap-1.5">
+                    {log.isVirtual && <span className="text-[7px] font-black text-indigo-400 bg-indigo-500/15 border border-indigo-500/20 px-1 py-0.5 rounded">V</span>}
+                    <span className="font-bold text-gray-300">{log.contract}</span>
+                    <span className="text-gray-600 font-mono">${Number(log.stake || 0).toFixed(2)}</span>
+                    {isRiseFall && (log.entrySpot && log.entrySpot !== '-') && (
+                      <span className="text-[8px] text-gray-500 font-mono pl-1">
+                        ({log.entrySpot} → {log.exit || '...'})
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {log.profit != null && (
+                      <span className={`font-mono font-bold ${Number(log.profit) >= 0 ? 'text-teal-400' : 'text-rose-400'}`}>
+                        {Number(log.profit) >= 0 ? '+' : ''}{Number(log.profit).toFixed(2)}
+                      </span>
+                    )}
+                    {log.result && log.result !== 'BUYING...' && (
+                      <span className={`text-[8px] font-black px-1 py-0.5 rounded ${
+                        isWon ? 'text-emerald-400 bg-emerald-500/15' : isLost ? 'text-rose-400 bg-rose-500/15' : 'text-gray-400'
+                      }`}>
+                        {log.result}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })
         )}
       </div>
     </Section>

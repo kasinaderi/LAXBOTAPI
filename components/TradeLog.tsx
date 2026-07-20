@@ -67,13 +67,18 @@ export function TradeLog() {
                                     <th className="px-4 py-2 font-bold text-gray-500 uppercase tracking-wider">Time</th>
                                     <th className="px-4 py-2 font-bold text-gray-500 uppercase tracking-wider">Type</th>
                                     <th className="px-4 py-2 font-bold text-gray-500 uppercase tracking-wider">Stake</th>
-                                    <th className="px-4 py-2 font-bold text-gray-500 uppercase tracking-wider">Exit Digit</th>
+                                    <th className="px-4 py-2 font-bold text-gray-500 uppercase tracking-wider">Exit</th>
                                     <th className="px-4 py-2 font-bold text-gray-500 uppercase tracking-wider">P/L</th>
                                     <th className="px-4 py-2 font-bold text-gray-500 uppercase tracking-wider text-right">Result</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-dark">
-                                {tradeLogs.map((log, i) => (
+                                {tradeLogs.map((log, i) => {
+                                    const isRiseFall = log.contract === 'CALL' || log.contract === 'PUT';
+                                    const isWon = log.result === 'WON' || log.result === 'RISE WIN' || log.result === 'FALL WIN';
+                                    const isLost = log.result === 'LOST' || log.result === 'RISE LOSS' || log.result === 'FALL LOSS';
+                                    const isSettled = isWon || isLost;
+                                    return (
                                     <tr key={i} className={`group ${log.isVirtual ? 'bg-indigo-500/5' : ''}`}>
                                         <td className="px-4 py-3 text-gray-400 font-mono">
                                             {new Date(log.time).toLocaleTimeString([], { hour12: false })}
@@ -82,7 +87,10 @@ export function TradeLog() {
                                         <td className="px-4 py-3">
                                             <div className="flex flex-col">
                                                 <span className="font-bold text-gray-300">{log.contract}</span>
-                                                <span className="text-[9px] text-gray-500">Digit: {log.digit}</span>
+                                                {isRiseFall
+                                                    ? <span className="text-[9px] text-gray-500">Entry: {log.entrySpot || '-'}</span>
+                                                    : <span className="text-[9px] text-gray-500">Digit: {log.digit}</span>
+                                                }
                                             </div>
                                         </td>
                                         <td className="px-4 py-3 font-medium text-gray-300">
@@ -101,16 +109,19 @@ export function TradeLog() {
                                             )}
                                         </td>
                                         <td className="px-4 py-3 text-right">
-                                            {log.result && log.result !== 'BUYING...' ? (
-                                                <Badge variant={log.result === 'WON' ? 'success' : (log.result === 'LOST' ? 'danger' : 'neutral')}>
+                                            {isSettled ? (
+                                                <Badge variant={isWon ? 'success' : 'danger'}>
                                                     {log.result}
                                                 </Badge>
+                                            ) : log.result && log.result !== 'BUYING...' ? (
+                                                <Badge variant="neutral">{log.result}</Badge>
                                             ) : (
                                                 <span className="text-gray-500 font-mono">...</span>
                                             )}
                                         </td>
                                     </tr>
-                                ))}
+                                    );
+                                })}
                             </tbody>
                         </table>
                     ) : (

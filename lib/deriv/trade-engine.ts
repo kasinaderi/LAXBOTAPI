@@ -40,6 +40,21 @@ class TradeEngine {
     private lastProcessedTickId: string | null = null;
     private recoveryWinsCount = 0;
 
+    // Real Trade tracking locally for instant execution
+    private activeRealTrade: {
+        requestId: string;
+        contractType: string;
+        stake: number;
+        symbol: string;
+        triggerEpoch: number;        // epoch of tick that fired the trade — NOT counted as entry
+        entrySpot: number | null;    // Tick 1: first tick AFTER trigger
+        entrySpotEpoch: number | null;
+        exitSpot: number | null;     // Tick 2: first tick AFTER entry — the determinant
+        isSettled: boolean;
+        prediction?: number;
+    } | null = null;
+    private handledRequestIds = new Set<string>();
+
     // Price & Rise/Fall history for triggers
     private priceHistory: number[] = [];
     private rfHistory: ('R' | 'F')[] = [];
@@ -76,6 +91,8 @@ class TradeEngine {
         this.lastExecutedPrediction = null;
         this.contradictionWaitCounter = 0;
         this.currentProposalParams = null; // Clear cached params
+        this.activeRealTrade = null;
+        this.handledRequestIds.clear();
         
         tradeWS.forgetProposals();
         if (state && state.setActiveProposal) {
@@ -249,9 +266,7 @@ class TradeEngine {
             if (beforeCount > 0 && this.virtualTrades.length === 0) {
                 virtualJustSettled = true;
             }
-        }
-
-        this.refreshProposal(state);
+        }        this.refreshProposal(state);
 
         // Track price history and derived Rise/Fall signal
         if (this.priceHistory.length > 0) {
@@ -565,8 +580,9 @@ class TradeEngine {
                 ? state.recoverySettings.recoveryStake
                 : sanitizeStake(this.currentStake);
 
-            // Execute
-            this.executeTrade(state, tradeStake, currentDigit);
+            // Execute — pass trigger tick epoch so the local RF tracker can correctly
+            // identify Tick 1 (entry) and Tick 2 (exit/determinant)
+            this.executeTrade(state, tradeStake, currentDigit, tick.epoch);
             
             // Mark virtual trigger as used to prevent multi-firing on persistent match
             // (Removed as duration-based blocking satisfies mirroring)
@@ -604,7 +620,7 @@ class TradeEngine {
         }
     }
 
-    private async executeTrade(state: any, stake: number, triggerDigit?: number) {
+    private async executeTrade(state: any, stake: number, triggerDigit?: number, triggerEpoch?: number) {
         // Snapshot current values
         const { virtualSettings } = state;
         const tradeStake = stake;
@@ -711,6 +727,7 @@ class TradeEngine {
             // For standard Rise/Fall or others, we don't send prediction digits.
         }
 
+        let reqId = '';
         if (state.executionMode === 'standard') {
             const stakeKey = `${Number(tradeStake).toFixed(2)}_${payload.contract_type}`;
             const proposal = state.activeProposal ? state.activeProposal[stakeKey] : null;
@@ -742,6 +759,7 @@ class TradeEngine {
                 });
 
                 tradeWS.executeProposalBuy(requestId, proposal.id, proposal.askPrice, payload);
+                reqId = requestId;
             } else {
                 console.warn(`[TradeEngine] No active proposal for stake ${stakeKey}. Firing AUTO-BUY.`);
                 const requestId = Date.now().toString();
@@ -768,10 +786,28 @@ class TradeEngine {
                     buyAfterRec: true,
                     requestId: requestId
                 });
+                reqId = requestId;
             }
         } else {
             // 'fast' mode — buy directly by parameters (no proposal roundtrip) for microsecond execution
-            tradeWS.executeDirectTrade(payload);
+            reqId = tradeWS.executeDirectTrade(payload);
+        }
+
+        // Initialize local real-trade tracker for instant tick-based result evaluation
+        if (reqId) {
+            this.activeRealTrade = {
+                requestId: reqId,
+                contractType: payload.contract_type,
+                stake: Number(payload.stake || tradeStake),
+                symbol: payload.symbol,
+                triggerEpoch: triggerEpoch ?? Math.floor(Date.now() / 1000),
+                entrySpot: null,
+                entrySpotEpoch: null,
+                exitSpot: null,
+                isSettled: false,
+                prediction: payload.barrier !== undefined ? Number(payload.barrier) : undefined
+            };
+            console.log(`[TradeEngine] ⚡ Trade fired. Trigger epoch: ${this.activeRealTrade.triggerEpoch}. Waiting for Entry tick (Tick 1)...`);
         }
     }
 
@@ -787,11 +823,55 @@ class TradeEngine {
                 break;
 
             case 'CONTRACT_UPDATE':
-                // Live updates if we want to show current price/spot
+                // CONTRACT_UPDATE is now only used for non-Rise/Fall digit trades.
+                // Rise/Fall entry/exit are determined entirely from the local tick stream
+                // (triggerEpoch → Tick 1 = entry, Tick 2 = exit). No WS dependency needed.
+                if (this.activeRealTrade && !this.activeRealTrade.isSettled && this.activeRealTrade.requestId === String(data.requestId)) {
+                    const poc = data.data;
+                    const isRF = poc.contract_type === 'CALL' || poc.contract_type === 'PUT';
+                    if (!isRF) {
+                        // For digit contracts, still capture entry from WS as before
+                        const esRaw = poc.entry_spot_display_value ?? poc.entry_spot;
+                        const esEpoch = poc.entry_tick_time;
+                        if (esRaw !== undefined && esRaw !== null && esEpoch) {
+                            this.activeRealTrade.entrySpot = parseFloat(String(esRaw).replace(/,/g, ''));
+                            this.activeRealTrade.entrySpotEpoch = esEpoch;
+                            console.log(`[TradeEngine] Digit Contract Entry from WS: ${this.activeRealTrade.entrySpot} epoch ${esEpoch}`);
+                        }
+                    }
+                }
                 break;
 
             case 'TRADE_RESULT':
-                this.handleTradeResult(data.isWin, data.profit);
+                {
+                    const reqIdStr = String(data.requestId);
+                    const poc = data.poc;
+                    const isRF = poc?.contract_type === 'CALL' || poc?.contract_type === 'PUT';
+
+                    // Standard WS path — fire Martingale and Compounding
+                    this.handleTradeResult(data.isWin, data.profit);
+
+                    // Reconcile and update UI Log with 100% official Deriv data
+                    if (isRF && poc) {
+                        const officialExit = poc.exit_tick_display_value
+                            || (poc.exit_tick != null ? String(poc.exit_tick) : null)
+                            || (poc.exit_spot != null ? String(poc.exit_spot) : null);
+                        const officialEntry = poc.entry_spot_display_value
+                            || (poc.entry_spot != null ? String(poc.entry_spot) : null);
+
+                        const derivWin = poc.status === 'won';
+                        const derivResult = poc.contract_type === 'CALL'
+                            ? (derivWin ? 'RISE WIN' : 'RISE LOSS')
+                            : (derivWin ? 'FALL WIN' : 'FALL LOSS');
+
+                        state.updateTradeLog(data.requestId, {
+                            result: derivResult,
+                            profit: data.profit,
+                            exit: officialExit || undefined,
+                            entrySpot: officialEntry || undefined
+                        });
+                    }
+                }
                 break;
         }
     }
@@ -822,6 +902,28 @@ class TradeEngine {
             }
             return true;
         });
+    }
+
+    private calculateLocalResult(type: string, entryPrice: number, exitPrice: number, prediction?: number, pipSize: number = 5): boolean {
+        let isWin = false;
+        const precision = pipSize > 0 && pipSize < 1
+            ? Math.abs(Math.round(Math.log10(1 / pipSize)))
+            : pipSize;
+        const priceString = exitPrice.toFixed(precision);
+        const exitDigit = parseInt(priceString.charAt(priceString.length - 1), 10);
+
+        switch (type) {
+            case 'DIGITOVER': isWin = exitDigit > (prediction ?? 0); break;
+            case 'DIGITUNDER': isWin = exitDigit < (prediction ?? 0); break;
+            case 'DIGITMATCH': isWin = exitDigit === (prediction ?? 0); break;
+            case 'DIGITDIFF': isWin = exitDigit !== (prediction ?? 0); break;
+            case 'DIGITEVEN': isWin = exitDigit % 2 === 0; break;
+            case 'DIGITODD': isWin = exitDigit % 2 !== 0; break;
+            case 'CALL': isWin = exitPrice > entryPrice; break;
+            case 'PUT': isWin = exitPrice < entryPrice; break;
+            default: isWin = false;
+        }
+        return isWin;
     }
 
     private calculateVirtualResult(vt: any, exitTick: TickData): { isWin: boolean, exitDigit: number } {
