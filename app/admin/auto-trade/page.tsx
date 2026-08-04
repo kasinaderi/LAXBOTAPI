@@ -299,6 +299,9 @@ export default function AutoTradePage() {
                 addAuditLog('✅ Virtual requirement met. Switching to REAL trading.', 'success');
             }
             prevVirtualModeRef.current = virtualSettings.isVirtualMode;
+            // Reset cycle counter on every mode switch so the new phase starts fresh
+            cycleTradesCountRef.current = 0;
+            setCycleTradesCount(0);
         }
     }, [virtualSettings.isVirtualMode]);
 
@@ -603,6 +606,9 @@ export default function AutoTradePage() {
                         if (!isVirtual) {
                             stopBot();
                             lastTradedMarketRef.current = selectedMarket;
+                            // Reset cycle counter immediately so display shows 0/N while waiting for next interval
+                            cycleTradesCountRef.current = 0;
+                            setCycleTradesCount(0);
                             addAuditLog(`Cycle complete (${nextCycleTradesCount}/${limit} trades). Stopping for next interval.`, 'success');
                         }
                     } else {
@@ -753,6 +759,7 @@ export default function AutoTradePage() {
         if (!isRunningAuto) {
             if (watchdogRef.current) { clearInterval(watchdogRef.current); watchdogRef.current = null; }
             if (cdRef.current)       { clearInterval(cdRef.current);       cdRef.current = null;       }
+            cycleEndRef.current = null;
             setNextExecCd(null);
             return;
         }
@@ -781,7 +788,10 @@ export default function AutoTradePage() {
             if (cycleInterval === '15m')  intervalMs = 900_000;
             else if (cycleInterval === '30m') intervalMs = 1_800_000;
             else if (cycleInterval === '2h')  intervalMs = 7_200_000;
-            cycleEndRef.current = Date.now() + intervalMs;
+            if (!cycleEndRef.current) {
+                cycleEndRef.current = Date.now() + intervalMs;
+            }
+            if (cdRef.current) clearInterval(cdRef.current);
             cdRef.current = setInterval(() => {
                 if (!cycleEndRef.current) return;
                 const diff = cycleEndRef.current - Date.now();
