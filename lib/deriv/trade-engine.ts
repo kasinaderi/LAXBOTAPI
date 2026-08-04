@@ -582,7 +582,13 @@ class TradeEngine {
 
             // Execute — pass trigger tick epoch so the local RF tracker can correctly
             // identify Tick 1 (entry) and Tick 2 (exit/determinant)
-            this.executeTrade(state, tradeStake, currentDigit, tick.epoch);
+            if (state.pipelineMode === 'simultaneous' && state.pipelineSteps && state.pipelineSteps.length > 0) {
+                state.pipelineSteps.forEach((step: any) => {
+                    this.executeTrade(state, tradeStake, currentDigit, tick.epoch, step.contractType, step.prediction);
+                });
+            } else {
+                this.executeTrade(state, tradeStake, currentDigit, tick.epoch);
+            }
             
             // Mark virtual trigger as used to prevent multi-firing on persistent match
             // (Removed as duration-based blocking satisfies mirroring)
@@ -620,18 +626,27 @@ class TradeEngine {
         }
     }
 
-    private async executeTrade(state: any, stake: number, triggerDigit?: number, triggerEpoch?: number) {
+    private async executeTrade(
+        state: any,
+        stake: number,
+        triggerDigit?: number,
+        triggerEpoch?: number,
+        overrideContractType?: string,
+        overridePrediction?: number
+    ) {
         // Snapshot current values
         const { virtualSettings } = state;
         const tradeStake = stake;
         const isDTrader = state.tradingApp === 'dtrader';
-        let tradeContractType = isDTrader ? state.manualContractType : state.contractType;
-        let tradePrediction = isDTrader ? (state.manualPrediction !== undefined ? state.manualPrediction : state.prediction) : state.prediction;
+        let tradeContractType = overrideContractType || (isDTrader ? state.manualContractType : state.contractType);
+        let tradePrediction = overridePrediction !== undefined
+            ? overridePrediction
+            : (isDTrader ? (state.manualPrediction !== undefined ? state.manualPrediction : state.prediction) : state.prediction);
         const symbol = isDTrader ? state.manualMarket : state.market;
 
 
         // Multi-Entry Custom Contract Override
-        if (state.triggers?.digitPattern?.multiEntry?.enabled && state.triggers.digitPattern.multiEntry.useCustomContracts) {
+        if (!overrideContractType && state.triggers?.digitPattern?.multiEntry?.enabled && state.triggers.digitPattern.multiEntry.useCustomContracts) {
             const multi = state.triggers.digitPattern.multiEntry;
             const customContract = multi.contracts[multi.currentIndex];
             if (customContract) {
@@ -643,7 +658,7 @@ class TradeEngine {
         }
 
         // Adaptive Switching logic (with null guard)
-        if (state.triggers?.adaptiveEvenOdd?.enabled) {
+        if (!overrideContractType && state.triggers?.adaptiveEvenOdd?.enabled) {
             const activeContract = state.getActiveAdaptiveContract();
             tradeContractType = activeContract.type;
             tradePrediction = activeContract.prediction;
@@ -697,6 +712,7 @@ class TradeEngine {
                 currency: state.account?.currency || 'USD',
                 profit: 0,
                 result: '...V...',
+                symbol: symbol,
                 exit: null
             });
 
@@ -744,13 +760,14 @@ class TradeEngine {
                 }
 
                 // Executing via STANDARD
-                const requestId = Date.now().toString();
+                const requestId = `${Date.now()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
                 
                 state.addTradeLog({
                     requestId,
                     time: Date.now(),
                     contract: payload.contract_type,
                     result: 'BUYING...',
+                    symbol: payload.symbol,
                     stake: tradeStake.toString(),
                     profit: null,
                     digit: payload.barrier || '-',
@@ -762,13 +779,14 @@ class TradeEngine {
                 reqId = requestId;
             } else {
                 console.warn(`[TradeEngine] No active proposal for stake ${stakeKey}. Firing AUTO-BUY.`);
-                const requestId = Date.now().toString();
+                const requestId = `${Date.now()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
                 
                 state.addTradeLog({
                     requestId,
                     time: Date.now(),
                     contract: payload.contract_type,
                     result: 'PROPOSING...', // Will turn into BUYING... once ID arrives
+                    symbol: payload.symbol,
                     stake: tradeStake.toString(),
                     profit: null,
                     digit: payload.barrier || '-',
@@ -1348,6 +1366,10 @@ class TradeEngine {
         if (postToggleState.executionMode === 'standard') {
             this.refreshProposal(postToggleState);
         }
+    }
+
+    public hasActiveVirtualTrades(): boolean {
+        return this.virtualTrades.length > 0;
     }
 }
 const G = globalThis as any;

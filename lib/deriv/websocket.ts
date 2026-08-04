@@ -20,6 +20,8 @@ class DerivWS {
     }
     private messageQueue: object[] = [];
     private currentSubscription: string | null = null;
+    private tickSubscriptions = new Map<string, string>(); // tracks symbol -> subscriptionId
+    private keepAliveSymbols = new Set<string>(); // tracks symbols that should not be unsubscribed/forgotten by trade engine switches
 
     // HA State
     public status: ConnectionStatus = 'disconnected';
@@ -31,6 +33,18 @@ class DerivWS {
     private heartbeatTimeout: NodeJS.Timeout | null = null;
     private stableHeartbeatCount = 0;
     public isStable = false;
+
+    // Prevents concurrent connect() calls while one is already in-flight (awaiting OTP fetch etc.)
+    private isConnecting = false;
+
+    // OTP URL cache — reuse the same URL for 55 s to avoid hammering the /otp endpoint
+    private cachedOtpUrl: string | null = null;
+    private otpUrlExpiry = 0; // Unix ms timestamp after which the cache is stale
+    private static OTP_CACHE_TTL_MS = 55_000; // 55 seconds (OTPs typically last 60 s)
+
+    // After this many consecutive failures enter a hard cooling-off period
+    private static MAX_FAST_FAILURES = 8;
+    private static COOLING_OFF_MS = 120_000; // 2 minutes
 
     // Latency Tracking
     public lastPingTime = 0;
@@ -63,11 +77,21 @@ class DerivWS {
         const accountId = store?.account?.loginid;
 
         if (token && accountId) {
+            // ── OTP cache: reuse the same URL for 55 s to avoid hammering the /otp endpoint
+            const now = Date.now();
+            if (this.cachedOtpUrl && now < this.otpUrlExpiry) {
+                console.log(`[DerivWS] Reusing cached OTP URL (expires in ${Math.round((this.otpUrlExpiry - now) / 1000)}s)`);
+                this.isUsingPublicEndpoint = false;
+                return this.cachedOtpUrl;
+            }
+
             try {
                 const { fetchOTP } = await import('./auth');
                 const otpUrl = await fetchOTP(token, accountId);
                 if (otpUrl) {
-                    console.log(`[DerivWS] Obtained OTP WebSocket URL for account ${accountId}`);
+                    console.log(`[DerivWS] Obtained fresh OTP WebSocket URL for account ${accountId}`);
+                    this.cachedOtpUrl = otpUrl;
+                    this.otpUrlExpiry = Date.now() + DerivWS.OTP_CACHE_TTL_MS;
                     this.isUsingPublicEndpoint = false;
                     return otpUrl;
                 }
@@ -75,6 +99,9 @@ class DerivWS {
                 console.error(`[DerivWS] Failed to fetch OTP for ${accountId}:`, e);
             }
         }
+        // Clear cached URL if we can't get a new one
+        this.cachedOtpUrl = null;
+        this.otpUrlExpiry = 0;
         this.isUsingPublicEndpoint = true;
         return PUBLIC_ENDPOINT;
     }
@@ -101,9 +128,15 @@ class DerivWS {
     }
 
     public async connect() {
+        // Guard against concurrent connect() calls (e.g. while OTP fetch is awaiting)
+        if (this.isConnecting) {
+            console.log('[DerivWS] connect() called while already connecting — ignoring.');
+            return;
+        }
         if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
             return;
         }
+        this.isConnecting = true;
         this.shouldReconnect = true; // Allow reconnects when we explicitly connect
         this.updateStatus('connecting');
         try {
@@ -111,10 +144,12 @@ class DerivWS {
             this.socket = new WebSocket(url);
         } catch (e) {
             console.error('[DerivWS] Critical error creating WebSocket:', e);
+            this.isConnecting = false;
             this.updateStatus('error');
             this.handleReconnect();
             return;
         }
+        this.isConnecting = false;
 
         this.socket.onopen = () => {
             console.log(`Connected to Options API WebSocket`);
@@ -148,6 +183,7 @@ class DerivWS {
             this.updateStatus('disconnected');
             this.stopHeartbeat();
             this.currentSubscription = null;
+            this.tickSubscriptions.clear();
             this.pendingRequests.forEach((p) => p.reject(new Error('Connection failed')));
             this.pendingRequests.clear();
             if (this.shouldReconnect) {
@@ -199,6 +235,11 @@ class DerivWS {
                 }
 
                 if (message.msg_type === 'tick' && message.tick) {
+                    // Capture subscription ID for individual symbol if present
+                    if (message.subscription?.id && message.tick.symbol) {
+                        this.tickSubscriptions.set(message.tick.symbol, message.subscription.id);
+                    }
+
                     // Normalize the tick data to include pip_size explicitly
                     const normalizedTick = {
                         ...message.tick,
@@ -274,11 +315,28 @@ class DerivWS {
     private handleReconnect() {
         this.socket = null;
 
-        // User's requested reconnect logic: Linear backoff capped at 10s
-        this.reconnectAttempts++;
-        const delay = Math.min(1000 * this.reconnectAttempts, 10000);
+        if (!this.shouldReconnect) return;
 
-        console.log(`Reconnecting in ${delay}ms... (Attempt ${this.reconnectAttempts})`);
+        this.reconnectAttempts++;
+
+        // Hard cooling-off after too many consecutive rapid failures
+        if (this.reconnectAttempts > DerivWS.MAX_FAST_FAILURES) {
+            console.warn(`[DerivWS] ${this.reconnectAttempts} consecutive failures. Cooling off for ${DerivWS.COOLING_OFF_MS / 1000}s before retrying…`);
+            this.cachedOtpUrl = null; // Force fresh OTP on resume
+            this.otpUrlExpiry = 0;
+            this.reconnectAttempts = 0;
+            setTimeout(() => this.connect(), DerivWS.COOLING_OFF_MS);
+            return;
+        }
+
+        // Exponential backoff using backoffSchedule array
+        const scheduleIdx = Math.min(this.reconnectAttempts - 1, this.backoffSchedule.length - 1);
+        const baseDelay = this.backoffSchedule[scheduleIdx];
+        // Add up to 20% random jitter to avoid thundering-herd
+        const jitter = Math.floor(Math.random() * baseDelay * 0.2);
+        const delay = baseDelay + jitter;
+
+        console.log(`[DerivWS] Reconnecting in ${delay}ms… (Attempt ${this.reconnectAttempts}, backoff idx ${scheduleIdx})`);
 
         setTimeout(() => this.connect(), delay);
     }
@@ -334,6 +392,7 @@ class DerivWS {
     public disconnect() {
         this.shouldReconnect = false; // Prevent auto-reconnect on intentional disconnect
         this.reconnectAttempts = 0;
+        this.isConnecting = false;
         if (this.socket) {
             this.socket.close();
         }
@@ -367,9 +426,12 @@ class DerivWS {
     }
 
     public send(data: any) {
-        // Queue Deduplication: Remove existing 'forget_all' or 'ticks' if this is a new switch
-        if (data.forget_all === 'ticks' || data.ticks) {
+        // Queue Deduplication: Remove duplicate or redundant commands
+        if (data.forget_all === 'ticks') {
             this.messageQueue = this.messageQueue.filter((m: any) => !m.forget_all && !m.ticks);
+        } else if (data.ticks) {
+            // Only remove queued subscriptions for the SAME symbol
+            this.messageQueue = this.messageQueue.filter((m: any) => m.ticks !== data.ticks);
         }
 
         if (this.socket && this.socket.readyState === WebSocket.OPEN) {
@@ -386,11 +448,46 @@ class DerivWS {
     public authorize(token: string) {
         this.setToken(token);
     }
+    public addKeepAliveSymbol(symbol: string) {
+        this.keepAliveSymbols.add(symbol);
+        console.log(`[DerivWS] Added keep-alive for symbol: ${symbol}`);
+    }
+
+    public removeKeepAliveSymbol(symbol: string) {
+        this.keepAliveSymbols.delete(symbol);
+        console.log(`[DerivWS] Removed keep-alive for symbol: ${symbol}`);
+    }
+
+    public clearKeepAliveSymbols() {
+        this.keepAliveSymbols.clear();
+        console.log(`[DerivWS] Cleared all keep-alive symbols`);
+    }
+
     public forgetTicks() {
         if (this.socket?.readyState === WebSocket.OPEN) {
             this.send({ forget_all: 'ticks' });
         }
-        // Don't nullify currentSubscription here, let subscribeTicks handle it
+        this.tickSubscriptions.clear();
+        this.currentSubscription = null;
+        this.keepAliveSymbols.clear();
+    }
+
+    public unsubscribeTick(symbol: string) {
+        if (this.keepAliveSymbols.has(symbol)) {
+            console.log(`[DerivWS] unsubscribeTick: ${symbol} is registered as keep-alive. Skipping unsubscribe.`);
+            return;
+        }
+        const subId = this.tickSubscriptions.get(symbol);
+        if (subId) {
+            console.log(`[DerivWS] Unsubscribing tick: ${symbol} (${subId})`);
+            if (this.socket?.readyState === WebSocket.OPEN) {
+                this.send({ forget: subId });
+            }
+            this.tickSubscriptions.delete(symbol);
+        }
+        if (this.currentSubscription === symbol) {
+            this.currentSubscription = null;
+        }
     }
 
     public subscribeTicks(symbol: string) {
@@ -400,10 +497,23 @@ class DerivWS {
 
         console.log(`[DerivWS] Switching market: ${this.currentSubscription || 'None'} -> ${symbol}`);
 
-        // GUARANTEED: Always send/queue these commands regardless of socket state
-        this.send({ forget_all: 'ticks' });
-        this.send({ ticks: symbol, subscribe: 1 });
+        // Forget only the previous trade-engine active subscription specifically
+        if (this.currentSubscription) {
+            if (!this.keepAliveSymbols.has(this.currentSubscription)) {
+                const prevSubId = this.tickSubscriptions.get(this.currentSubscription);
+                if (prevSubId) {
+                    console.log(`[DerivWS] Forgetting old market subscription: ${this.currentSubscription} (${prevSubId})`);
+                    if (this.socket?.readyState === WebSocket.OPEN) {
+                        this.send({ forget: prevSubId });
+                    }
+                    this.tickSubscriptions.delete(this.currentSubscription);
+                }
+            } else {
+                console.log(`[DerivWS] Keeping old market subscription alive (scanner keep-alive active): ${this.currentSubscription}`);
+            }
+        }
 
+        this.send({ ticks: symbol, subscribe: 1 });
         this.currentSubscription = symbol;
     }
 

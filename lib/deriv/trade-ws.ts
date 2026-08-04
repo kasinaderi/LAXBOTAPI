@@ -706,7 +706,7 @@ class TradeWS {
             return '';
         }
 
-        const requestId = String(Date.now()); // Always string — consistent with tradePool key
+        const requestId = `${Date.now()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
         const isRiseFall = payload.contract_type === 'CALL' || payload.contract_type === 'PUT';
         const pendingTrade: any = {
             requestId,
@@ -746,6 +746,7 @@ class TradeWS {
                 time: Date.now(),
                 contract: payload.contract_type,
                 result: '',
+                symbol: payload.symbol,
                 stake: payload.stake.toString(),
                 profit: null,
                 digit: (!isRiseFall && payload.barrier !== undefined && payload.barrier !== null) ? payload.barrier : '-',

@@ -20,7 +20,8 @@ import {
     CheckCircle2,
     Power,
     LogIn,
-    ExternalLink
+    ExternalLink,
+    Cpu
 } from 'lucide-react';
 import { useDerivStore } from '@/store/useDerivStore';
 import { useRelayStore } from '@/store/useRelayStore';
@@ -35,6 +36,7 @@ const NAV_ITEMS = [
     { name: 'Live Ticks', path: '/live-ticks', icon: Activity },
     { name: 'Reversal Scanner', path: '/reversal-scanner', icon: ScanSearch, highlight: true },
     { name: 'LAXSNIPER XV', path: '/laxsniper-xv', icon: Zap },
+    { name: 'Auto Trade', path: '/admin/auto-trade', icon: Cpu, admin: true, highlight: true },
     { name: 'Bots', path: '/bots', icon: Settings },
     { name: 'Admin', path: '/admin', icon: ShieldAlert, admin: true },
 ];
@@ -51,9 +53,10 @@ export function Header() {
     const { token: storeToken, authorize, error: storeError } = useDerivStore();
     const [tokenInput, setTokenInput] = React.useState(storeToken || '');
 
+    const adminId = (process.env.NEXT_PUBLIC_ADMIN_LOGINID || 'DOT93428953').trim().toUpperCase();
     const isAdmin = tradingStatus === 'connected' && 
                     !!account?.loginid && 
-                    account.loginid === 'CR8970194';
+                    account.loginid.toUpperCase() === adminId;
 
     return (
         <header className="sticky top-0 z-[100] w-full bg-dark/80 backdrop-blur-xl border-b border-white/5 px-4 h-16 flex items-center justify-between">

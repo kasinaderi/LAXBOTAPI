@@ -62,6 +62,8 @@ interface DerivState {
     tradePattern: ('trade' | 'skip')[];
     currentStep: number;
     tradingMode: 'after_first' | 'continuous_check';
+    pipelineMode: 'sequential' | 'simultaneous';
+    pipelineSteps: any[];
 
     // Admin State
     admin: {
@@ -146,6 +148,8 @@ interface DerivState {
     setTradePattern: (pattern: ('trade' | 'skip')[]) => void;
     setCurrentStep: (step: number) => void;
     setTradingMode: (mode: 'after_first' | 'continuous_check') => void;
+    setPipelineMode: (mode: 'sequential' | 'simultaneous') => void;
+    setPipelineSteps: (steps: any[]) => void;
     setTriggerStatus: (status: string | null) => void;
     toggleManualMode: () => void;
     setBackendStatus: (status: 'connected' | 'disconnected' | 'error' | 'handshaking' | 'authenticating' | 'ready') => void;
@@ -368,6 +372,8 @@ export const useDerivStore = create<DerivState>()(
             tradePattern: ['skip', 'trade', 'skip', 'skip', 'skip', 'trade', 'skip', 'skip'],
             currentStep: 1,
             tradingMode: 'after_first',
+            pipelineMode: 'sequential',
+            pipelineSteps: [] as any[],
 
             admin: {
                 isKillSwitchActive: false,
@@ -396,7 +402,7 @@ export const useDerivStore = create<DerivState>()(
                 currentStep: 1,
             },
             virtualSettings: {
-                isVirtualMode: false,
+                isVirtualMode: true,
 
                 startVirtualToReal: false,
                 vThreshold: 3,
@@ -535,8 +541,10 @@ export const useDerivStore = create<DerivState>()(
             setTriggerMode: (mode: 'sequential' | 'simultaneous') => set({ triggerMode: mode, currentPipelineStep: 0 }),
             setPipelineStep: (step: number) => set({ currentPipelineStep: step }),
             setTradePattern: (tradePattern: ('trade' | 'skip')[]) => set({ tradePattern }),
-            setCurrentStep: (currentStep: number) => set({ currentStep }),
-            setTradingMode: (tradingMode: 'after_first' | 'continuous_check') => set({ tradingMode }),
+            setCurrentStep: (step: number) => set({ currentStep: step }),
+            setTradingMode: (mode: 'after_first' | 'continuous_check') => set({ tradingMode: mode }),
+            setPipelineMode: (mode: 'sequential' | 'simultaneous') => set({ pipelineMode: mode }),
+            setPipelineSteps: (steps: any[]) => set({ pipelineSteps: steps }),
             toggleKillSwitch: () => set((state: DerivState) => ({
                 admin: { ...state.admin, isKillSwitchActive: !state.admin.isKillSwitchActive }
             })),

@@ -132,16 +132,6 @@ export const useRelayStore = create<RelayState>((set, get) => ({
                                 lastTick
                             };
                         });
-
-                        // Pipe to Scanner Store (Deduped)
-                        import('./useScannerStore').then(({ useScannerStore }) => {
-                            useScannerStore.getState().handleBackendTick({
-                                symbol,
-                                quote,
-                                digit,
-                                epoch: serverTime || Date.now() / 1000 // Fallback if missing
-                            });
-                        });
                     }
 
                     if (msg.type === 'stats') {
