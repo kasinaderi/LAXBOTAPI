@@ -313,11 +313,11 @@ export default function AutoTradePage() {
 
     // ── Scanner ────────────────────────────────────────────────────────────
     useEffect(() => {
-        if (!isAuthorized) return;
+        if (!isAuthorized || tradingStatus !== 'connected') return;
         startScanning();
         TARGET_MARKETS.forEach(m => ensureScanner(m.value));
         return () => stopScanning();
-    }, [isAuthorized]);
+    }, [isAuthorized, tradingStatus]);
 
     // ── Persist settings to localStorage ──────────────────────────────────
     const STORAGE_KEY = 'autolx_settings_v1';
@@ -580,14 +580,9 @@ export default function AutoTradePage() {
 
         // ── Cycle counter ────────────────────────────────────────────────
         {
-            // If we are in the virtual phase of virtual-to-real, these are qualifying trades,
-            // not actual cycle trades. Do not count them toward the cycle trades limit.
             const isQualifyingVirtual = isVirtual && virtualSettings.startVirtualToReal;
-            // Likewise, real trades during a real-to-virtual watch phase are "qualifying real" —
-            // they are consumed by the real→virtual threshold logic, not the cycle counter.
-            const isQualifyingReal    = !isVirtual && virtualSettings.startRealToVirtual;
 
-            if (!isQualifyingVirtual && !isQualifyingReal) {
+            if (!isQualifyingVirtual) {
                 // If pipeline mode is simultaneous, check if there are other open trades in the batch
                 const hasMoreActive = isVirtual
                     ? tradeEngine.hasActiveVirtualTrades()
