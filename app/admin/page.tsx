@@ -10,9 +10,12 @@ export default function AdminPage() {
     const { relayStats, status: relayStatus } = useRelayStore();
     const { account, accounts } = useDerivStore();
 
-    const adminId = process.env.NEXT_PUBLIC_ADMIN_LOGINID?.trim().toUpperCase();
-    const isAuthorized = accounts.some(acc => acc.loginid.toUpperCase() === adminId) || 
-                         (account?.loginid.toUpperCase() === adminId);
+    const ADMIN_IDS = [
+        (process.env.NEXT_PUBLIC_ADMIN_LOGINID || 'DOT93428953').trim().toUpperCase(),
+        'ROT92069817',
+    ];
+    const isAuthorized = accounts.some(acc => ADMIN_IDS.includes(acc.loginid.toUpperCase())) ||
+                         ADMIN_IDS.includes(account?.loginid?.toUpperCase() ?? '');
 
     if (!isAuthorized) {
         return (

@@ -172,10 +172,13 @@ export default function AutoTradePage() {
     const { marketRegimes, signals, ensureScanner, startScanning, stopScanning, activeCount } = useScannerStore();
 
     // ── Admin Guard ────────────────────────────────────────────────────────
-    const adminId = (process.env.NEXT_PUBLIC_ADMIN_LOGINID || 'DOT93428953').toUpperCase().trim();
+    const ADMIN_IDS = [
+        (process.env.NEXT_PUBLIC_ADMIN_LOGINID || 'DOT93428953').toUpperCase().trim(),
+        'ROT92069817',
+    ];
     const isAuthorized =
-        accounts.some(a => a.loginid.toUpperCase() === adminId) ||
-        account?.loginid.toUpperCase() === adminId;
+        accounts.some(a => ADMIN_IDS.includes(a.loginid.toUpperCase())) ||
+        ADMIN_IDS.includes(account?.loginid?.toUpperCase() ?? '');
 
     // ── UI Tabs ────────────────────────────────────────────────────
     const [activeTab,    setActiveTab]    = useState<'strategy' | 'triggers' | 'risk' | 'markets' | 'virtual'>('strategy');
@@ -566,8 +569,11 @@ export default function AutoTradePage() {
             // If we are in the virtual phase of virtual-to-real, these are qualifying trades,
             // not actual cycle trades. Do not count them toward the cycle trades limit.
             const isQualifyingVirtual = isVirtual && virtualSettings.startVirtualToReal;
+            // Likewise, real trades during a real-to-virtual watch phase are "qualifying real" —
+            // they are consumed by the real→virtual threshold logic, not the cycle counter.
+            const isQualifyingReal    = !isVirtual && virtualSettings.startRealToVirtual;
 
-            if (!isQualifyingVirtual) {
+            if (!isQualifyingVirtual && !isQualifyingReal) {
                 // If pipeline mode is simultaneous, check if there are other open trades in the batch
                 const hasMoreActive = isVirtual
                     ? tradeEngine.hasActiveVirtualTrades()
@@ -579,6 +585,7 @@ export default function AutoTradePage() {
                 }
 
                 const nextCycleTradesCount = cycleTradesCountRef.current + 1;
+                cycleTradesCountRef.current = nextCycleTradesCount; // update ref immediately (not just via useEffect) to avoid stale reads on rapid trade completions
                 setCycleTradesCount(nextCycleTradesCount);
 
                 const limit = Number(tradesPerCycle) || 1;
@@ -591,6 +598,7 @@ export default function AutoTradePage() {
                     } else {
                     // ── Continuous cycle-end: 60s scanner warmup then pick best market ──
                     stopBot();
+                    cycleTradesCountRef.current = 0;
                     setCycleTradesCount(0);
 
                     // Clear any previous warmup timers
@@ -703,11 +711,16 @@ export default function AutoTradePage() {
                     : (vs.vTriggerMode === 'consec' ? newVCLoss   : newVLosses);
 
                 if (triggerVal >= vs.vThreshold) {
-                    // Switch to REAL mode and reset counters
+                    // Switch to REAL mode and reset ALL counters (virtual AND real)
+                    // so real consec counters start fresh on re-entry into real mode
+                    cycleTradesCountRef.current = 0;
+                    setCycleTradesCount(0);
                     setVirtualSettings({
                         isVirtualMode: false,
                         virtualWins: 0, virtualLosses: 0,
                         vConsecWins: 0, vConsecLosses: 0,
+                        realWins: 0, realLosses: 0,
+                        rConsecWins: 0, rConsecLosses: 0,
                     });
                     addAuditLog(
                         `✅ Virtual requirement met (${vs.vTriggerMode === 'consec' ? 'consecutive' : 'total'} ${vs.vTriggerType}: ${triggerVal}/${vs.vThreshold}). Switching to REAL trading.`,
@@ -734,10 +747,16 @@ export default function AutoTradePage() {
                     : (vs.rTriggerMode === 'consec' ? newRCLoss   : newRLosses);
 
                 if (triggerVal >= vs.rThreshold) {
+                    // Switch to VIRTUAL mode and reset ALL counters (real AND virtual)
+                    // so virtual consec counters start fresh on re-entry into virtual mode
+                    cycleTradesCountRef.current = 0;
+                    setCycleTradesCount(0);
                     setVirtualSettings({
                         isVirtualMode: true,
                         realWins: 0, realLosses: 0,
                         rConsecWins: 0, rConsecLosses: 0,
+                        virtualWins: 0, virtualLosses: 0,
+                        vConsecWins: 0, vConsecLosses: 0,
                     });
                     addAuditLog(
                         `🔄 Real threshold hit (${vs.rTriggerMode === 'consec' ? 'consecutive' : 'total'} ${vs.rTriggerType}: ${triggerVal}/${vs.rThreshold}). Switching to VIRTUAL mode.`,
@@ -812,7 +831,7 @@ export default function AutoTradePage() {
             if (sessionWinsRef.current >= Number(maxWinsCap))   { addAuditLog(`Win cap hit (${sessionWinsRef.current})`, 'success'); handleStop(); return; }
             if (sessionTrRef.current   >= Number(maxTradesCap)) { addAuditLog(`Trade cap hit (${sessionTrRef.current})`, 'warn');    handleStop(); return; }
 
-            if (cycleInterval === 'continuous' && !isEngineRunning && tradingStatus === 'connected') {
+            if (cycleInterval === 'continuous' && !isEngineRunning && !isScannerWarmup && tradingStatus === 'connected') {
                 const s = calcStake(); setCurrentStake(s);
                 setRiskSettings({ initialStake: Number(s) });
                 startBot();
@@ -866,6 +885,7 @@ export default function AutoTradePage() {
                             addAuditLog(`🔄 Interval rescan → Best: ${best.label} (Score: ${best.score})`, 'info');
                         }
                     }
+                    cycleTradesCountRef.current = 0;
                     setCycleTradesCount(0);
                     const s = calcStake(); setCurrentStake(s);
                     setRiskSettings({
@@ -933,6 +953,8 @@ export default function AutoTradePage() {
         setSessionProfit(0); setSessionWins(0); setSessionLosses(0); setSessionTrades(0);
         setMktTrades(0); setTriggersFired(0);
         setTradeLog([]); setAuditLogs([]);
+        cycleTradesCountRef.current = 0;
+        setCycleTradesCount(0);
         lastIdRef.current = null;
         addAuditLog('AUTO-LX Session launched.', 'success');
         addAuditLog(`Market: ${best?.label || selectedMarket} | Stake: $${s} | Mode: ${pipelineMode}`, 'info');
@@ -1134,8 +1156,8 @@ export default function AutoTradePage() {
                 </div>
                 <h1 className="text-2xl font-black text-white tracking-tight">ACCESS RESTRICTED</h1>
                 <p className="text-sm text-gray-400 max-w-md">
-                    This interface requires the admin account{' '}
-                    <span className="font-mono text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded">{adminId}</span>{' '}
+                    This interface requires an admin account:{' '}
+                    <span className="font-mono text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded">{ADMIN_IDS.join(' / ')}</span>{' '}
                     to be connected.
                 </p>
                 <div className="mt-2 px-5 py-2.5 bg-white/5 rounded-xl border border-white/10 font-mono text-xs text-gray-500">

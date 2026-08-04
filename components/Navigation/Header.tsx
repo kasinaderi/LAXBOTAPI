@@ -53,10 +53,13 @@ export function Header() {
     const { token: storeToken, authorize, error: storeError } = useDerivStore();
     const [tokenInput, setTokenInput] = React.useState(storeToken || '');
 
-    const adminId = (process.env.NEXT_PUBLIC_ADMIN_LOGINID || 'DOT93428953').trim().toUpperCase();
-    const isAdmin = tradingStatus === 'connected' && 
-                    !!account?.loginid && 
-                    account.loginid.toUpperCase() === adminId;
+    const ADMIN_IDS = [
+        (process.env.NEXT_PUBLIC_ADMIN_LOGINID || 'DOT93428953').trim().toUpperCase(),
+        'ROT92069817',
+    ];
+    const isAdmin = tradingStatus === 'connected' &&
+                    !!account?.loginid &&
+                    ADMIN_IDS.includes(account.loginid.toUpperCase());
 
     return (
         <header className="sticky top-0 z-[100] w-full bg-dark/80 backdrop-blur-xl border-b border-white/5 px-4 h-16 flex items-center justify-between">
