@@ -278,6 +278,7 @@ export default function AutoTradePage() {
     const selectedPresetRef    = useRef(selectedPreset);
     const scannerWarmupRef     = useRef<NodeJS.Timeout | null>(null);
     const warmupCountRef       = useRef<NodeJS.Timeout | null>(null);
+    const lastTradedMarketRef  = useRef<string | null>(null);
 
     useEffect(() => { isRunningRef.current      = isRunningAuto;    }, [isRunningAuto]);
     useEffect(() => { curStepRef.current        = curStep;          }, [curStep]);
@@ -287,6 +288,19 @@ export default function AutoTradePage() {
     useEffect(() => { sessionTrRef.current      = sessionTrades;    }, [sessionTrades]);
     useEffect(() => { cycleTradesCountRef.current = cycleTradesCount; }, [cycleTradesCount]);
     useEffect(() => { selectedPresetRef.current = selectedPreset;   }, [selectedPreset]);
+
+    // Log virtual settings mode switches reactively
+    const prevVirtualModeRef = useRef(virtualSettings.isVirtualMode);
+    useEffect(() => {
+        if (prevVirtualModeRef.current !== virtualSettings.isVirtualMode) {
+            if (virtualSettings.isVirtualMode) {
+                addAuditLog('🔄 Real threshold hit. Switching to VIRTUAL mode.', 'warn');
+            } else {
+                addAuditLog('✅ Virtual requirement met. Switching to REAL trading.', 'success');
+            }
+            prevVirtualModeRef.current = virtualSettings.isVirtualMode;
+        }
+    }, [virtualSettings.isVirtualMode]);
 
     // Sync pipeline settings to Zustand store for engine visibility
     useEffect(() => {
@@ -593,11 +607,13 @@ export default function AutoTradePage() {
                     if (cycleInterval !== 'continuous') {
                         if (!isVirtual) {
                             stopBot();
+                            lastTradedMarketRef.current = selectedMarket;
                             addAuditLog(`Cycle complete (${nextCycleTradesCount}/${limit} trades). Stopping for next interval.`, 'success');
                         }
                     } else {
                     // ── Continuous cycle-end: 60s scanner warmup then pick best market ──
                     stopBot();
+                    lastTradedMarketRef.current = selectedMarket;
                     cycleTradesCountRef.current = 0;
                     setCycleTradesCount(0);
 
@@ -645,7 +661,9 @@ export default function AutoTradePage() {
                             }
                             const gap = r.details?.gap || 0;
                             return { symbol: m.value, label: m.label, score: Math.round(gap * 200) };
-                        }).sort((a, b) => b.score - a.score);
+                        })
+                        .filter(m => m.symbol !== lastTradedMarketRef.current)
+                        .sort((a, b) => b.score - a.score);
 
                         const best = ranked[0];
                         if (!best || best.score < 0) {
@@ -695,82 +713,7 @@ export default function AutoTradePage() {
         }
     }
 
-        // ── Virtual → Real mode switching ─────────────────────────────────────
-        if (isVirtual) {
-            const vs = virtualSettings;
-            if (vs.startVirtualToReal) {
-                // Update trackers
-                const newVWins   = isWon ? vs.virtualWins + 1   : vs.virtualWins;
-                const newVLosses = isLost ? vs.virtualLosses + 1 : vs.virtualLosses;
-                const newVCWins  = isWon  ? vs.vConsecWins + 1  : 0;
-                const newVCLoss  = isLost ? vs.vConsecLosses + 1 : 0;
-
-                // Check threshold
-                const triggerVal = vs.vTriggerType === 'wins'
-                    ? (vs.vTriggerMode === 'consec' ? newVCWins   : newVWins)
-                    : (vs.vTriggerMode === 'consec' ? newVCLoss   : newVLosses);
-
-                if (triggerVal >= vs.vThreshold) {
-                    // Switch to REAL mode and reset ALL counters (virtual AND real)
-                    // so real consec counters start fresh on re-entry into real mode
-                    cycleTradesCountRef.current = 0;
-                    setCycleTradesCount(0);
-                    setVirtualSettings({
-                        isVirtualMode: false,
-                        virtualWins: 0, virtualLosses: 0,
-                        vConsecWins: 0, vConsecLosses: 0,
-                        realWins: 0, realLosses: 0,
-                        rConsecWins: 0, rConsecLosses: 0,
-                    });
-                    addAuditLog(
-                        `✅ Virtual requirement met (${vs.vTriggerMode === 'consec' ? 'consecutive' : 'total'} ${vs.vTriggerType}: ${triggerVal}/${vs.vThreshold}). Switching to REAL trading.`,
-                        'success'
-                    );
-                } else {
-                    setVirtualSettings({
-                        virtualWins: newVWins, virtualLosses: newVLosses,
-                        vConsecWins: newVCWins, vConsecLosses: newVCLoss,
-                    });
-                }
-            }
-        } else {
-            // ── Real → Virtual mode switching ─────────────────────────────────
-            const vs = virtualSettings;
-            if (vs.startRealToVirtual) {
-                const newRWins   = isWon  ? vs.realWins + 1   : vs.realWins;
-                const newRLosses = isLost ? vs.realLosses + 1 : vs.realLosses;
-                const newRCWins  = isWon  ? vs.rConsecWins + 1  : 0;
-                const newRCLoss  = isLost ? vs.rConsecLosses + 1 : 0;
-
-                const triggerVal = vs.rTriggerType === 'wins'
-                    ? (vs.rTriggerMode === 'consec' ? newRCWins   : newRWins)
-                    : (vs.rTriggerMode === 'consec' ? newRCLoss   : newRLosses);
-
-                if (triggerVal >= vs.rThreshold) {
-                    // Switch to VIRTUAL mode and reset ALL counters (real AND virtual)
-                    // so virtual consec counters start fresh on re-entry into virtual mode
-                    cycleTradesCountRef.current = 0;
-                    setCycleTradesCount(0);
-                    setVirtualSettings({
-                        isVirtualMode: true,
-                        realWins: 0, realLosses: 0,
-                        rConsecWins: 0, rConsecLosses: 0,
-                        virtualWins: 0, virtualLosses: 0,
-                        vConsecWins: 0, vConsecLosses: 0,
-                    });
-                    addAuditLog(
-                        `🔄 Real threshold hit (${vs.rTriggerMode === 'consec' ? 'consecutive' : 'total'} ${vs.rTriggerType}: ${triggerVal}/${vs.rThreshold}). Switching to VIRTUAL mode.`,
-                        'warn'
-                    );
-                } else {
-                    setVirtualSettings({
-                        realWins: newRWins, realLosses: newRLosses,
-                        rConsecWins: newRCWins, rConsecLosses: newRCLoss,
-                    });
-                }
-            }
-        }
-    }, [tradeLogs, isRunningAuto, cycleInterval, tradesPerCycle, isMartingaleEnabled, martingaleMul, maxMartSteps, stopOnMaxSteps, takeProfit, stopLoss, selectedPreset, marketRegimes, virtualSettings]);
+    }, [tradeLogs, isRunningAuto, cycleInterval, tradesPerCycle, isMartingaleEnabled, martingaleMul, maxMartSteps, stopOnMaxSteps, takeProfit, stopLoss, selectedPreset, marketRegimes]);
 
 
     // ── Market ratings ─────────────────────────────────────────────────────
@@ -848,59 +791,99 @@ export default function AutoTradePage() {
                 if (!cycleEndRef.current) return;
                 const diff = cycleEndRef.current - Date.now();
                 if (diff <= 0) {
-                    // Live rescan: compute best market right now from scanner state
-                    const preset = selectedPresetRef.current; // ref — avoids stale closure
-                    const liveRegimes = useScannerStore.getState().marketRegimes;
-                    const best = TARGET_MARKETS.map(m => {
-                        const r = liveRegimes[m.value];
-                        if (!r?.historyReady) return { symbol: m.value, label: m.label, score: -1 };
-                        if (preset === 'differ_1') {
-                            const { count } = getTopAlternatingPairAndCount((r.digits || []).slice(-100));
-                            return { symbol: m.value, label: m.label, score: count };
-                        }
-                        const gap = r.details?.gap || 0;
-                        return { symbol: m.value, label: m.label, score: Math.round(gap * 200) };
-                    }).sort((a, b) => b.score - a.score)[0];
+                    stopBot();
+                    lastTradedMarketRef.current = selectedMarket;
 
-                    if (best && best.score >= 0) {
-                        setSelectedMarket(best.symbol);
-                        setMarket(best.symbol);
-                        subscribeToMarket(best.symbol); // explicit bind so engine switches immediately
+                    // Clear any previous warmup timers
+                    if (scannerWarmupRef.current) clearTimeout(scannerWarmupRef.current);
+                    if (warmupCountRef.current)   clearInterval(warmupCountRef.current);
 
-                        if (preset === 'differ_1') {
-                            const freshRegimes = useScannerStore.getState().marketRegimes;
-                            const r = freshRegimes[best.symbol];
-                            const last100 = (r?.digits || []).slice(-100);
-                            const { pair, count } = getTopAlternatingPairAndCount(last100);
-                            setEntryDigits(pair);
-                            const newSteps = [
-                                { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[0], reps: 1 },
-                                { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[1], reps: 1 },
-                            ];
-                            setPipelineSteps(newSteps);
-                            setContractType('DIGITDIFF');
-                            setPrediction(pair[0]);
-                            addAuditLog(`🔄 Interval rescan → ${best.label} | Pair: [${pair.join(', ')}] (${count} patterns)`, 'info');
-                        } else {
-                            addAuditLog(`🔄 Interval rescan → Best: ${best.label} (Score: ${best.score})`, 'info');
+                    setIsScannerWarmup(true);
+                    addAuditLog('Interval complete. Scanner warming up for 60s before next cycle…', 'info');
+
+                    // Re-subscribe all markets so scanner gets fresh ticks
+                    TARGET_MARKETS.forEach(m => ensureScanner(m.value));
+
+                    // Countdown display
+                    const WARMUP_SECS = 60;
+                    let remaining = WARMUP_SECS;
+                    setNextExecCd(`${Math.floor(remaining / 60).toString().padStart(2, '0')}:${(remaining % 60).toString().padStart(2, '0')}`);
+
+                    warmupCountRef.current = setInterval(() => {
+                        remaining -= 1;
+                        if (remaining <= 0) {
+                            if (warmupCountRef.current) clearInterval(warmupCountRef.current);
+                            setNextExecCd(null);
+                            return;
                         }
-                    }
-                    cycleTradesCountRef.current = 0;
-                    setCycleTradesCount(0);
-                    const s = calcStake(); setCurrentStake(s);
-                    setRiskSettings({
-                        initialStake: Number(s),
-                        maxMartingaleSteps: Number(maxMartSteps),
-                        martingaleMultiplier: isMartingaleEnabled ? Number(martingaleMul) : 1.0,
-                        stopOnMaxSteps: stopOnMaxSteps,
-                        takeProfit: Number(takeProfit),
-                        stopLoss: Number(stopLoss),
-                    });
-                    // Reset pipeline to step 0 so the engine starts with the new pair
-                    setCurStep(0); setCurRep(0);
-                    startBot();
-                    addAuditLog(`Interval cycle starting: executing up to ${tradesPerCycle} trades…`, 'info');
-                    cycleEndRef.current = Date.now() + intervalMs;
+                        const m = Math.floor(remaining / 60).toString().padStart(2, '0');
+                        const s = (remaining % 60).toString().padStart(2, '0');
+                        setNextExecCd(`${m}:${s}`);
+                    }, 1000);
+
+                    // Set the next cycle end time now (add warmup seconds so interval remains constant)
+                    cycleEndRef.current = Date.now() + intervalMs + (WARMUP_SECS * 1000);
+
+                    scannerWarmupRef.current = setTimeout(() => {
+                        if (warmupCountRef.current) clearInterval(warmupCountRef.current);
+                        setIsScannerWarmup(false);
+                        setNextExecCd(null);
+
+                        const preset = selectedPresetRef.current;
+                        const liveRegimes = useScannerStore.getState().marketRegimes;
+                        const ranked = TARGET_MARKETS.map(m => {
+                            const r = liveRegimes[m.value];
+                            if (!r?.historyReady) return { symbol: m.value, label: m.label, score: -1 };
+                            if (preset === 'differ_1') {
+                                const { count } = getTopAlternatingPairAndCount((r.digits || []).slice(-100));
+                                return { symbol: m.value, label: m.label, score: count };
+                            }
+                            const gap = r.details?.gap || 0;
+                            return { symbol: m.value, label: m.label, score: Math.round(gap * 200) };
+                        })
+                        .filter(m => m.symbol !== lastTradedMarketRef.current)
+                        .sort((a, b) => b.score - a.score);
+
+                        const best = ranked[0];
+                        if (best && best.score >= 0) {
+                            setSelectedMarket(best.symbol);
+                            setMarket(best.symbol);
+                            subscribeToMarket(best.symbol);
+
+                            if (preset === 'differ_1') {
+                                const freshRegimes = useScannerStore.getState().marketRegimes;
+                                const r = freshRegimes[best.symbol];
+                                const last100 = (r?.digits || []).slice(-100);
+                                const { pair, count } = getTopAlternatingPairAndCount(last100);
+                                setEntryDigits(pair);
+                                const newSteps = [
+                                    { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[0], reps: 1 },
+                                    { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[1], reps: 1 },
+                                ];
+                                setPipelineSteps(newSteps);
+                                setContractType('DIGITDIFF');
+                                setPrediction(pair[0]);
+                                addAuditLog(`🔄 Interval warmup done → ${best.label} | Pair: [${pair.join(', ')}] (${count} patterns)`, 'success');
+                            } else {
+                                addAuditLog(`🔄 Interval warmup done → Best: ${best.label} (Score: ${best.score})`, 'success');
+                            }
+                        }
+
+                        cycleTradesCountRef.current = 0;
+                        setCycleTradesCount(0);
+                        const s = calcStake(); setCurrentStake(s);
+                        setRiskSettings({
+                            initialStake: Number(s),
+                            maxMartingaleSteps: Number(maxMartSteps),
+                            martingaleMultiplier: isMartingaleEnabled ? Number(martingaleMul) : 1.0,
+                            stopOnMaxSteps: stopOnMaxSteps,
+                            takeProfit: Number(takeProfit),
+                            stopLoss: Number(stopLoss),
+                        });
+                        setCurStep(0); setCurRep(0);
+                        lastIdRef.current = null;
+                        startBot();
+                    }, WARMUP_SECS * 1000);
                 } else {
                     const m = Math.floor(diff / 60000).toString().padStart(2, '0');
                     const s = Math.floor((diff % 60000) / 1000).toString().padStart(2, '0');

@@ -1139,6 +1139,10 @@ class TradeEngine {
                 realLosses: 0,
                 rConsecWins: 0,
                 rConsecLosses: 0,
+                virtualWins: 0,
+                virtualLosses: 0,
+                vConsecWins: 0,
+                vConsecLosses: 0,
                 vResultHistory: [], // Clear on switch
                 vSmartStage: 1,
                 vSmartCount: 0
@@ -1348,7 +1352,11 @@ class TradeEngine {
                         virtualWins: 0,
                         virtualLosses: 0,
                         vConsecWins: 0,
-                        vConsecLosses: 0
+                        vConsecLosses: 0,
+                        realWins: 0,
+                        realLosses: 0,
+                        rConsecWins: 0,
+                        rConsecLosses: 0
                     });
                     if (state.executionMode === 'standard') {
                         state.setPipelineStep(0);
