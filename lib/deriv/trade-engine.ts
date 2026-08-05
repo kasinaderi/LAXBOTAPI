@@ -25,6 +25,9 @@ class TradeEngine {
     }>();
 
     private virtualTrades: any[] = [];
+    // Epoch of the last tick on which a virtual trade was settled/removed.
+    // Prevents re-firing a new virtual trade on the SAME tick as settlement.
+    private lastVirtualSettledEpoch: number | null = null;
     private currentProposalParams: string | null = null;
     // Dependency Injection for Circular Fix
     private getState: (() => any) | null = null;
@@ -86,6 +89,7 @@ class TradeEngine {
         this.activeContracts.clear();
         this.entryTriggerState = { isActive: false, hasMatched: false, searchBuffer: [] };
         this.virtualTrades = [];
+        this.lastVirtualSettledEpoch = null;
         this.isWaitingForOpposite = false;
         this.lastExecutedContract = null;
         this.lastExecutedPrediction = null;
@@ -552,6 +556,14 @@ class TradeEngine {
                     state.setTriggerStatus("Wait: Virtual Trade Running...");
                     return;
                 }
+                // Block if a virtual trade JUST settled on this same tick epoch.
+                // Duration-1 virtual trades settle and are removed by processVirtualTrades()
+                // before we reach here — without this guard the engine would immediately
+                // fire a second trade on the very same tick (causing duplicates).
+                if (this.lastVirtualSettledEpoch !== null && tick.epoch === this.lastVirtualSettledEpoch) {
+                    state.setTriggerStatus("Wait: Virtual Cooldown (same tick)...");
+                    return;
+                }
             } else {
                 // Always block if a real trade is pending — prevents duplicate buys on consecutive ticks.
                 if (tradeWS.hasPendingTrade()) {
@@ -896,6 +908,7 @@ class TradeEngine {
     private processVirtualTrades(tick: TickData, state: any) {
         if (this.virtualTrades.length === 0) return;
 
+        let anySettled = false;
         this.virtualTrades = this.virtualTrades.filter(vt => {
             vt.currentTick++;
 
@@ -911,6 +924,7 @@ class TradeEngine {
                     exit: exitDigit >= 0 ? exitDigit : '-'
                 });
                 vt.isSettled = true;
+                anySettled = true;
             }
 
             // 2. Removal happens after the target duration is reached
@@ -919,6 +933,12 @@ class TradeEngine {
             }
             return true;
         });
+
+        // Record the epoch of this tick so a new virtual trade cannot fire
+        // on the EXACT same tick where one just settled.
+        if (anySettled) {
+            this.lastVirtualSettledEpoch = tick.epoch ?? null;
+        }
     }
 
     private calculateLocalResult(type: string, entryPrice: number, exitPrice: number, prediction?: number, pipSize: number = 5): boolean {

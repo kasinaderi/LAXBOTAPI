@@ -837,6 +837,7 @@ export default function AutoTradePage() {
                             const r = freshRegimes[best.symbol];
                             const last100 = (r?.digits || []).slice(-100);
                             const { pair, count } = getTopAlternatingPairAndCount(last100);
+                            // ── React state (UI sync) ────────────────────────────
                             setEntryDigits(pair);
                             setPipelineMode('sequential');
                             setStorePipelineMode('sequential');
@@ -846,6 +847,22 @@ export default function AutoTradePage() {
                             ]);
                             setContractType('DIGITDIFF');
                             setPrediction(pair[0]);
+                            // ── Zustand store (engine sync — synchronous, no React render needed) ──
+                            const store = useDerivStore.getState();
+                            store.setPrediction(pair[0]);
+                            store.setContractType('DIGITDIFF');
+                            store.setPipelineSteps([
+                                { id: uid(), contractType: 'DIGITDIFF', prediction: pair[0], reps: 1 },
+                                { id: uid(), contractType: 'DIGITDIFF', prediction: pair[1], reps: 1 },
+                            ]);
+                            store.setTrigger('entryDigit', {
+                                enabled: false,
+                                entryDigit: pair[0],
+                                multiEnabled: true,
+                                multiDigits: pair,
+                                monitorTicks: 10,
+                            });
+                            store.setTriggerMode('sequential');
                             addAuditLog(`🔄 Warmup done → ${best.label} | Pair: [${pair.join(', ')}] (${count} patterns)`, 'success');
                         } else {
                             addAuditLog(`🔄 Warmup done → Best: ${best.label} (Score: ${best.score})`, 'success');
@@ -1019,6 +1036,7 @@ export default function AutoTradePage() {
                                 const r = freshRegimes[best.symbol];
                                 const last100 = (r?.digits || []).slice(-100);
                                 const { pair, count } = getTopAlternatingPairAndCount(last100);
+                                // ── React state (UI sync) ────────────────────────────
                                 setEntryDigits(pair);
                                 setPipelineMode('sequential');
                                 setStorePipelineMode('sequential');
@@ -1029,6 +1047,22 @@ export default function AutoTradePage() {
                                 setPipelineSteps(newSteps);
                                 setContractType('DIGITDIFF');
                                 setPrediction(pair[0]);
+                                // ── Zustand store (engine sync — synchronous, no React render needed) ──
+                                const store = useDerivStore.getState();
+                                store.setPrediction(pair[0]);
+                                store.setContractType('DIGITDIFF');
+                                store.setPipelineSteps([
+                                    { id: uid(), contractType: 'DIGITDIFF', prediction: pair[0], reps: 1 },
+                                    { id: uid(), contractType: 'DIGITDIFF', prediction: pair[1], reps: 1 },
+                                ]);
+                                store.setTrigger('entryDigit', {
+                                    enabled: false,
+                                    entryDigit: pair[0],
+                                    multiEnabled: true,
+                                    multiDigits: pair,
+                                    monitorTicks: 10,
+                                });
+                                store.setTriggerMode('sequential');
                                 addAuditLog(`🔄 Interval warmup done → ${best.label} | Pair: [${pair.join(', ')}] (${count} patterns)`, 'success');
                             } else {
                                 addAuditLog(`🔄 Interval warmup done → Best: ${best.label} (Score: ${best.score})`, 'success');
