@@ -794,6 +794,8 @@ export default function AutoTradePage() {
                             const last100 = (r?.digits || []).slice(-100);
                             const { pair, count } = getTopAlternatingPairAndCount(last100);
                             setEntryDigits(pair);
+                            setPipelineMode('sequential');
+                            setStorePipelineMode('sequential');
                             setPipelineSteps([
                                 { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[0], reps: 1 },
                                 { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[1], reps: 1 },
@@ -972,6 +974,8 @@ export default function AutoTradePage() {
                                 const last100 = (r?.digits || []).slice(-100);
                                 const { pair, count } = getTopAlternatingPairAndCount(last100);
                                 setEntryDigits(pair);
+                                setPipelineMode('sequential');
+                                setStorePipelineMode('sequential');
                                 const newSteps = [
                                     { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[0], reps: 1 },
                                     { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[1], reps: 1 },
@@ -1041,6 +1045,8 @@ export default function AutoTradePage() {
                 const last100 = (r?.digits || []).slice(-100);
                 const { pair, count } = getTopAlternatingPairAndCount(last100);
                 setEntryDigits(pair);
+                setPipelineMode('sequential');
+                setStorePipelineMode('sequential');
                 setPipelineSteps([
                     { id: uid(), contractType: 'DIGITDIFF', prediction: pair[0], reps: 1 },
                     { id: uid(), contractType: 'DIGITDIFF', prediction: pair[1], reps: 1 },

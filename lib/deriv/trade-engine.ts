@@ -545,17 +545,16 @@ class TradeEngine {
 
         if (currentAction === 'trade') {
             const isVirtual = state.virtualSettings.isVirtualMode;
-            const isContinuous = state.tradingMode === 'continuous_check';
 
             if (isVirtual) {
-                // Mirror Real behavior: Block if a virtual trade is running.
-                if (isContinuous && this.virtualTrades.length > 0) {
+                // Always block if a virtual trade is already in flight — we must wait for settlement.
+                if (this.virtualTrades.length > 0) {
                     state.setTriggerStatus("Wait: Virtual Trade Running...");
                     return;
                 }
             } else {
-                // Real Execution: Only block if a real trade is pending and we are in continuous check mode.
-                if (isContinuous && tradeWS.hasPendingTrade()) {
+                // Always block if a real trade is pending — prevents duplicate buys on consecutive ticks.
+                if (tradeWS.hasPendingTrade()) {
                     state.setTriggerStatus("Wait: Trade Pending...");
                     return;
                 }

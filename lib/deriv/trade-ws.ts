@@ -811,7 +811,9 @@ class TradeWS {
                 this.socket?.send(JSON.stringify({ forget: subId }));
                 if (store) {
                     const activeProposals = store.activeProposal || {};
-                    const usedStake = Object.keys(activeProposals).find(k => activeProposals[k].id === subId);
+                    const usedStake = Object.keys(activeProposals).find(k => 
+                        activeProposals[k].id === subId || activeProposals[k].subscriptionId === subId
+                    );
                     if (usedStake) store.setActiveProposal(usedStake, null as any);
                 }
             }
