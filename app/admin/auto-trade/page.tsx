@@ -168,6 +168,9 @@ export default function AutoTradePage() {
         virtualSettings, setVirtualSettings,
         setPipelineMode: setStorePipelineMode,
         setPipelineSteps: setStorePipelineSteps,
+        setTrigger,
+        setTradePattern: setStoreTradePattern,
+        setTradingMode: setStoreTradingMode,
     } = useDerivStore();
     const { marketRegimes, signals, ensureScanner, startScanning, stopScanning, activeCount } = useScannerStore();
 
@@ -384,6 +387,35 @@ export default function AutoTradePage() {
     useEffect(() => {
         setStorePipelineSteps(pipelineSteps);
     }, [pipelineSteps, setStorePipelineSteps]);
+
+    // Sync triggers, tradePattern, and continuous/after-first trading mode to store
+    useEffect(() => {
+        setTrigger('entryDigit', {
+            enabled: entryDigitEnabled,
+            entryDigit: entryDigits[0] !== undefined ? entryDigits[0] : 5,
+            multiDigits: entryDigits,
+            useMulti: true,
+            triggerOnEntry: instantTrigger
+        });
+    }, [entryDigitEnabled, entryDigits, instantTrigger, setTrigger]);
+
+    useEffect(() => {
+        setTrigger('digitPattern', {
+            enabled: digitPatternEnabled,
+            pattern: patternBoxes.map(b => b.type),
+            compareDigit: compareDigit,
+            useCustomContracts: useCustomContracts,
+            noContradiction: noContradiction
+        });
+    }, [digitPatternEnabled, patternBoxes, compareDigit, useCustomContracts, noContradiction, setTrigger]);
+
+    useEffect(() => {
+        setStoreTradePattern(tradePattern);
+    }, [tradePattern, setStoreTradePattern]);
+
+    useEffect(() => {
+        setStoreTradingMode(continuousMode);
+    }, [continuousMode, setStoreTradingMode]);
 
     // ── Scanner ────────────────────────────────────────────────────────────
     useEffect(() => {
@@ -673,6 +705,10 @@ export default function AutoTradePage() {
                     realWins: 0,    realLosses: 0,
                     rConsecWins: 0, rConsecLosses: 0,
                 });
+                setCurStep(0);
+                setCurRep(0);
+                curStepRef.current = 0;
+                curRepRef.current = 0;
                 addAuditLog('🛑 Real loss — aborting cycle. Returning to VIRTUAL mode for next interval.', 'warn');
                 return;
             }
@@ -711,6 +747,10 @@ export default function AutoTradePage() {
                             realWins: 0,    realLosses: 0,
                             rConsecWins: 0, rConsecLosses: 0,
                         });
+                        setCurStep(0);
+                        setCurRep(0);
+                        curStepRef.current = 0;
+                        curRepRef.current = 0;
                         addAuditLog(`Cycle complete (${nextCycleTradesCount}/${limit} real trades). Stopping for next interval.`, 'success');
                     } else {
                     // ── Continuous cycle-end: 60s scanner warmup then pick best market ──
@@ -727,6 +767,10 @@ export default function AutoTradePage() {
                         realWins: 0,    realLosses: 0,
                         rConsecWins: 0, rConsecLosses: 0,
                     });
+                    setCurStep(0);
+                    setCurRep(0);
+                    curStepRef.current = 0;
+                    curRepRef.current = 0;
 
                     // Clear any previous warmup timers
                     if (scannerWarmupRef.current) clearTimeout(scannerWarmupRef.current);
@@ -819,6 +863,8 @@ export default function AutoTradePage() {
                         });
                         setCurStep(0);
                         setCurRep(0);
+                        curStepRef.current = 0;
+                        curRepRef.current = 0;
                         lastIdRef.current = null;
                         startBot();
                     }, WARMUP_SECS * 1000);
@@ -1001,6 +1047,8 @@ export default function AutoTradePage() {
                             stopLoss: Number(stopLoss),
                         });
                         setCurStep(0); setCurRep(0);
+                        curStepRef.current = 0;
+                        curRepRef.current = 0;
                         lastIdRef.current = null;
                         startBot();
                     }, WARMUP_SECS * 1000);
