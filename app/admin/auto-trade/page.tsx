@@ -289,6 +289,8 @@ export default function AutoTradePage() {
     // captures a stale closure) can still see the live value.
     const isScannerWarmupRef   = useRef(false);
     const cycleIntervalRef     = useRef(cycleInterval);
+    const pipelineStepsRef     = useRef<PipelineStep[]>(pipelineSteps);
+    const pipelineModeRef      = useRef<TriggerMode>(pipelineMode);
 
     useEffect(() => { isRunningRef.current       = isRunningAuto;    }, [isRunningAuto]);
     useEffect(() => { curStepRef.current         = curStep;          }, [curStep]);
@@ -300,6 +302,8 @@ export default function AutoTradePage() {
     useEffect(() => { selectedPresetRef.current  = selectedPreset;   }, [selectedPreset]);
     useEffect(() => { isScannerWarmupRef.current = isScannerWarmup;  }, [isScannerWarmup]);
     useEffect(() => { cycleIntervalRef.current   = cycleInterval;    }, [cycleInterval]);
+    useEffect(() => { pipelineStepsRef.current   = pipelineSteps;    }, [pipelineSteps]);
+    useEffect(() => { pipelineModeRef.current    = pipelineMode;     }, [pipelineMode]);
 
     // React to virtual ↔ real mode switches triggered by the trade engine
     const prevVirtualModeRef = useRef(virtualSettings.isVirtualMode);
@@ -356,9 +360,17 @@ export default function AutoTradePage() {
                         const r = useScannerStore.getState().marketRegimes[best.symbol];
                         const last100 = (r?.digits || []).slice(-100);
                         const { pair, count } = getTopAlternatingPairAndCount(last100);
+                        // React state (UI)
                         setEntryDigits(pair);
                         setPipelineSteps([{ id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[0], reps: 1 }, { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[1], reps: 1 }]);
                         setContractType('DIGITDIFF'); setPrediction(pair[0]);
+                        // Zustand store (synchronous — engine reads this on the first tick)
+                        const _s = useDerivStore.getState();
+                        _s.setPrediction(pair[0]);
+                        _s.setContractType('DIGITDIFF');
+                        _s.setPipelineSteps([{ id: uid(), contractType: 'DIGITDIFF', prediction: pair[0], reps: 1 }, { id: uid(), contractType: 'DIGITDIFF', prediction: pair[1], reps: 1 }]);
+                        _s.setTrigger('entryDigit', { enabled: false, entryDigit: pair[0], multiEnabled: true, multiDigits: pair, monitorTicks: 10 });
+                        _s.setTriggerMode('sequential');
                         addAuditLog(`🔄 Warmup done → ${best.label} | Pair: [${pair.join(', ')}] (${count} patterns)`, 'success');
                     } else {
                         addAuditLog(`🔄 Warmup done → ${best.label}`, 'success');
@@ -568,29 +580,43 @@ export default function AutoTradePage() {
     }, [addAuditLog, setContractType]);
 
     // ── Pipeline step applier ──────────────────────────────────────────────
-    const applyStep = useCallback((stepIdx: number) => {
-        const step = pipelineSteps[stepIdx];
-        if (!step) return;
-        setContractType(step.contractType);
-        setPrediction(step.prediction);
-        addAuditLog(`Pipeline → Step ${stepIdx + 1}: ${step.contractType} (Digit ${step.prediction})`, 'info');
-    }, [pipelineSteps, setContractType, setPrediction, addAuditLog]);
+    const applyStep = useCallback((stepIdx: number, explicitPrediction?: number, explicitContractType?: string, explicitSteps?: PipelineStep[]) => {
+        // Always prefer explicitly-passed values so callers that set pipeline steps
+        // via React state (async) can bypass the stale closure.
+        const steps = explicitSteps ?? pipelineStepsRef.current;
+        const step = steps[stepIdx];
+        const prediction = explicitPrediction !== undefined ? explicitPrediction : step?.prediction;
+        const contractType = explicitContractType ?? step?.contractType;
+        if (prediction === undefined || !contractType) return;
+        setContractType(contractType as any);
+        setPrediction(prediction);
+        // Also push directly to the Zustand store so the engine sees it immediately
+        // without waiting for a React render cycle.
+        useDerivStore.getState().setPrediction(prediction);
+        useDerivStore.getState().setContractType(contractType as any);
+        addAuditLog(`Pipeline → Step ${stepIdx + 1}: ${contractType} (Digit ${prediction})`, 'info');
+    }, [setContractType, setPrediction, addAuditLog]);
 
     // ── Advance pipeline after each settled trade ──────────────────────────
     const advancePipeline = useCallback(() => {
-        if (pipelineMode !== 'sequential' || pipelineSteps.length === 0) return;
-        const step = pipelineSteps[curStepRef.current];
+        const currentMode = pipelineModeRef.current;
+        const currentSteps = pipelineStepsRef.current;
+        if (currentMode !== 'sequential' || currentSteps.length === 0) return;
+        const step = currentSteps[curStepRef.current];
         if (!step) return;
         const nextRep = curRepRef.current + 1;
         if (nextRep >= step.reps) {
-            const nextStep = (curStepRef.current + 1) % pipelineSteps.length;
+            const nextStep = (curStepRef.current + 1) % currentSteps.length;
             setCurStep(nextStep);
             setCurRep(0);
-            applyStep(nextStep);
+            curStepRef.current = nextStep;
+            curRepRef.current = 0;
+            applyStep(nextStep, undefined, undefined, currentSteps);
         } else {
             setCurRep(nextRep);
+            curRepRef.current = nextRep;
         }
-    }, [pipelineMode, pipelineSteps, applyStep]);
+    }, [applyStep]);
 
     // ── Trade log watcher ──────────────────────────────────────────────────
     useEffect(() => {
@@ -1122,21 +1148,34 @@ export default function AutoTradePage() {
             setSelectedMarket(best.symbol);
             
             // differ_1 dynamic setup on session manual launch
+            // differ_1 dynamic setup on session manual launch
             if (selectedPreset === 'differ_1') {
                 const r = marketRegimes[best.symbol];
                 const last100 = (r?.digits || []).slice(-100);
                 const { pair, count } = getTopAlternatingPairAndCount(last100);
+                const newSteps = [
+                    { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[0], reps: 1 },
+                    { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[1], reps: 1 },
+                ];
                 setEntryDigits(pair);
                 setPipelineMode('sequential');
                 setStorePipelineMode('sequential');
-                setPipelineSteps([
-                    { id: uid(), contractType: 'DIGITDIFF', prediction: pair[0], reps: 1 },
-                    { id: uid(), contractType: 'DIGITDIFF', prediction: pair[1], reps: 1 },
-                ]);
+                setPipelineSteps(newSteps);
+                // Synchronously push to Zustand so the engine reads the correct pair
+                // on the very first tick (before React re-renders applyStep's closure)
+                const _s = useDerivStore.getState();
+                _s.setPrediction(pair[0]);
+                _s.setContractType('DIGITDIFF');
+                _s.setPipelineSteps(newSteps);
+                _s.setTrigger('entryDigit', { enabled: false, entryDigit: pair[0], multiEnabled: true, multiDigits: pair, monitorTicks: 10 });
+                _s.setTriggerMode('sequential');
                 addAuditLog(`differ 1 launch setup: Selected entry digits ${pair.join(', ')} for market ${best.label} (Pattern Count: ${count})`, 'info');
+                // applyStep with explicit pair so stale closure is bypassed
+                applyStep(0, pair[0], 'DIGITDIFF');
+            } else {
+                applyStep(0);
             }
         }
-        applyStep(0);
         setCurStep(0); setCurRep(0);
         setIsRunningAuto(true);
         setUptimeStart(Date.now());
