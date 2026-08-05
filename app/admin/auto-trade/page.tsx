@@ -703,6 +703,14 @@ export default function AutoTradePage() {
                         // Reset cycle counter immediately so display shows 0/N while waiting for next interval
                         cycleTradesCountRef.current = 0;
                         setCycleTradesCount(0);
+                        // Revert to virtual mode so the next cycle starts with validation
+                        setVirtualSettings({
+                            isVirtualMode: true,
+                            virtualWins: 0, virtualLosses: 0,
+                            vConsecWins: 0, vConsecLosses: 0,
+                            realWins: 0,    realLosses: 0,
+                            rConsecWins: 0, rConsecLosses: 0,
+                        });
                         addAuditLog(`Cycle complete (${nextCycleTradesCount}/${limit} real trades). Stopping for next interval.`, 'success');
                     } else {
                     // ── Continuous cycle-end: 60s scanner warmup then pick best market ──
@@ -711,6 +719,14 @@ export default function AutoTradePage() {
                     cycleTradesCountRef.current = 0;
                     setCycleTradesCount(0);
                     warmupTriggeredRef.current = true;
+                    // Revert to virtual mode so the next cycle starts with validation
+                    setVirtualSettings({
+                        isVirtualMode: true,
+                        virtualWins: 0, virtualLosses: 0,
+                        vConsecWins: 0, vConsecLosses: 0,
+                        realWins: 0,    realLosses: 0,
+                        rConsecWins: 0, rConsecLosses: 0,
+                    });
 
                     // Clear any previous warmup timers
                     if (scannerWarmupRef.current) clearTimeout(scannerWarmupRef.current);
@@ -1042,6 +1058,15 @@ export default function AutoTradePage() {
         cycleTradesCountRef.current = 0;
         setCycleTradesCount(0);
         lastIdRef.current = null;
+        if (virtualSettings.startVirtualToReal) {
+            setVirtualSettings({
+                isVirtualMode: true,
+                virtualWins: 0, virtualLosses: 0,
+                vConsecWins: 0, vConsecLosses: 0,
+                realWins: 0,    realLosses: 0,
+                rConsecWins: 0, rConsecLosses: 0,
+            });
+        }
         addAuditLog('AUTO-LX Session launched.', 'success');
         addAuditLog(`Market: ${best?.label || selectedMarket} | Stake: $${s} | Mode: ${pipelineMode}`, 'info');
         if (entryDigitEnabled) {

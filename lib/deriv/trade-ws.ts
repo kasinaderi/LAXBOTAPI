@@ -302,7 +302,10 @@ class TradeWS {
                     const existingProposal = store.activeProposal ? store.activeProposal[stakeKey] : null;
 
                     if (existingProposal) {
-                        this.executeProposalBuy(passthrough.requestId, existingProposal.id, existingProposal.askPrice, msg.echo_req);
+                        const pending = this.tradePool.get(passthrough.requestId);
+                        if (pending && !pending.buySentTime) {
+                            this.executeProposalBuy(passthrough.requestId, existingProposal.id, existingProposal.askPrice, msg.echo_req);
+                        }
                     } else {
                         // Not in store yet, but Deriv says we are subscribed. 
                         // It must be in flight. Mark it for auto-buy.
@@ -371,7 +374,7 @@ class TradeWS {
             const proposal = msg.proposal;
             
             // ZOMBIE PROTECTION: Ignore in-flight ticks that arrive after a forget/buy
-            if (this.forgottenProposalIds.has(proposal.id)) {
+            if (this.forgottenProposalIds.has(proposal.id) || (msg.subscription?.id && this.forgottenProposalIds.has(msg.subscription.id))) {
                 return;
             }
             
@@ -384,24 +387,33 @@ class TradeWS {
                         || msg.echo_req?.parameters?.symbol || msg.echo_req?.symbol || "";
             const stakeKey = this.getStakeKey(stake, contractType);
 
-            if (stakeKey) this.proposalSubscriptions.set(stakeKey, proposal.id);
+            // Store the subscription ID for clean unsubscription/forgetting, falling back to proposal ID
+            const subId = msg.subscription?.id || proposal.id;
+            if (stakeKey) this.proposalSubscriptions.set(stakeKey, subId);
             
             const passthrough = msg.echo_req?.passthrough;
             if (passthrough?.buyAfterRec && passthrough?.requestId) {
-                this.executeProposalBuy(passthrough.requestId, proposal.id, proposal.ask_price);
+                const pending = this.tradePool.get(passthrough.requestId);
+                if (pending && !pending.buySentTime) {
+                    this.executeProposalBuy(passthrough.requestId, proposal.id, proposal.ask_price);
+                }
                 return;
             }
 
             // Check if there's a pending Auto-Buy for this key
             const pendingRequestId = this.pendingAutoBuys.get(stakeKey);
             if (pendingRequestId) {
-                this.pendingAutoBuys.delete(stakeKey);
-                this.executeProposalBuy(pendingRequestId, proposal.id, proposal.ask_price);
+                const pending = this.tradePool.get(pendingRequestId);
+                if (pending && !pending.buySentTime) {
+                    this.pendingAutoBuys.delete(stakeKey);
+                    this.executeProposalBuy(pendingRequestId, proposal.id, proposal.ask_price);
+                }
                 return;
             }
 
             store.setActiveProposal(stakeKey, {
                 id: proposal.id,
+                subscriptionId: msg.subscription?.id || null,
                 askPrice: proposal.ask_price,
                 receivedAt: recvTime,
                 symbol
@@ -929,21 +941,25 @@ class TradeWS {
             store.updateTradeLog(requestId, { result: 'BUYING...' });
             
             // CRITICAL: Clear only the specific proposal we just used!
-            // We find it by finding the key in activeProposal that matches this proposalId
             const activeProposals = store.activeProposal || {};
             const usedStakeKey = Object.keys(activeProposals).find(k => activeProposals[k].id === proposalId);
             if (usedStakeKey) {
+                const subId = activeProposals[usedStakeKey].subscriptionId || proposalId;
+                this.forgottenProposalIds.add(subId);
+                this.forgottenProposalIds.add(proposalId);
+                setTimeout(() => {
+                    this.forgottenProposalIds.delete(subId);
+                    this.forgottenProposalIds.delete(proposalId);
+                }, 3000);
+                this.socket?.send(JSON.stringify({ forget: subId }));
+                this.proposalSubscriptions.delete(usedStakeKey);
                 store.setActiveProposal(usedStakeKey, null as any);
-                this.proposalSubscriptions.delete(usedStakeKey); // CRITICAL: Clean up internal map too
+            } else {
+                // Fallback
+                this.forgottenProposalIds.add(proposalId);
+                setTimeout(() => this.forgottenProposalIds.delete(proposalId), 3000);
+                this.socket?.send(JSON.stringify({ forget: proposalId }));
             }
-            
-            // CRITICAL GHOST STREAM FIX:
-            // Deriv will continue pushing live ticks to this proposal.id stream even after you successfully buy it.
-            // If those ticks arrive, our generic proposal handler will identically re-cache this dead ID!
-            // We MUST forcefully execute a targeted forget to stop the zombie stream natively mapping into the UI.
-            this.forgottenProposalIds.add(proposalId);
-            setTimeout(() => this.forgottenProposalIds.delete(proposalId), 3000);
-            this.socket?.send(JSON.stringify({ forget: proposalId }));
         }
     }
 
