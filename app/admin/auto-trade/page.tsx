@@ -581,15 +581,39 @@ export default function AutoTradePage() {
             advancePipeline();
         }
 
-        // ── Cycle counter ────────────────────────────────────────────────
-        {
-            const isQualifyingVirtual = isVirtual && virtualSettings.startVirtualToReal;
+        // ── Real-loss bail-out ────────────────────────────────────────────
+        // When in real mode with a win-based Real→Virtual trigger, any real
+        // loss aborts the current cycle immediately: stop the engine, switch
+        // back to Virtual mode, reset the cycle counter, and let the interval
+        // timer kick off the next cycle fresh.
+        if (!isVirtual && isLost) {
+            // Read live virtualSettings from the store to avoid stale closure
+            const liveVS = useDerivStore.getState().virtualSettings;
+            if (liveVS.startRealToVirtual && liveVS.rTriggerType === 'wins') {
+                stopBot();
+                lastTradedMarketRef.current = selectedMarket;
+                cycleTradesCountRef.current = 0;
+                setCycleTradesCount(0);
+                // Revert to virtual mode so the next cycle starts with validation
+                setVirtualSettings({
+                    isVirtualMode: true,
+                    virtualWins: 0, virtualLosses: 0,
+                    vConsecWins: 0, vConsecLosses: 0,
+                    realWins: 0,    realLosses: 0,
+                    rConsecWins: 0, rConsecLosses: 0,
+                });
+                addAuditLog('🛑 Real loss — aborting cycle. Returning to VIRTUAL mode for next interval.', 'warn');
+                return;
+            }
+        }
 
-            if (!isQualifyingVirtual) {
+        // ── Cycle counter (real trades only) ─────────────────────────────
+        // Virtual trades are NEVER counted toward tradesPerCycle.
+        // Only completed real trades advance the cycle counter.
+        if (!isVirtual) {
+            {
                 // If pipeline mode is simultaneous, check if there are other open trades in the batch
-                const hasMoreActive = isVirtual
-                    ? tradeEngine.hasActiveVirtualTrades()
-                    : tradeWS.hasPendingTrade();
+                const hasMoreActive = tradeWS.hasPendingTrade();
 
                 if (pipelineMode === 'simultaneous' && hasMoreActive) {
                     // Wait for the other trades in the batch to settle before processing cycle counts
@@ -603,14 +627,12 @@ export default function AutoTradePage() {
                 const limit = Number(tradesPerCycle) || 1;
                 if (nextCycleTradesCount >= limit) {
                     if (cycleInterval !== 'continuous') {
-                        if (!isVirtual) {
-                            stopBot();
-                            lastTradedMarketRef.current = selectedMarket;
-                            // Reset cycle counter immediately so display shows 0/N while waiting for next interval
-                            cycleTradesCountRef.current = 0;
-                            setCycleTradesCount(0);
-                            addAuditLog(`Cycle complete (${nextCycleTradesCount}/${limit} trades). Stopping for next interval.`, 'success');
-                        }
+                        stopBot();
+                        lastTradedMarketRef.current = selectedMarket;
+                        // Reset cycle counter immediately so display shows 0/N while waiting for next interval
+                        cycleTradesCountRef.current = 0;
+                        setCycleTradesCount(0);
+                        addAuditLog(`Cycle complete (${nextCycleTradesCount}/${limit} real trades). Stopping for next interval.`, 'success');
                     } else {
                     // ── Continuous cycle-end: 60s scanner warmup then pick best market ──
                     stopBot();
