@@ -40,28 +40,35 @@ export const DIGIT_VALUES = Array.from({ length: 10 }, (_, i) => ({
 
 export function ticksToDecimals(market: string): number {
     switch (market) {
+        // 3 decimal places (pip_size = 0.001)
+        // Standard volatility 10 & 25 AND their 1s equivalents share the same pip size
         case 'R_10':
         case 'R_25':
+        case '1HZ15V':
+        case '1HZ30V':
+        case '1HZ90V':
             return 3;
+
+        // 4 decimal places (pip_size = 0.0001)
         case 'R_50':
         case 'R_75':
-            return 4;
-        case 'R_100':
-        case '1HZ100V':
-        case '1HZ10V':
-        case '1HZ25V':
         case '1HZ50V':
         case '1HZ75V':
+            return 4;
+
+        // 2 decimal places (pip_size = 0.01)
+        case 'R_100':
+        case '1HZ10V':   // Volatility 10 (1s) — 2 decimal places
+        case '1HZ25V':   // Volatility 25 (1s) — 2 decimal places
+        case '1HZ100V':
         case 'JD10':
         case 'JD25':
         case 'JD50':
         case 'JD75':
         case 'JD100':
             return 2;
-        case '1HZ15V':
-        case '1HZ30V':
-        case '1HZ90V':
-            return 3;
+
+        // Forex
         case 'frxEURUSD':
         case 'frxGBPUSD':
         case 'frxAUDUSD':
@@ -70,6 +77,10 @@ export function ticksToDecimals(market: string): number {
             return 5;
         case 'frxUSDJPY':
             return 3;
+        case 'frxXAGUSD':
+            return 4;
+
+        // Crash / Boom / Step
         case 'frxXAUUSD':
         case 'CRASH300':
         case 'CRASH500':
@@ -79,8 +90,7 @@ export function ticksToDecimals(market: string): number {
         case 'BOOM1000':
         case 'STPIDX10':
             return 2;
-        case 'frxXAGUSD':
-            return 4;
+
         default:
             return 2;
     }

@@ -879,6 +879,7 @@ export const useDerivStore = create<DerivState>()(
 
                     // Initialize DerivWS and Trade Engine with store access (AFTER cleanup)
                     derivWS.init(get);
+                    tradeWS.init(get);
                     tradeEngine.init(get, set);
 
                     derivWS.onStatusChange((status: ConnectionStatus) => {

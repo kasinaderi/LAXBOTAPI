@@ -306,9 +306,9 @@ class TradeEngine {
         // We must calculate the current digit from the raw 'tick' object here.
 
         const activeMarket = state.tradingApp === 'dtrader' ? state.manualMarket : state.market;
-        const precision = (tick.pip_size !== undefined && tick.pip_size > 0 && tick.pip_size < 1)
-            ? Math.abs(Math.log10(1 / tick.pip_size))
-            : (tick.pip_size || ticksToDecimals(activeMarket));
+        const precision = ((tick.pip_size !== undefined && tick.pip_size > 0 && tick.pip_size < 1)
+                ? Math.abs(Math.log10(1 / tick.pip_size))
+                : (tick.pip_size || ticksToDecimals(activeMarket)));
         const factor = Math.pow(10, precision);
         const roundedPrice = Math.round(tick.quote * factor) / factor;
         const priceString = roundedPrice.toFixed(precision);
@@ -900,6 +900,13 @@ class TradeEngine {
                             entrySpot: officialEntry || undefined
                         });
                     }
+                }
+                break;
+
+            case 'TRADE_ERROR':
+                if (this.activeRealTrade && this.activeRealTrade.requestId === String(data.requestId)) {
+                    console.warn(`[TradeEngine] Resetting activeRealTrade due to TRADE_ERROR:`, data.error);
+                    this.activeRealTrade = null;
                 }
                 break;
         }

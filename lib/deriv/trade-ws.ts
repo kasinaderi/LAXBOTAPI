@@ -89,11 +89,12 @@ class TradeWS {
 
         // Mark pending trades as ERROR before clearing
         const store = this.getState ? this.getState() : null;
-        if (store) {
-            this.tradePool.forEach((trade, id) => {
+        this.tradePool.forEach((trade, id) => {
+            if (store) {
                 store.updateTradeLog(id, { result: 'ERROR', error: 'Disconnected manually' });
-            });
-        }
+            }
+            this.emitEvent('TRADE_ERROR', { requestId: id, error: 'Disconnected manually' });
+        });
         this.tradePool.clear();
 
         if (store) {
@@ -176,12 +177,12 @@ class TradeWS {
 
                 // Mark pending trades as ERROR before clearing
                 const store = this.getState ? this.getState() : null;
-                if (store) {
-                    this.tradePool.forEach((trade, id) => {
+                this.tradePool.forEach((trade, id) => {
+                    if (store) {
                         store.updateTradeLog(id, { result: 'ERROR', error: 'Connection Lost' });
-                    });
-                }
-
+                    }
+                    this.emitEvent('TRADE_ERROR', { requestId: id, error: 'Connection Lost' });
+                });
                 this.tradePool.clear();
                 this.stopHeartbeat();
                 if (this.shouldReconnect) {
@@ -244,6 +245,10 @@ class TradeWS {
 
     public onEvent(callback: (type: string, data: any) => void) {
         this.eventListeners.push(callback);
+    }
+
+    public offEvent(callback: (type: string, data: any) => void) {
+        this.eventListeners = this.eventListeners.filter(cb => cb !== callback);
     }
 
     private emitEvent(type: string, data: any) {
@@ -346,6 +351,10 @@ class TradeWS {
             if (errReqId) {
                 store.updateTradeLog(errReqId, {
                     result: 'ERROR',
+                    error: errorMsg
+                });
+                this.emitEvent('TRADE_ERROR', {
+                    requestId: String(errReqId),
                     error: errorMsg
                 });
                 this.tradePool.delete(String(errReqId));
@@ -714,6 +723,15 @@ class TradeWS {
     }
 
     public executeDirectTrade(payload: any): string {
+        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+            console.error('[TradeWS] executeDirectTrade: Socket not open. Trade dropped.');
+            return '';
+        }
+        if (!this.isAuthorized) {
+            console.error('[TradeWS] executeDirectTrade: Not authorized. Trade dropped. Reconnecting...');
+            this.connect();
+            return '';
+        }
         if (this.tradePool.size >= 5) {
             return '';
         }

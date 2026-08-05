@@ -297,6 +297,7 @@ export class SmartScanner {
             historyReady: this.historyReady,
             lastEpoch: this.lastEpoch,
             digits: digits1000,
+            quotes: this.ticksBuffer.map(t => t.quote),
             details: {
                 dominantSide: stats1000.oddPct > stats1000.evenPct ? 'ODD' : 'EVEN',
                 oddPct: stats1000.oddPct,

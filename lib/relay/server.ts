@@ -181,9 +181,11 @@ class TickRelayService {
         this.totalTicksReceived++;
 
         // Extract digit at precision (Robust)
-        const precision = (pip_size !== undefined && pip_size > 0 && pip_size < 1)
-            ? Math.abs(Math.round(Math.log10(1 / pip_size)))
-            : (pip_size || 2);
+        const precision = (symbol === '1HZ10V' || symbol === '1HZ25V')
+            ? 3
+            : ((pip_size !== undefined && pip_size > 0 && pip_size < 1)
+                ? Math.abs(Math.round(Math.log10(1 / pip_size)))
+                : (pip_size || 2));
 
         const quoteStr = quote.toFixed(precision);
         const digit = parseInt(quoteStr.charAt(quoteStr.length - 1), 10);

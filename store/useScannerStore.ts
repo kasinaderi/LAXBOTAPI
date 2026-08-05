@@ -25,21 +25,44 @@ const fetchingSymbols = new Set<string>();
 /** Unsubscribe handle returned by derivWS.onMessage */
 let derivWsUnsubscribe: (() => void) | null = null;
 
+/** Registry of callbacks for real-time tick events */
+const tickCallbacks = new Set<(symbol: string) => void>();
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Extract last digit from a quote price using pip_size or string parsing.
- * This mirrors what the trade engine already does.
+ * Extract last digit from a quote price.
+ *
+ * Strategy:
+ * 1. Try to read the raw decimal string from the API quote directly (most accurate).
+ *    e.g. quote=9456.129 → String gives "9456.129" → last digit = 9
+ * 2. If there's no decimal point in the raw string (integer quote), fall back to
+ *    the pip_size / constants-table approach with toFixed().
+ *
+ * This avoids the zero-padding problem: if the Deriv API sends 9456.12 (2dp)
+ * for a "3dp" market, toFixed(3) would give "9456.120" → last digit wrongly 0.
  */
-function extractDigit(quote: number, pipSize?: number): number {
-    const decimals = pipSize && pipSize > 0
-        ? Math.abs(Math.round(Math.log10(1 / pipSize)))
-        : (() => {
-              const s = quote.toString();
-              return s.includes('.') ? s.split('.')[1].length : 0;
-          })();
+function extractDigit(symbol: string, quote: number, pipSize?: number): number {
+    // First: try the raw string representation — this preserves the actual
+    // number of decimal places the server sent, with no padding.
+    const rawStr = String(quote);
+    const dotIdx = rawStr.indexOf('.');
+    if (dotIdx !== -1 && rawStr.length > dotIdx + 1) {
+        // Strip any trailing exponent (shouldn't happen for tick prices, but be safe)
+        const decPart = rawStr.substring(dotIdx + 1).replace(/e.*$/i, '');
+        if (decPart.length > 0) {
+            const lastChar = decPart[decPart.length - 1];
+            const d = parseInt(lastChar, 10);
+            if (!isNaN(d)) return d;
+        }
+    }
+
+    // Fallback: use explicit decimal count from pip_size or the constants table
+    const decimals = pipSize && pipSize > 0 && pipSize < 1
+            ? Math.abs(Math.round(Math.log10(1 / pipSize)))
+            : ticksToDecimals(symbol);
     const str = quote.toFixed(decimals);
     const d = parseInt(str[str.length - 1], 10);
     return isNaN(d) ? 0 : d;
@@ -55,7 +78,9 @@ interface ScannerStoreState {
         regime: string;
         historySize: number;
         historyReady: boolean;
+        lastEpoch?: number;
         digits?: number[];
+        quotes?: number[];
         details?: {
             dominantSide: string;
             oddPct: number;
@@ -81,6 +106,9 @@ interface ScannerStoreState {
 
     /** Internal — fetches tick history for a queued symbol */
     processQueue: () => void;
+
+    /** Register callback for when a tick is processed in real time */
+    onTick: (callback: (symbol: string) => void) => () => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -100,7 +128,7 @@ export const useScannerStore = create<ScannerStoreState>((set, get) => ({
         const scanner = scanners.get(symbol);
         if (!scanner) return;
 
-        const digit = extractDigit(quote, pip_size);
+        const digit = extractDigit(symbol, quote, pip_size);
 
         const scannerTick: ScannerTick = { quote, digit, epoch };
 
@@ -132,11 +160,18 @@ export const useScannerStore = create<ScannerStoreState>((set, get) => ({
                     regime: status.regime,
                     historySize: status.historySize,
                     historyReady: status.historyReady,
+                    lastEpoch: status.lastEpoch,
                     digits: status.digits || [],
+                    quotes: (status as any).quotes || [],
                     details: status.details || undefined,
                 },
             },
         }));
+
+        // Fire real-time subscribers
+        tickCallbacks.forEach(cb => {
+            try { cb(symbol); } catch (e) { console.error('[ScannerStore] Error in onTick subscriber:', e); }
+        });
     },
 
     // ── Ensure scanner + WS subscription ─────────────────────────────────
@@ -184,30 +219,32 @@ export const useScannerStore = create<ScannerStoreState>((set, get) => ({
                     const times  = response.history.times  as number[];
                     const prices = response.history.prices as number[];
 
-                    // Determine decimal precision from pip_size or price strings
+                    // Determine decimal precision: pip_size from API wins;
+                    // otherwise use the hardcoded table (matches LaxSniper XV).
                     const rawPipSize = response.pip_size;
-                    let decimals = 2;
-                    if (rawPipSize && rawPipSize > 0 && rawPipSize < 1) {
-                        decimals = Math.abs(Math.round(Math.log10(1 / rawPipSize)));
-                    } else if (prices.length > 0) {
-                        let maxDec = 0;
-                        for (let i = 0; i < Math.min(prices.length, 100); i++) {
-                            const s = prices[i].toString();
-                            if (s.includes('.')) maxDec = Math.max(maxDec, s.split('.')[1].length);
-                        }
-                        decimals = maxDec || ticksToDecimals(symbol);
-                    } else {
-                        decimals = ticksToDecimals(symbol);
-                    }
+                    const decimals = rawPipSize && rawPipSize > 0 && rawPipSize < 1
+                        ? Math.abs(Math.round(Math.log10(1 / rawPipSize)))
+                        : ticksToDecimals(symbol);
 
                     const historyTicks: ScannerTick[] = times.map((time, idx) => {
                         const price  = prices[idx];
-                        const factor = Math.pow(10, decimals);
-                        const rounded = Math.round(price * factor) / factor;
-                        const str    = rounded.toFixed(decimals);
-                        const digit  = parseInt(str[str.length - 1], 10);
+                        // Use raw string first (same logic as extractDigit) to avoid zero-padding
+                        const rawStr = String(price);
+                        const dotIdx = rawStr.indexOf('.');
+                        let digit: number;
+                        if (dotIdx !== -1 && rawStr.length > dotIdx + 1) {
+                            const decPart = rawStr.substring(dotIdx + 1).replace(/e.*$/i, '');
+                            digit = parseInt(decPart[decPart.length - 1], 10);
+                        } else {
+                            // Fallback: use pip_size-based toFixed
+                            const factor = Math.pow(10, decimals);
+                            const rounded = Math.round(price * factor) / factor;
+                            const str    = rounded.toFixed(decimals);
+                            digit = parseInt(str[str.length - 1], 10);
+                        }
                         return { epoch: time, quote: price, digit: isNaN(digit) ? 0 : digit };
                     });
+
 
                     const scanner = scanners.get(symbol);
                     if (scanner) {
@@ -227,7 +264,9 @@ export const useScannerStore = create<ScannerStoreState>((set, get) => ({
                                     regime: status.regime,
                                     historySize: status.historySize,
                                     historyReady: status.historyReady,
+                                    lastEpoch: status.lastEpoch,
                                     digits: status.digits || [],
+                                    quotes: (status as any).quotes || [],
                                     details: status.details || undefined,
                                 },
                             },
@@ -315,5 +354,12 @@ export const useScannerStore = create<ScannerStoreState>((set, get) => ({
         fetchingSymbols.clear();
 
         console.log('[ScannerStore] Stopped. All scanners cleared.');
+    },
+
+    onTick: (callback) => {
+        tickCallbacks.add(callback);
+        return () => {
+            tickCallbacks.delete(callback);
+        };
     },
 }));
