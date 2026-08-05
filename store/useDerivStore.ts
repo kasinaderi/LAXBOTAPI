@@ -560,9 +560,13 @@ export const useDerivStore = create<DerivState>()(
                 };
             }),
 
-            addTradeLog: (log: any) => set((state: DerivState) => ({
-                tradeLogs: [log, ...state.tradeLogs].slice(0, 100)
-            })),
+            addTradeLog: (log: any) => set((state: DerivState) => {
+                // Guard against duplicates: if a log with the same requestId already exists, skip it.
+                if (log.requestId && state.tradeLogs.some(l => String(l.requestId) === String(log.requestId))) {
+                    return {}; // no-op
+                }
+                return { tradeLogs: [log, ...state.tradeLogs].slice(0, 100) };
+            }),
 
             updateTradeLog: (requestId: string, updates: any) => set((state: DerivState) => {
                 const reqIdStr = String(requestId);
@@ -759,6 +763,10 @@ export const useDerivStore = create<DerivState>()(
                 currentPipelineStep: 0,
                 virtualSettings: {
                     ...state.virtualSettings,
+                    // Always restart in virtual mode when startVirtualToReal is on.
+                    // This guarantees each new cycle begins with virtual validation,
+                    // regardless of which mode the previous cycle finished in.
+                    isVirtualMode: state.virtualSettings.startVirtualToReal ? true : state.virtualSettings.isVirtualMode,
                     virtualWins: 0,
                     virtualLosses: 0,
                     vConsecWins: 0,

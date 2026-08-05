@@ -947,17 +947,19 @@ class TradeEngine {
         const exitQuote = exitTick.quote;
         const entryQuote = vt.entryTickQuote || 0;
 
-        // Robust precision: convert pip_size multiplier (e.g. 0.001) to decimal count (3)
-        // Same formula used in onTick() to guarantee consistency across all markets
+        // Exact same formula used in onTick() for live digit extraction.
+        // Round first to avoid floating-point drift, then extract last digit.
         const rawPipSize = exitTick.pip_size;
         const precision = (rawPipSize !== undefined && rawPipSize > 0 && rawPipSize < 1)
             ? Math.abs(Math.round(Math.log10(1 / rawPipSize)))
             : (rawPipSize || ticksToDecimals(vt.symbol));
 
-        const priceString = exitQuote.toFixed(precision);
+        const factor = Math.pow(10, precision);
+        const roundedPrice = Math.round(exitQuote * factor) / factor;
+        const priceString = roundedPrice.toFixed(precision);
         const exitDigit = parseInt(priceString.charAt(priceString.length - 1), 10);
 
-        console.log(`[TradeEngine] Virtual Settlement: Quote=${exitQuote} EntryQuote=${entryQuote} Precision=${precision} ExitDigit=${exitDigit} Prediction=${vt.prediction} Type=${vt.contractType}`);
+        console.log(`[TradeEngine] Virtual Settlement: Quote=${exitQuote} Rounded=${roundedPrice} Precision=${precision} ExitDigit=${exitDigit} Prediction=${vt.prediction} Type=${vt.contractType}`);
 
         let isWin = false;
         switch (vt.contractType) {
