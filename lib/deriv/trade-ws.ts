@@ -723,16 +723,11 @@ class TradeWS {
     }
 
     public executeDirectTrade(payload: any): string {
-        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-            console.error('[TradeWS] executeDirectTrade: Socket not open. Trade dropped.');
-            return '';
-        }
-        if (!this.isAuthorized) {
-            console.error('[TradeWS] executeDirectTrade: Not authorized. Trade dropped. Reconnecting...');
+        if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.isAuthorized) {
+            console.warn('[TradeWS] executeDirectTrade: Socket not open or not authorized. Attempting reconnect...');
             this.connect();
             return '';
-        }
-        if (this.tradePool.size >= 5) {
+        }        if (this.tradePool.size >= 5) {
             return '';
         }
 

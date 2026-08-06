@@ -44,6 +44,7 @@ export interface Strategy {
   enabled: boolean;
   tradePattern: boolean[];
   useTradePattern: boolean;
+  noContradiction: boolean;
 }
 
 export interface TradeLog {
@@ -132,11 +133,26 @@ export function createStrategy(_index: number): Strategy {
     enabled: true,
     tradePattern: [true, true, true, true],
     useTradePattern: false,
+    noContradiction: false,
   };
 }
 
 export function needsBarrier(contractType: string): boolean {
   return contractType === 'DIGITOVER' || contractType === 'DIGITUNDER';
+}
+
+export function checkIsOpposite(contractType: string, prediction: number, digit: number, quote: number, prevQuote: number): boolean {
+  switch (contractType) {
+    case 'DIGITEVEN':  return digit % 2 === 0;
+    case 'DIGITODD':   return digit % 2 !== 0;
+    case 'DIGITOVER':  return digit > prediction;
+    case 'DIGITUNDER': return digit <= prediction;
+    case 'DIGITMATCH': return digit === prediction;
+    case 'DIGITDIFF':  return digit !== prediction;
+    case 'CALL':       return quote > prevQuote;
+    case 'PUT':        return quote < prevQuote;
+    default:           return false;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -263,10 +279,65 @@ const eng = {
   activeVirtual: [] as any[],
   patternPos:    {} as Record<string, number>,
   retrigger:     {} as Record<string, { lastWasTrue: boolean; waitingForOpposite: boolean }>,
+  waitingForOpposite: {} as Record<string, boolean>,
+  // Cross-market 1.5s gap: prevents 2 different markets firing at exactly the same time
+  lastTradeTime: 0,
 };
 
 // Single onTick subscription handle — registered once, lives forever
 let _onTickUnsub: (() => void) | null = null;
+
+// ── Trade Retry Queue ─────────────────────────────────────────────────────────
+// When the socket is not yet ready, we queue the trade and retry up to 5 times
+// with 300ms intervals instead of dropping it silently.
+interface QueuedTrade {
+  params: any;
+  stratId: string;
+  symbol: string;
+  si: number;
+  tradeStake: number;
+  contractType: string;
+  barrier: number | undefined;
+  label: string;
+  mLabel: string;
+  entryDigit: number;
+  lossCount: number;
+  retries: number;
+}
+const _tradeQueue: QueuedTrade[] = [];
+let _tradeQueueTimer: ReturnType<typeof setInterval> | null = null;
+
+// Exported set of requestIds placed by the bot — lets the UI read from Deriv store directly (instant)
+export const botTradeIds = new Set<string>();
+
+function _startTradeQueue() {
+  if (_tradeQueueTimer) return;
+  _tradeQueueTimer = setInterval(() => {
+    if (_tradeQueue.length === 0) return;
+    const item = _tradeQueue[0];
+    // Only retry if bot is still running
+    if (!useBotStore.getState().isRunning) { _tradeQueue.shift(); return; }
+    const requestId = tradeWS.executeDirectTrade(item.params);
+    if (requestId) {
+      _tradeQueue.shift();
+      const now = Date.now();
+      botTradeIds.add(requestId);
+      eng.activeTrades.set(requestId, { stratId: item.stratId, symbol: item.symbol, stake: item.tradeStake, startTime: now });
+      eng.cooldown[`${item.stratId}_${item.symbol}`] = now;
+      eng.lastTradeTime = now;
+      useBotStore.getState().addLog({
+        id: requestId, time: now, symbol: item.symbol, strategyIndex: item.si,
+        contract: item.contractType, stake: item.tradeStake,
+        result: 'SENT', profit: 0,
+        entrySpot: String(item.entryDigit),
+        exitSpot: '-',
+        step: item.lossCount + 1,
+      });
+      useBotStore.getState().set_status(`✓ Sent: ${item.label} on ${item.mLabel}`);
+    }
+    // If socket not ready: silently wait (no drop, no counter — socket will reconnect automatically)
+  }, 300);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STORE INTERFACE
@@ -303,6 +374,7 @@ interface BotStoreState {
   startBot:   () => void;
   stopBot:    (reason?: string) => void;
   resetAll:   () => void;
+  set_status: (msg: string) => void;
 
   // ── Log helpers ────────────────────────────────────────────────────────────
   addLog:    (log: TradeLog) => void;
@@ -363,6 +435,7 @@ export const useBotStore = create<BotStoreState>()(
         set(state => ({ signalFlash: { ...state.signalFlash, [symbol]: ts } }));
       },
 
+
       // ── Bot controls ─────────────────────────────────────────────────────────
 
       startBot: () => {
@@ -373,6 +446,14 @@ export const useBotStore = create<BotStoreState>()(
         eng.activeVirtual = [];
         eng.patternPos    = {};
         eng.retrigger     = {};
+        eng.waitingForOpposite = {};
+        botTradeIds.clear();
+
+        // Proactively connect/ensure the trade socket is open
+        if (typeof window !== 'undefined') {
+          tradeWS.connect();
+          _startTradeQueue();
+        }
 
         set({ isRunning: true, botStatusMsg: 'Running. Waiting for conditions...', lastSignal: '' });
 
@@ -398,11 +479,17 @@ export const useBotStore = create<BotStoreState>()(
         eng.activeVirtual = [];
         eng.patternPos    = {};
         eng.retrigger     = {};
+        eng.waitingForOpposite = {};
+        eng.lastTradeTime = 0;
+        _tradeQueue.length = 0;
+        botTradeIds.clear();
         set({
           tradeLogs:   [],
           globalStats: { won: 0, lost: 0, totalProfit: 0, totalTrades: 0 },
         });
       },
+
+      set_status: (msg: string) => set({ botStatusMsg: msg }),
 
       // ── Core scan engine ─────────────────────────────────────────────────────
 
@@ -413,7 +500,9 @@ export const useBotStore = create<BotStoreState>()(
 
         const derivState = useDerivStore.getState();
         const isVirtual  = derivState.virtualSettings.isVirtualMode;
-        if (!isVirtual && !derivState.isTradeAuthorized) return;
+        // For real mode: we allow scanning even if not yet authorized — trades queue up
+        // and retry until the socket is ready. Only block if we have no token at all.
+        if (!isVirtual && !derivState.account?.token && !derivState.token) return;
 
         const now      = Date.now();
         const baseStake = parseFloat(state.stake) || 0.35;
@@ -481,20 +570,21 @@ export const useBotStore = create<BotStoreState>()(
           };
           set({ globalStats: newStats });
 
-          // Update strategy state + martingale
           if (isWin) {
             ss.won++; ss.totalProfit += resultProfit; ss.lossCount = 0;
-            ss.currentStake = baseStake;
+            ss.currentStake = Math.round(baseStake * 100) / 100;
             eng.patternPos[stratId] = 0;            // reset pipeline on win
           } else {
             ss.lost++; ss.totalProfit += resultProfit; ss.lossCount++;
             if (tradingMode === 'continuous') {
-              ss.currentStake = Math.min(
-                ss.currentStake * parseFloat(martingale || '2.1'),
+              const rawNextStake = ss.currentStake * parseFloat(martingale || '2.1');
+              ss.currentStake = Math.round(Math.min(
+                rawNextStake,
                 baseStake * Math.pow(parseFloat(martingale || '2.1'), 10)
-              );
+              ) * 100) / 100;
             }
           }
+
 
           // Virtual streak tracking → auto-switch to real
           const vsV = derivState.virtualSettings;
@@ -550,13 +640,19 @@ export const useBotStore = create<BotStoreState>()(
           // ── 1-second cooldown per strategy+market ─────────────────────────
           if (now - (eng.cooldown[ck] || 0) < 1000) continue;
 
-          // ── Evict stale real trades (> 25s with no result = socket issue) ─
-          // Without this, one stuck trade blocks ALL future signals forever.
-          for (const [tid, t] of eng.activeTrades.entries()) {
-            if (t.stratId === stratId && now - t.startTime > 25000) {
-              console.warn(`[BotEngine] Evicting stale trade ${tid} for ${t.symbol} (>25s)`);
-              eng.activeTrades.delete(tid);
-              get().updateLog(tid, { result: 'ERROR', profit: 0, exitSpot: 'TIMEOUT' });
+          // ── No Contradiction (Wait for Opposite) guard ─────────────────────
+          if (s.noContradiction && eng.waitingForOpposite[ck]) {
+            const currentDigit = digits[digits.length - 1] ?? 0;
+            const currentQuote = quotes[quotes.length - 1] ?? 0;
+            const prevQuote    = quotes[quotes.length - 2] ?? 0;
+
+            const isOpposite = checkIsOpposite(s.tradeType, s.prediction, currentDigit, currentQuote, prevQuote);
+            if (isOpposite) {
+              eng.waitingForOpposite[ck] = false;
+              console.log(`[BotEngine] 🔄 Contradiction Cleared: Opposite digit/state detected (${currentDigit}) on ${symbol}. Resuming scanning.`);
+            } else {
+              // Still waiting for contradiction to clear
+              continue;
             }
           }
 
@@ -570,7 +666,6 @@ export const useBotStore = create<BotStoreState>()(
             t => t.stratId === stratId && t.symbol === symbol
           );
           if (hasRecentReal || hasVirt) continue;
-
           // Digit pattern retrigger guard
           const dpCond = s.conditions.find(c => c.type === 'DIGIT_PATTERN');
           if (dpCond && dpCond.patternRetrigger !== 'any') {
@@ -622,7 +717,15 @@ export const useBotStore = create<BotStoreState>()(
           // ── TRIGGER FIRED ─────────────────────────────────────────────────
           get()._flashSignal(symbol);
 
-          const tradeStake   = Math.max(0.35, ss.currentStake);
+          // Set contradiction lock if enabled
+          if (s.noContradiction) {
+            eng.waitingForOpposite[ck] = true;
+          }
+
+          // Enforce 2 decimal places strictly on the stake
+          const rawStake = Math.max(0.35, ss.currentStake);
+          const tradeStake = Math.round(rawStake * 100) / 100;
+
           const contractType = s.tradeType;
           const barrier      = needsBarrier(contractType) ? s.prediction : undefined;
           const label        = TRADE_OPTIONS.find(t => t.value === contractType)?.label || contractType;
@@ -659,39 +762,54 @@ export const useBotStore = create<BotStoreState>()(
 
           } else {
             // ── REAL ──────────────────────────────────────────────────────
-            const requestId = tradeWS.executeDirectTrade({
+
+            // 1.5 second cross-market gap: prevent two different markets firing simultaneously
+            if (now - eng.lastTradeTime < 1500) continue;
+
+            const entryDigit = digits[digits.length - 1] ?? 0;
+            const tradeParams = {
               contract_type: contractType,
               stake: tradeStake, symbol, currency,
               duration: s.ticks, duration_unit: 't',
               barrier: barrier !== undefined ? barrier : undefined,
-            });
+            };
+
+            const requestId = tradeWS.executeDirectTrade(tradeParams);
 
             if (!requestId) {
-              set({ botStatusMsg: `⚠ Trade socket not ready — skipping ${mLabel}` });
-              continue;
+              // Socket not ready — queue this trade for retry instead of dropping it
+              set({ botStatusMsg: `⏳ Queued: ${label} on ${mLabel} (socket not ready)` });
+              _startTradeQueue();
+              _tradeQueue.push({
+                params: tradeParams,
+                stratId, symbol, si, tradeStake, contractType, barrier,
+                label, mLabel, entryDigit, lossCount: ss.lossCount, retries: 0,
+              });
+              // Hold contradiction lock until trade actually fires
+              eng.cooldown[ck] = now;
+              eng.lastTradeTime = now;
+            } else {
+              eng.cooldown[ck] = now;
+              eng.lastTradeTime = now;
+              botTradeIds.add(requestId);
+              eng.activeTrades.set(requestId, { stratId, symbol, stake: tradeStake, startTime: now });
+
+              get().addLog({
+                id: requestId, time: now, symbol, strategyIndex: si,
+                contract: contractType, stake: tradeStake,
+                result: 'SENT', profit: 0,
+                entrySpot: String(entryDigit),
+                exitSpot:  '-',
+                step: ss.lossCount + 1,
+              });
+              set({
+                lastSignal:   `Strategy ${si + 1} on ${mLabel} → ${label}`,
+                botStatusMsg: `✓ Sent: ${label} on ${mLabel} — waiting for result`,
+              });
             }
-
-            const entryDigit = digits[digits.length - 1] ?? 0;
-            eng.cooldown[ck] = now;
-            eng.activeTrades.set(requestId, { stratId, symbol, stake: tradeStake, startTime: now });
-
-            get().addLog({
-              id: requestId, time: now, symbol, strategyIndex: si,
-              contract: contractType, stake: tradeStake,
-              result: 'SENT', profit: 0,
-              entrySpot: String(entryDigit),   // show entry digit immediately
-              exitSpot:  '-',
-              step: ss.lossCount + 1,
-            });
-
-            set({
-              lastSignal:   `Strategy ${si + 1} on ${mLabel} → ${label}`,
-              botStatusMsg: `✓ Sent: ${label} on ${mLabel} — waiting for result`,
-            });
           }
         }
       },
-
       // ── Trade event handler (called from tradeWS listener below) ─────────────
 
       _handleTradeEvent: (type: string, data: any) => {
@@ -771,19 +889,19 @@ export const useBotStore = create<BotStoreState>()(
         };
         set({ globalStats: newStats });
 
-        // Strategy martingale
         if (ss) {
           if (isWin) {
             ss.won++; ss.totalProfit += resultProfit; ss.lossCount = 0;
-            ss.currentStake = baseStake;
+            ss.currentStake = Math.round(baseStake * 100) / 100;
             eng.patternPos[stratId] = 0;
           } else {
             ss.lost++; ss.totalProfit += resultProfit; ss.lossCount++;
             if (state.tradingMode === 'continuous') {
-              ss.currentStake = Math.min(
-                ss.currentStake * parseFloat(state.martingale || '2.1'),
+              const rawNextStake = ss.currentStake * parseFloat(state.martingale || '2.1');
+              ss.currentStake = Math.round(Math.min(
+                rawNextStake,
                 baseStake * Math.pow(parseFloat(state.martingale || '2.1'), 10)
-              );
+              ) * 100) / 100;
             }
           }
         }

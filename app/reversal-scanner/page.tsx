@@ -4,13 +4,14 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useDerivStore } from '@/store/useDerivStore';
 import { useScannerStore } from '@/store/useScannerStore';
 import { derivWS } from '@/lib/deriv/websocket';
-import { Play, Square, ChevronDown, AlertTriangle, Loader2, Layers } from 'lucide-react';
+import { Play, Square, ChevronDown, AlertTriangle, Loader2, Layers, ShieldAlert } from 'lucide-react';
 import {
   useBotStore,
   Strategy, Condition, TradeLog,
   ALL_MARKETS as BOT_ALL_MARKETS,
   TRADE_OPTIONS as BOT_TRADE_OPTIONS,
   createCondition, createStrategy, needsBarrier,
+  botTradeIds,
 } from '@/store/useBotStore';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -400,6 +401,15 @@ function StrategyBlock({ strategy, index, onChange, onRemove }: {
         />
       )}
 
+      {/* No Contradiction toggle */}
+      <div className="lp-tpb-row" style={{ marginTop: 6 }}>
+        <label className="lp-tpb-lbl-check">
+          <input type="checkbox" checked={!!strategy.noContradiction}
+            onChange={e => u({ noContradiction: e.target.checked })} />
+          <ShieldAlert size={11} style={{ marginLeft: 3, marginRight: 3, color: '#f59e0b' }} />
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#d97706' }}>NO CONTRADICTION (WAIT FOR OPPOSITE)</span>
+        </label>
+      </div>
       <button className="lp-add-cond-btn" onClick={addCond}>+ CONDITION</button>
 
       <div className="lp-summary">{strategySummary(strategy, index)}</div>
@@ -475,20 +485,92 @@ function MarketCard({ symbol, label, isFlashing }: {
 // TRADE LOG PANEL
 // ─────────────────────────────────────────────────────────────────────────────
 
-function TradeLogPanel({ logs, stats, onReset }: {
+function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
   logs: TradeLog[];
   stats: { won: number; lost: number; totalProfit: number; totalTrades: number };
   onReset: () => void;
 }) {
   const [tab, setTab] = useState<'transactions' | 'summary' | 'journal'>('transactions');
 
+  // Direct, superfast reading of real trades from the Deriv store
+  const derivLogs = useDerivStore(state => state.tradeLogs);
+
+  const combinedLogs = React.useMemo(() => {
+    // 1. Map real trades from Deriv store
+    const realBotLogs = derivLogs
+      .filter(l => l.requestId && botTradeIds.has(String(l.requestId)))
+      .map(l => {
+        const localLog = rawLogs.find(x => String(x.id) === String(l.requestId));
+        const profitVal = l.profit !== null && l.profit !== undefined ? parseFloat(String(l.profit)) : 0;
+        const stakeVal = parseFloat(String(l.stake)) || localLog?.stake || 1;
+        const isWon = l.result === 'WON' || l.result === 'RISE WIN' || l.result === 'FALL WIN' || l.result === 'RISE_WIN' || l.result === 'FALL_WIN';
+        const isLost = l.result === 'LOST' || l.result === 'RISE LOSS' || l.result === 'FALL LOSS' || l.result === 'RISE_LOSS' || l.result === 'FALL_LOSS';
+        const resultLabel = isWon ? 'WON' : isLost ? 'LOST' : (l.result || 'RUNNING...');
+
+        return {
+          id: String(l.requestId),
+          time: l.time,
+          contract: l.contract,
+          symbol: l.symbol || localLog?.symbol || 'V10(1s)',
+          stake: stakeVal,
+          exitSpot: l.exit || '-',
+          entrySpot: l.entrySpot || '-',
+          profit: profitVal,
+          result: resultLabel,
+          step: localLog?.step || 1,
+        };
+      });
+
+    // 2. Map virtual trades from botStore
+    const virtLogs = rawLogs
+      .filter(l => String(l.id).startsWith('VIRT_'))
+      .map(l => ({
+        id: String(l.id),
+        time: l.time,
+        contract: l.contract,
+        symbol: l.symbol,
+        stake: l.stake,
+        exitSpot: l.exitSpot,
+        entrySpot: l.entrySpot,
+        profit: l.profit,
+        result: l.result,
+        step: l.step || 1,
+      }));
+
+    // 3. Merge and sort
+    const merged = [...realBotLogs, ...virtLogs];
+    merged.sort((a, b) => b.time - a.time);
+    return merged;
+  }, [derivLogs, rawLogs]);
+
   const contractLabel = (type: string) => {
     const m: Record<string, string> = {
       DIGITEVEN: 'EVEN', DIGITODD: 'ODD',
       DIGITOVER: 'OVER', DIGITUNDER: 'UNDER',
+      DIGITMATCH: 'MATCH', DIGITDIFF: 'DIFF',
       CALL: 'RISE', PUT: 'FALL',
     };
     return m[type] || type;
+  };
+
+  const getExitDisplay = (log: any) => {
+    const isRiseFall = log.contract === 'CALL' || log.contract === 'PUT';
+
+    if (isRiseFall) {
+      const entry = log.entrySpot && log.entrySpot !== '-' ? log.entrySpot : '';
+      const exit = log.exitSpot && log.exitSpot !== '-' ? log.exitSpot : '';
+      if (!exit) {
+        return entry ? `${entry}-...` : '-';
+      }
+      return `${entry}-${exit}`;
+    } else {
+      const rawExit = String(log.exitSpot || '-').trim();
+      if (rawExit === '-') return '-';
+      if (rawExit.includes('.')) {
+        return rawExit.charAt(rawExit.length - 1);
+      }
+      return rawExit;
+    }
   };
 
   return (
@@ -510,36 +592,46 @@ function TradeLogPanel({ logs, stats, onReset }: {
         <>
           <div className="lp-tx-hdr">
             <span>Type</span>
-            <span>Entry/Exit spot</span>
+            <span>Stake</span>
+            <span>Exit</span>
             <span>P/L</span>
           </div>
-          {logs.length === 0 ? (
+          {combinedLogs.length === 0 ? (
             <div className="lp-tx-empty">
               <div className="lp-tx-icon">📦</div>
               <span>There are no transactions to display</span>
             </div>
           ) : (
             <div className="lp-tx-list">
-              {logs.slice(0, 20).map(log => (
-                <div key={log.id} className={`lp-tx-row ${log.result === 'WON' ? 'won' : log.result === 'LOST' ? 'lost' : ''}`}>
-                  <div className="lp-tx-contract">
-                    <span className="lp-tx-type">{contractLabel(log.contract)}</span>
-                    <span className="lp-tx-sym">{log.symbol}</span>
-                    <span className={`lp-tx-result ${log.result.replace(/\.+/g, '')}`}>{log.result}</span>
+              {combinedLogs.slice(0, 30).map(log => {
+                const won = log.result === 'WON';
+                const lost = log.result === 'LOST';
+                const live = log.result === 'SENT' || log.result === 'BUYING...' || log.result === 'RUNNING...' || log.result === 'RUNNING' || log.result === 'VIRTUAL';
+
+                return (
+                  <div key={log.id} className={`lp-tx-row ${won ? 'won' : lost ? 'lost' : ''}`}>
+                    <div className="lp-tx-contract">
+                      <span className="lp-tx-type">{contractLabel(log.contract)}</span>
+                      <span className="lp-tx-sym">{log.symbol}</span>
+                      {log.step > 1 && <span style={{ fontSize: 8, color: '#f59e0b', fontWeight: 'bold' }}>Step {log.step}</span>}
+                    </div>
+
+                    <span style={{ fontWeight: '500', color: '#4b5563' }}>USD {log.stake.toFixed(2)}</span>
+
+                    <span style={{ fontFamily: 'monospace', fontWeight: '700', color: '#1f2937' }}>
+                      {getExitDisplay(log)}
+                    </span>
+
+                    <div className={`lp-tx-pnl ${log.profit >= 0 ? 'pos' : 'neg'}`}>
+                      {live ? (
+                        <Loader2 size={10} className="lp-spin" />
+                      ) : (
+                        `${log.profit >= 0 ? '+' : ''}${log.profit.toFixed(2)}`
+                      )}
+                    </div>
                   </div>
-                  <div className="lp-tx-spots">
-                    <span>{log.entrySpot || '-'}</span>
-                    <span className="lp-tx-arrow">→</span>
-                    <span>{log.exitSpot || '-'}</span>
-                  </div>
-                  <div className={`lp-tx-pnl ${log.profit >= 0 ? 'pos' : 'neg'}`}>
-                    {(log.result === 'SENT' || log.result === 'BUYING...' || log.result === 'RUNNING...' || log.result === 'RUNNING' || log.result === 'VIRTUAL')
-                      ? <Loader2 size={10} className="lp-spin" />
-                      : `${log.profit >= 0 ? '+' : ''}${log.profit.toFixed(2)}`
-                    }
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </>
@@ -548,10 +640,9 @@ function TradeLogPanel({ logs, stats, onReset }: {
       {tab === 'summary' && (
         <div className="lp-tx-empty" style={{ paddingTop: 24 }}>
           <span style={{ fontSize: 12, color: '#9ca3af' }}>
-            {logs.length === 0 ? 'No summary data yet.' : `${stats.totalTrades} trades completed.`}
+            {rawLogs.length === 0 ? 'No summary data yet.' : `${stats.totalTrades} trades completed.`}
           </span>
-        </div>
-      )}
+        </div>      )}
 
       {tab === 'journal' && (
         <div className="lp-tx-empty" style={{ paddingTop: 24 }}>
@@ -1161,31 +1252,22 @@ const STYLES = `
 .lp-tx-tab.active { color:#0e7490; border-bottom-color:#0e7490; }
 .lp-tx-actions { display:flex; gap:5px; padding:7px 10px; border-bottom:1px solid #f3f4f6; }
 .lp-tx-btn { flex:1; border:1px solid #d1d5db; border-radius:4px; padding:4px; font-size:11px; font-weight:700; color:#374151; background:#f9fafb; cursor:pointer; }
-.lp-tx-hdr { display:grid; grid-template-columns:1fr 1fr 60px; padding:5px 10px; border-bottom:1px solid #f3f4f6; }
+.lp-tx-hdr { display:grid; grid-template-columns:1fr 1fr 1.2fr 1fr; padding:5px 10px; border-bottom:1px solid #f3f4f6; }
 .lp-tx-hdr span { font-size:9px; font-weight:800; color:#9ca3af; }
 .lp-tx-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:28px 14px; gap:6px; flex:1; }
 .lp-tx-icon { font-size:28px; opacity:0.3; }
 .lp-tx-empty span { font-size:11px; color:#9ca3af; text-align:center; }
 
 .lp-tx-list { overflow-y:auto; max-height:260px; }
-.lp-tx-row { display:grid; grid-template-columns:1fr 1fr 60px; padding:5px 10px; border-bottom:1px solid #f9fafb; font-size:10px; align-items:center; }
+.lp-tx-row { display:grid; grid-template-columns:1fr 1fr 1.2fr 1fr; padding:5px 10px; border-bottom:1px solid #f9fafb; font-size:10px; align-items:center; }
 .lp-tx-row.won { background:#f0fdf4; }
 .lp-tx-row.lost { background:#fef2f2; }
 .lp-tx-contract { display:flex; flex-direction:column; gap:1px; }
 .lp-tx-type { font-weight:800; color:#374151; }
 .lp-tx-sym { font-size:9px; color:#9ca3af; }
-.lp-tx-result { font-size:9px; font-weight:700; }
-.lp-tx-result.WON { color:#16a34a; }
-.lp-tx-result.LOST { color:#ef4444; }
-.lp-tx-result.SENT,.lp-tx-result.BUYING,.lp-tx-result.RUNNING,.lp-tx-result.PENDING { color:#f59e0b; }
-.lp-tx-result.ERROR { color:#ef4444; }
-.lp-tx-result.VIRTUAL { color:#818cf8; }
-.lp-tx-spots { display:flex; align-items:center; gap:3px; font-size:10px; color:#6b7280; }
-.lp-tx-arrow { color:#9ca3af; }
 .lp-tx-pnl { font-size:11px; font-weight:800; text-align:right; }
 .lp-tx-pnl.pos { color:#16a34a; }
-.lp-tx-pnl.neg { color:#ef4444; }
-.lp-spin { animation:spin 1s linear infinite; }
+.lp-tx-pnl.neg { color:#ef4444; }.lp-spin { animation:spin 1s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }
 
 .lp-tx-stats { padding:10px; border-top:1px solid #e5e7eb; margin-top:auto; }
