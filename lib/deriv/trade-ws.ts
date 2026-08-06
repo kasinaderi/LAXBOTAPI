@@ -135,6 +135,15 @@ class TradeWS {
         }
 
         if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+            // Socket is open but not yet authorized (token was missing at connection time) — authorize now!
+            if (this.socket.readyState === WebSocket.OPEN && !this.isAuthorized && !this.isAuthorizing && this.isUsingPublicEndpoint) {
+                const tokenToUse = store?.token || this.token;
+                if (tokenToUse) {
+                    console.log('[TradeWS] Socket open but unauthed — sending authorize now...');
+                    this.isAuthorizing = true;
+                    this.socket.send(JSON.stringify({ authorize: tokenToUse }));
+                }
+            }
             return;
         }
         this.shouldReconnect = true; // Allow reconnects when we explicitly connect
@@ -209,25 +218,29 @@ class TradeWS {
     }
     
     private handleReconnect() {
-        const delays = [1000, 2000, 4000, 8000, 15000];
-        const delay = delays[this.reconnectAttempts] || 30000;
-
-        if (this.reconnectAttempts % 5 === 0) {
-            console.warn(`[TradeWS] Connection failed. Retrying in ${delay}ms... (Attempt ${this.reconnectAttempts + 1})`);
-        }
-
-        this.reconnectAttempts++;
-        setTimeout(() => this.connect(), delay);
+    // First retry is immediate, then exponential backoff
+    const delays = [0, 300, 800, 2000, 5000, 10000];
+    const delay = delays[Math.min(this.reconnectAttempts, delays.length - 1)];
+    this.reconnectAttempts++;
+    if (delay === 0) {
+      this.connect();
+    } else {
+      setTimeout(() => this.connect(), delay);
     }
+  }
 
     private startHeartbeat() {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      if (this.socket?.readyState === WebSocket.OPEN) {
+        this.socket.send(JSON.stringify({ ping: 1 }));
+      } else {
+        // Socket closed mid-session — trigger reconnect immediately
         this.stopHeartbeat();
-        this.heartbeatTimer = setInterval(() => {
-            if (this.socket?.readyState === WebSocket.OPEN) {
-                this.socket.send(JSON.stringify({ ping: 1 }));
-            }
-        }, 15000);
-    }
+        this.handleReconnect();
+      }
+    }, 8000); // 8s — detect dead sockets fast
+  }
 
     private stopHeartbeat() {
         if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
@@ -496,12 +509,15 @@ class TradeWS {
             const runningExit = extractExitDisplay(poc, isRiseFall);
 
             const rawProfit = parseFloat(poc.profit);
-            const stake = parseFloat(poc.buy_price);
+            // Use stored params stake as authoritative source — Deriv omits buy_price from stream updates
+            const stake = parseFloat(matchedTrade.params?.stake) || parseFloat(poc.buy_price) || 0.35;
             const payout = parseFloat(poc.payout);
 
             const isFinalWin = poc.status === 'won';
             const isFinalLoss = poc.status === 'lost';
-            const isResolved = isFinalWin || isFinalLoss || poc.is_sold === 1;
+            // is_expired fires the instant the exit tick arrives — same moment exit digit appears.
+            // Settle immediately here rather than waiting for the extra status='won'/'lost' round-trip.
+            const isResolved = isFinalWin || isFinalLoss || poc.is_sold === 1 || poc.is_expired === 1;
 
             // Build result label — for Rise/Fall show directional label
             const buildResultLabel = (isWin: boolean, isRF: boolean, contractType?: string): string => {
@@ -515,10 +531,11 @@ class TradeWS {
                 matchedTrade.settleRecvTime = Date.now();
                 store.updateTradeMetrics({ settlementLatency: matchedTrade.settleRecvTime - matchedTrade.buyRecvTime! });
 
-                const isWin = isFinalWin || (poc.status !== 'lost' && rawProfit > 0);
-                let finalProfit = rawProfit;
+                // isWin: trust Deriv's status field first, then fall back to profit sign
+                const isWin = isFinalWin || (!isFinalLoss && rawProfit > 0);
+                let finalProfit: number;
                 if (isWin) finalProfit = (payout && stake) ? (payout - stake) : rawProfit;
-                else finalProfit = stake ? -stake : rawProfit;
+                else finalProfit = -stake;
 
                 const finalExit = extractExitDisplay(poc, isRiseFall);
                 const resultLabel = buildResultLabel(isWin, isRiseFall, matchedTrade.contractType);
@@ -647,12 +664,13 @@ class TradeWS {
             };
 
             const rawProfit = parseFloat(poc.profit);
-            const stake = parseFloat(poc.buy_price);
+            // Use stored params stake as authoritative source — Deriv omits buy_price from stream updates
+            const stake = parseFloat(pendingTrade.params?.stake) || parseFloat(poc.buy_price) || 0.35;
             const payout = parseFloat(poc.payout);
 
             const isFinalWin = poc.status === 'won';
             const isFinalLoss = poc.status === 'lost';
-            const isResolved = isFinalWin || isFinalLoss || poc.is_sold === 1;
+            const isResolved = isFinalWin || isFinalLoss || poc.is_sold === 1 || poc.is_expired === 1;
 
             const buildResultLabel = (isWin: boolean, isRF: boolean, contractType?: string): string => {
                 if (!isRF) return isWin ? 'WON' : 'LOST';
@@ -665,10 +683,11 @@ class TradeWS {
                 pendingTrade.settleRecvTime = Date.now();
                 store.updateTradeMetrics({ settlementLatency: pendingTrade.settleRecvTime - pendingTrade.buyRecvTime! });
 
-                const isWin = isFinalWin || (poc.status !== 'lost' && rawProfit > 0);
-                let finalProfit = rawProfit;
+                // isWin: trust Deriv's status field first, then fall back to profit sign
+                const isWin = isFinalWin || (!isFinalLoss && rawProfit > 0);
+                let finalProfit: number;
                 if (isWin) finalProfit = (payout && stake) ? (payout - stake) : rawProfit;
-                else finalProfit = stake ? -stake : rawProfit;
+                else finalProfit = -stake;
 
                 const finalExit = extractExitDisplay(poc, isRiseFall);
                 const resultLabel = buildResultLabel(isWin, isRiseFall, pendingTrade.contractType);
@@ -723,13 +742,15 @@ class TradeWS {
     }
 
     public executeDirectTrade(payload: any): string {
-        if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.isAuthorized) {
-            console.warn('[TradeWS] executeDirectTrade: Socket not open or not authorized. Attempting reconnect...');
-            this.connect();
-            return '';
-        }        if (this.tradePool.size >= 5) {
-            return '';
-        }
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.isAuthorized) {
+      // Proactively reconnect so the queue retries succeed as soon as possible
+      this.connect();
+      return '';
+    }
+    if (this.tradePool.size >= 20) {
+      // Pool full — queue will retry in 200ms
+      return '';
+    }
 
         const requestId = `${Date.now()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
         const isRiseFall = payload.contract_type === 'CALL' || payload.contract_type === 'PUT';

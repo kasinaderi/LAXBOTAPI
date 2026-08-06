@@ -20,6 +20,15 @@ import { tradeWS } from '../lib/deriv/trade-ws';
 // TYPES (exported so page.tsx can import them)
 // ─────────────────────────────────────────────────────────────────────────────
 
+export interface PatternTrigger {
+  token: string;    // E | O | V | U | M | D | SE | SO | R | F
+  barrier?: number; // Only for V (Over) and U (Under)
+}
+
+export interface PatternBox {
+  triggers: PatternTrigger[];
+}
+
 export interface Condition {
   id: string;
   type: 'EVEN_PCT' | 'ODD_PCT' | 'LAST_DIGITS' | 'GREEN_BAR' | 'DIGIT_PATTERN';
@@ -33,6 +42,10 @@ export interface Condition {
   period: number;
   pattern: string[];
   patternRetrigger: string;
+  digitBarrier?: number;
+  patternBoxes?: PatternBox[];         // Multi-Entry Sequence (OR across boxes, AND within)
+  useCustomContracts?: boolean;        // DIGIT_PATTERN only: override trade contracts per loss step
+  customContracts?: { type: string; barrier: number }[]; // Trade contract per loss step
 }
 
 export interface Strategy {
@@ -54,7 +67,7 @@ export interface TradeLog {
   strategyIndex: number;
   contract: string;
   stake: number;
-  result: 'SENT' | 'BUYING...' | 'RUNNING...' | 'WON' | 'LOST' | 'ERROR' | 'RUNNING' | 'VIRTUAL';
+  result: 'SENT' | 'BUYING...' | 'RUNNING...' | 'WON' | 'LOST' | 'ERROR' | 'RUNNING' | 'VIRTUAL' | 'VIRT WON' | 'VIRT LOST';
   profit: number;
   entrySpot: string;
   exitSpot: string;
@@ -94,12 +107,14 @@ export const ALL_MARKETS = [
 ];
 
 export const TRADE_OPTIONS = [
-  { value: 'DIGITEVEN',  label: 'EVEN'     },
-  { value: 'DIGITODD',   label: 'ODD'      },
-  { value: 'DIGITOVER',  label: '>(OVER)'  },
-  { value: 'DIGITUNDER', label: '<(UNDER)' },
-  { value: 'CALL',       label: 'RISE'     },
-  { value: 'PUT',        label: 'FALL'     },
+  { value: 'DIGITEVEN',  label: 'EVEN'      },
+  { value: 'DIGITODD',   label: 'ODD'       },
+  { value: 'DIGITOVER',  label: '>(OVER)'   },
+  { value: 'DIGITUNDER', label: '<(UNDER)'  },
+  { value: 'DIGITMATCH', label: '=(MATCH)'  },
+  { value: 'DIGITDIFF',  label: '≠(DIFF)'   },
+  { value: 'CALL',       label: 'RISE'      },
+  { value: 'PUT',        label: 'FALL'      },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -120,6 +135,17 @@ export function createCondition(): Condition {
     period: 100,
     pattern: ['E', 'E', 'E', 'E'],
     patternRetrigger: 'any',
+    patternBoxes: [
+      { triggers: [{ token: 'U', barrier: 7 }, { token: 'E' }] }, // Box 1: last digit U7 AND before that E
+      { triggers: [{ token: 'V', barrier: 2 }] },                  // Box 2: last digit V2
+    ],
+    useCustomContracts: false,
+    customContracts: [
+      { type: 'DIGITUNDER', barrier: 7 }, // Loss step 1
+      { type: 'DIGITOVER',  barrier: 2 }, // Loss step 2
+      { type: 'DIGITMATCH', barrier: 5 }, // Loss step 3
+      { type: 'DIGITOVER',  barrier: 0 }, // Loss step 4
+    ],
   };
 }
 
@@ -138,7 +164,12 @@ export function createStrategy(_index: number): Strategy {
 }
 
 export function needsBarrier(contractType: string): boolean {
-  return contractType === 'DIGITOVER' || contractType === 'DIGITUNDER';
+  return (
+    contractType === 'DIGITOVER'  ||
+    contractType === 'DIGITUNDER' ||
+    contractType === 'DIGITMATCH' ||
+    contractType === 'DIGITDIFF'
+  );
 }
 
 export function checkIsOpposite(contractType: string, prediction: number, digit: number, quote: number, prevQuote: number): boolean {
@@ -190,7 +221,65 @@ function matchPatternToken(token: string, digits: number[], quotes: number[], id
   }
 }
 
+/** Match a single PatternTrigger against the digit/quote at history position idx */
+function matchTrigger(
+  trig: PatternTrigger,
+  dSlice: number[],
+  qSlice: number[],
+  idx: number
+): boolean {
+  const d  = dSlice[idx];
+  const pd = dSlice[idx - 1];
+  const q  = qSlice[idx];
+  const pq = qSlice[idx - 1];
+  const b  = trig.barrier ?? 4;
+  switch (trig.token) {
+    case 'E':  return d % 2 === 0;
+    case 'O':  return d % 2 !== 0;
+    case 'D':  return idx > 0 && d !== pd;
+    case 'M':  return idx > 0 && d === pd;
+    case 'V':  return d > b;
+    case 'U':  return d <= b;
+    case 'SE': return d % 2 === 0 && idx > 0 && d === pd;
+    case 'SO': return d % 2 !== 0 && idx > 0 && d === pd;
+    case 'R':  return idx > 0 && q > pq;
+    case 'F':  return idx > 0 && q < pq;
+    default:   return false;
+  }
+}
+
 function evaluateDigitPattern(cond: Condition, digits: number[], quotes: number[]): boolean {
+  const boxes = cond.patternBoxes;
+
+  // ── Multi-Entry Sequence (new format) ──────────────────────────────────────
+  if (boxes && boxes.length > 0) {
+    // Each Box is an alternative sequence (OR across boxes)
+    for (const box of boxes) {
+      const triggers = box.triggers;
+      if (!triggers || triggers.length === 0) continue;
+      const n = triggers.length;
+      // Need at least n+1 history points for idx-1 comparisons
+      if (digits.length < n + 1) continue;
+
+      // Take the last n digits (and n+1 quotes for direction comparisons)
+      const dSlice = digits.slice(-(n + 1));   // length = n+1
+      const qSlice = quotes.slice(-(n + 1));
+
+      // triggers[0] matches dSlice[1] (most-recent - (n-1) positions back)
+      // triggers[n-1] matches dSlice[n] (most recent digit)
+      let allMatch = true;
+      for (let i = 0; i < n; i++) {
+        if (!matchTrigger(triggers[i], dSlice, qSlice, i + 1)) {
+          allMatch = false;
+          break;
+        }
+      }
+      if (allMatch) return true; // OR: any box matching fires the condition
+    }
+    return false;
+  }
+
+  // ── Legacy string-pattern fallback ────────────────────────────────────────
   const pat = cond.pattern;
   if (!pat || pat.length === 0) return false;
   const n = pat.length;
@@ -228,9 +317,9 @@ function evaluateCondition(cond: Condition, digits: number[], quotes: number[]):
       switch (cond.digitValue) {
         case 'EVEN':       return lastN.every(d => d % 2 === 0);
         case 'ODD':        return lastN.every(d => d % 2 !== 0);
-        case 'OVER':       return lastN.every(d => d > 4);
-        case 'UNDER':      return lastN.every(d => d <= 4);
-        case 'EQUAL':      return lastN.every(d => d === lastN[0]);
+        case 'OVER':       return lastN.every(d => d > (cond.digitBarrier ?? 4));
+        case 'UNDER':      return lastN.every(d => d <= (cond.digitBarrier ?? 4));
+        case 'EQUAL':      return lastN.every(d => d === (cond.digitBarrier ?? lastN[0]));
         case 'RISE':
         case 'ONLY_UPS':   return moves.length >= n && moves.slice(-n).every(m => m === 'R');
         case 'FALL':
@@ -279,7 +368,7 @@ const eng = {
   activeVirtual: [] as any[],
   patternPos:    {} as Record<string, number>,
   retrigger:     {} as Record<string, { lastWasTrue: boolean; waitingForOpposite: boolean }>,
-  waitingForOpposite: {} as Record<string, boolean>,
+  waitingForOpposite: {} as Record<string, any>,
   // Cross-market 1.5s gap: prevents 2 different markets firing at exactly the same time
   lastTradeTime: 0,
 };
@@ -288,8 +377,6 @@ const eng = {
 let _onTickUnsub: (() => void) | null = null;
 
 // ── Trade Retry Queue ─────────────────────────────────────────────────────────
-// When the socket is not yet ready, we queue the trade and retry up to 5 times
-// with 300ms intervals instead of dropping it silently.
 interface QueuedTrade {
   params: any;
   stratId: string;
@@ -336,7 +423,7 @@ function _startTradeQueue() {
       useBotStore.getState().set_status(`✓ Sent: ${item.label} on ${item.mLabel}`);
     }
     // If socket not ready: silently wait (no drop, no counter — socket will reconnect automatically)
-  }, 300);
+  }, 150); // 150ms — near-instant recovery once socket reopens
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -465,6 +552,9 @@ export const useBotStore = create<BotStoreState>()(
         if (typeof window !== 'undefined') {
           tradeWS.connect();
           _startTradeQueue();
+          // Defensively ensure the socket event listener is bound to the latest store
+          tradeWS.offEvent(onTradeWSEvent);
+          tradeWS.onEvent(onTradeWSEvent);
         }
 
         set({ isRunning: true, botStatusMsg: 'Running. Waiting for conditions...', lastSignal: '' });
@@ -565,23 +655,15 @@ export const useBotStore = create<BotStoreState>()(
 
           const resultProfit = isWin ? vtStake * 0.95 : -vtStake;
 
-          // Update log with ACTUAL exit digit (critical fix)
+          // Update virtual log with result — NOT counted in real globalStats
           get().updateLog(vtId, {
-            result:   isWin ? 'WON' : 'LOST',
+            result:   isWin ? 'VIRT WON' : 'VIRT LOST',
             profit:   resultProfit,
-            exitSpot: String(exitDigit),           // ← the actual last digit
+            exitSpot: String(exitDigit),
           });
 
-          // Update global stats
-          const cur = get().globalStats;
-          const newStats = {
-            won:         cur.won  + (isWin ? 1 : 0),
-            lost:        cur.lost + (isWin ? 0 : 1),
-            totalProfit: cur.totalProfit + resultProfit,
-            totalTrades: cur.totalTrades + 1,
-          };
-          set({ globalStats: newStats });
-
+          // ── Virtual-only stats (do NOT touch globalStats / real P/L) ────
+          // Martingale and strategy state still apply
           if (isWin) {
             ss.won++; ss.totalProfit += resultProfit; ss.lossCount = 0;
             ss.currentStake = Math.round(baseStake * 100) / 100;
@@ -665,14 +747,18 @@ export const useBotStore = create<BotStoreState>()(
           if (now - (eng.cooldown[ck] || 0) < 1000) continue;
 
           // ── No Contradiction (Wait for Opposite) guard ─────────────────────
-          if (s.noContradiction && eng.waitingForOpposite[ck]) {
+          const lock = eng.waitingForOpposite[ck];
+          if (s.noContradiction && lock) {
             const currentDigit = digits[digits.length - 1] ?? 0;
             const currentQuote = quotes[quotes.length - 1] ?? 0;
             const prevQuote    = quotes[quotes.length - 2] ?? 0;
 
-            const isOpposite = checkIsOpposite(s.tradeType, s.prediction, currentDigit, currentQuote, prevQuote);
+            const lType = typeof lock === 'object' && lock !== null ? lock.contractType : s.tradeType;
+            const lPred = typeof lock === 'object' && lock !== null ? lock.prediction : s.prediction;
+
+            const isOpposite = checkIsOpposite(lType, lPred, currentDigit, currentQuote, prevQuote);
             if (isOpposite) {
-              eng.waitingForOpposite[ck] = false;
+              eng.waitingForOpposite[ck] = null;
               console.log(`[BotEngine] 🔄 Contradiction Cleared: Opposite digit/state detected (${currentDigit}) on ${symbol}. Resuming scanning.`);
             } else {
               // Still waiting for contradiction to clear
@@ -741,17 +827,31 @@ export const useBotStore = create<BotStoreState>()(
           // ── TRIGGER FIRED ─────────────────────────────────────────────────
           get()._flashSignal(symbol);
 
-          // Set contradiction lock if enabled
-          if (s.noContradiction) {
-            eng.waitingForOpposite[ck] = true;
-          }
+          // Set contradiction lock if enabled - will be set below once contractType is resolved
 
           // Enforce 2 decimal places strictly on the stake
           const rawStake = Math.max(0.35, ss.currentStake);
           const tradeStake = Math.round(rawStake * 100) / 100;
 
-          const contractType = s.tradeType;
-          const barrier      = needsBarrier(contractType) ? s.prediction : undefined;
+          let contractType = s.tradeType;
+          let barrier      = needsBarrier(contractType) ? s.prediction : undefined;
+
+          // Use custom contracts from the DIGIT_PATTERN condition (if any)
+          // dpCond is already declared above for retrigger logic
+          const dpCondCC = s.conditions.find(c => c.type === 'DIGIT_PATTERN');
+          if (dpCondCC?.useCustomContracts && dpCondCC.customContracts && dpCondCC.customContracts.length > 0) {
+            const stepIndex = Math.min(ss.lossCount, dpCondCC.customContracts.length - 1);
+            const box = dpCondCC.customContracts[stepIndex];
+            if (box) {
+              contractType = box.type;
+              barrier      = needsBarrier(contractType) ? box.barrier : undefined;
+            }
+          }
+
+          if (s.noContradiction) {
+            eng.waitingForOpposite[ck] = { contractType, prediction: barrier ?? 0 };
+          }
+
           const label        = TRADE_OPTIONS.find(t => t.value === contractType)?.label || contractType;
           const mLabel       = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
           const currency     = account?.currency || 'USD';
@@ -857,7 +957,7 @@ export const useBotStore = create<BotStoreState>()(
         }
         if (type !== 'TRADE_RESULT') return;
 
-        const { requestId, isWin, profit: rawProfit, poc } = data;
+        const { requestId, profit: rawProfit, poc } = data;
         const trade = eng.activeTrades.get(requestId);
         if (!trade) return;
 
@@ -866,6 +966,11 @@ export const useBotStore = create<BotStoreState>()(
         const state      = get();
         const derivState = useDerivStore.getState();
         const baseStake  = parseFloat(state.stake) || 0.35;
+
+        // Determine win directly from the sign of the profit/loss returned by Deriv!
+        // If profit is greater than 0, it has a '+' sign (win).
+        // If profit is less than 0, it has a '-' sign (loss).
+        const isWin = rawProfit > 0;
         const resultProfit = isWin ? rawProfit : -tradeStake;
 
         // ── Extract exit digit from POC ─────────────────────────────────────
@@ -996,10 +1101,10 @@ export const useBotStore = create<BotStoreState>()(
   ),
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Register the tradeWS event listener ONCE at module init (client-side only).
-// Guard against Next.js HMR re-running this block on hot reload.
-// ─────────────────────────────────────────────────────────────────────────────
+// Module-scope singleton callback to delegate to the current Zustand store instance
+const onTradeWSEvent = (type: string, data: any) => {
+  useBotStore.getState()._handleTradeEvent(type, data);
+};
 
 if (typeof window !== 'undefined') {
   // Use a property on the global window object as a cross-reload singleton flag
@@ -1007,14 +1112,9 @@ if (typeof window !== 'undefined') {
   if (!WIN.__laxprime_bot_listener__) {
     WIN.__laxprime_bot_listener__ = true;
 
-    // The named callback lets us call offEvent() to remove it cleanly if needed
-    const botEventHandler = (type: string, data: any) => {
-      useBotStore.getState()._handleTradeEvent(type, data);
-    };
-
     // Remove any previously registered copies (defensive for HMR edge cases)
-    tradeWS.offEvent(botEventHandler);
-    tradeWS.onEvent(botEventHandler);
+    tradeWS.offEvent(onTradeWSEvent);
+    tradeWS.onEvent(onTradeWSEvent);
 
     console.log('[BotStore] tradeWS event listener registered (singleton).');
   }

@@ -7,7 +7,7 @@ import { derivWS } from '@/lib/deriv/websocket';
 import { Play, Square, ChevronDown, AlertTriangle, Loader2, Layers, ShieldAlert } from 'lucide-react';
 import {
   useBotStore,
-  Strategy, Condition, TradeLog,
+  Strategy, Condition, TradeLog, PatternTrigger, PatternBox,
   ALL_MARKETS as BOT_ALL_MARKETS,
   TRADE_OPTIONS as BOT_TRADE_OPTIONS,
   createCondition, createStrategy, needsBarrier,
@@ -88,7 +88,10 @@ function conditionText(c: Condition): string {
   switch (c.type) {
     case 'EVEN_PCT':      return `EVEN % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
     case 'ODD_PCT':       return `ODD % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
-    case 'LAST_DIGITS':   return `last ${c.lastN} digits are ${c.digitValue}`;
+    case 'LAST_DIGITS': {
+      const showB = c.digitValue === 'OVER' || c.digitValue === 'UNDER' || c.digitValue === 'EQUAL';
+      return `last ${c.lastN} digits are ${c.digitValue}${showB ? ' ' + (c.digitBarrier ?? 4) : ''}`;
+    }
     case 'GREEN_BAR':     return `GREEN BAR on ${c.barValue} with pct ${c.comparator} ${c.value}% in last ${c.period} ticks`;
     case 'DIGIT_PATTERN': return `PATTERN [${(c.pattern || []).join('→')}]`;
     default:              return '';
@@ -120,43 +123,167 @@ const STRATEGY_BG = [
 // DIGIT PATTERN BUILDER COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 
-function DigitPatternBuilder({ pattern, onChange }: {
-  pattern: string[];
-  onChange: (p: string[]) => void;
+// ─────────────────────────────────────────────────────────────────────────────
+// TOKEN needs-barrier helper (for pattern triggers)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function tokenNeedsBarrier(token: string): boolean {
+  return token === 'V' || token === 'U';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADVANCED PATTERN BUILDER — Multi-Entry Sequence (LaxSniper XV style)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function AdvancedPatternBuilder({ cond, onChange }: {
+  cond: Condition;
+  onChange: (updated: Condition) => void;
 }) {
-  const [showTokenMenu, setShowTokenMenu] = useState(false);
-  const addToken = (tok: string) => { onChange([...pattern, tok]); setShowTokenMenu(false); };
-  const removeToken = (i: number) => onChange(pattern.filter((_, idx) => idx !== i));
-  const clearAll = () => onChange([]);
+  const boxes: PatternBox[] = (cond.patternBoxes && cond.patternBoxes.length > 0)
+    ? cond.patternBoxes
+    : [{ triggers: [{ token: 'E' }] }];
+
+  const setBoxes = (next: PatternBox[]) => onChange({ ...cond, patternBoxes: next });
+
+  const addBox = () => setBoxes([...boxes, { triggers: [{ token: 'E' }] }]);
+  const removeBox = (bi: number) => setBoxes(boxes.filter((_, i) => i !== bi));
+
+  const addTrigger = (bi: number) =>
+    setBoxes(boxes.map((b, i) => i !== bi ? b : { triggers: [...b.triggers, { token: 'E' }] }));
+
+  const removeTrigger = (bi: number, ti: number) =>
+    setBoxes(boxes.map((b, i) => i !== bi ? b : { triggers: b.triggers.filter((_, j) => j !== ti) }));
+
+  const updateTrigger = (bi: number, ti: number, patch: Partial<PatternTrigger>) =>
+    setBoxes(boxes.map((b, i) => i !== bi ? b : {
+      triggers: b.triggers.map((t, j) => j !== ti ? t : { ...t, ...patch }),
+    }));
+
+  // Custom contracts (loss steps)
+  const contracts = cond.customContracts || [
+    { type: 'DIGITUNDER', barrier: 7 },
+    { type: 'DIGITOVER',  barrier: 2 },
+    { type: 'DIGITMATCH', barrier: 5 },
+    { type: 'DIGITOVER',  barrier: 0 },
+  ];
+
+  const setContracts = (next: { type: string; barrier: number }[]) =>
+    onChange({ ...cond, customContracts: next });
+
+  const addContract = () => setContracts([...contracts, { type: 'DIGITEVEN', barrier: 0 }]);
+  const removeContract = (ci: number) => setContracts(contracts.filter((_, i) => i !== ci));
+  const updateContractType = (ci: number, type: string) =>
+    setContracts(contracts.map((c, i) => i !== ci ? c : { ...c, type }));
+  const updateContractBarrier = (ci: number, barrier: number) =>
+    setContracts(contracts.map((c, i) => i !== ci ? c : { ...c, barrier }));
 
   return (
-    <div className="lp-dpb">
-      <div className="lp-dpb-seq">
-        {pattern.length === 0 && <span className="lp-dpb-empty">Click tokens below to build pattern</span>}
-        {pattern.map((tok, i) => (
-          <span key={i} className="lp-dpb-tok" onClick={() => removeToken(i)} title="Click to remove">
-            {tok}
-          </span>
-        ))}
-        {pattern.length > 0 && (
-          <button className="lp-dpb-clear" onClick={clearAll} title="Clear all">✕</button>
-        )}
+    <div className="lp-apb">
+      {/* Header */}
+      <div className="lp-apb-header">
+        <span className="lp-apb-title">Multi-Entry Sequence</span>
+        <button className="lp-apb-add-btn" onClick={addBox}>+ Add Box</button>
       </div>
-      <div className="lp-dpb-palette">
-        {PATTERN_TOKENS.map(t => (
-          <button key={t.value} className="lp-dpb-pill" onClick={() => addToken(t.value)} title={t.title}>
-            {t.label}
-          </button>
+
+      {/* Boxes */}
+      <div className="lp-apb-grid">
+        {boxes.map((box, bi) => (
+          <div key={bi} className="lp-apb-card">
+            <div className="lp-apb-card-hdr">
+              <span className="lp-apb-card-title">Box {bi + 1}</span>
+              {boxes.length > 1 && (
+                <button className="lp-apb-card-remove" onClick={() => removeBox(bi)}>✕</button>
+              )}
+            </div>
+
+            {/* Triggers list */}
+            <div className="lp-apb-triggers">
+              {box.triggers.map((trig, ti) => (
+                <div key={ti} className="lp-apb-trig-row">
+                  <select
+                    className="lp-sel lp-apb-tok-sel"
+                    value={trig.token}
+                    onChange={e => updateTrigger(bi, ti, { token: e.target.value, barrier: tokenNeedsBarrier(e.target.value) ? (trig.barrier ?? 4) : undefined })}
+                  >
+                    {PATTERN_TOKENS.map(pt => (
+                      <option key={pt.value} value={pt.value} title={pt.title}>{pt.label}</option>
+                    ))}
+                  </select>
+                  {tokenNeedsBarrier(trig.token) ? (
+                    <input
+                      className="lp-num lp-apb-trig-inp"
+                      type="number" min={0} max={9}
+                      value={trig.barrier ?? 4}
+                      onChange={e => updateTrigger(bi, ti, { barrier: +e.target.value })}
+                    />
+                  ) : (
+                    <span className="lp-apb-trig-dash">—</span>
+                  )}
+                  {box.triggers.length > 1 && (
+                    <button className="lp-apb-trig-rm" onClick={() => removeTrigger(bi, ti)}>✕</button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <button className="lp-apb-add-trig" onClick={() => addTrigger(bi)}>+ trigger</button>
+          </div>
         ))}
       </div>
-      {pattern.length > 0 && (
-        <div className="lp-dpb-preview">
-          {pattern.map((t, i) => (
-            <span key={i}>
-              {i > 0 && <span className="lp-dpb-arrow">→</span>}
-              <span className={`lp-dpb-prv-tok lp-dpb-prv-${t.toLowerCase().replace(/[^a-z]/g, '')}`}>{t}</span>
-            </span>
-          ))}
+
+      {/* Retrigger */}
+      <div className="lp-apb-retrig-row">
+        <span className="lp-unit" style={{ fontSize: 10 }}>Retrigger:</span>
+        <select className="lp-sel" style={{ fontSize: 11 }} value={cond.patternRetrigger || 'any'}
+          onChange={e => onChange({ ...cond, patternRetrigger: e.target.value })}>
+          {PATTERN_RETRIGGER.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+        </select>
+      </div>
+
+      {/* USE CUSTOM CONTRACTS — only visible inside DIGIT_PATTERN */}
+      <div className="lp-apb-ucc-row">
+        <label className="lp-tpb-lbl-check">
+          <input type="checkbox" checked={!!cond.useCustomContracts}
+            onChange={e => onChange({ ...cond, useCustomContracts: e.target.checked })} />
+          <ShieldAlert size={11} style={{ marginLeft: 3, marginRight: 3, color: '#f59e0b' }} />
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#d97706' }}>USE CUSTOM CONTRACTS</span>
+        </label>
+      </div>
+
+      {cond.useCustomContracts && (
+        <div className="lp-custom-boxes-grid">
+          {contracts.map((box, ci) => {
+            const bNeedsBarrier = needsBarrier(box.type);
+            return (
+              <div key={ci} className="lp-custom-box-card">
+                <div className="lp-apb-card-hdr">
+                  <span className="lp-custom-box-title">Box {ci + 1}</span>
+                  {contracts.length > 1 && (
+                    <button className="lp-apb-card-remove" onClick={() => removeContract(ci)}>✕</button>
+                  )}
+                </div>
+                <select className="lp-sel lp-custom-box-sel" value={box.type}
+                  onChange={e => updateContractType(ci, e.target.value)}>
+                  <option value="DIGITUNDER">U (Under)</option>
+                  <option value="DIGITOVER">V (Over)</option>
+                  <option value="DIGITMATCH">M (Match)</option>
+                  <option value="DIGITDIFF">D (Diff)</option>
+                  <option value="DIGITEVEN">E (Even)</option>
+                  <option value="DIGITODD">O (Odd)</option>
+                  <option value="CALL">R (Rise)</option>
+                  <option value="PUT">F (Fall)</option>
+                </select>
+                {bNeedsBarrier ? (
+                  <input className="lp-num lp-sm lp-custom-box-input" type="number" min={0} max={9}
+                    value={box.barrier} onChange={e => updateContractBarrier(ci, +e.target.value)} />
+                ) : (
+                  <div className="lp-custom-box-placeholder">—</div>
+                )}
+              </div>
+            );
+          })}
+          <button className="lp-apb-add-btn" style={{ alignSelf: 'flex-end', marginTop: 4 }}
+            onClick={addContract}>+ Box</button>
         </div>
       )}
     </div>
@@ -221,7 +348,11 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
               </div>
             )}
           </div>
-          <span className="lp-unit lp-cyan">DIGITS</span>
+          {(cond.digitValue === 'OVER' || cond.digitValue === 'UNDER' || cond.digitValue === 'EQUAL') && (
+            <input className="lp-num lp-sm" type="number" min={0} max={9} value={cond.digitBarrier ?? 4}
+              onChange={e => u({ digitBarrier: +e.target.value })} style={{ marginLeft: 6 }} />
+          )}
+          <span className="lp-unit lp-cyan" style={{ marginLeft: 4 }}>DIGITS</span>
         </>
       )}
 
@@ -246,17 +377,7 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
 
       {cond.type === 'DIGIT_PATTERN' && (
         <div style={{ width: '100%', marginTop: 4 }}>
-          <DigitPatternBuilder
-            pattern={cond.pattern || []}
-            onChange={p => u({ pattern: p })}
-          />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 5 }}>
-            <span className="lp-unit" style={{ fontSize: 10 }}>Retrigger:</span>
-            <select className="lp-sel" style={{ fontSize: 11 }} value={cond.patternRetrigger || 'any'}
-              onChange={e => u({ patternRetrigger: e.target.value })}>
-              {PATTERN_RETRIGGER.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-            </select>
-          </div>
+          <AdvancedPatternBuilder cond={cond} onChange={onChange} />
         </div>
       )}
 
@@ -357,7 +478,7 @@ function StrategyBlock({ strategy, index, onChange, onRemove }: {
         </select>
         {hasBarrier && (
           <>
-            <span className="lp-then-lbl">DIGIT</span>
+            <span className="lp-then-lbl" style={{ color: '#f59e0b', fontWeight: 900 }}>BARRIER</span>
             <input className="lp-num lp-sm" type="number" min={0} max={9} value={strategy.prediction}
               onChange={e => u({ prediction: +e.target.value })} />
           </>
@@ -400,7 +521,6 @@ function StrategyBlock({ strategy, index, onChange, onRemove }: {
           onChange={p => u({ tradePattern: p })}
         />
       )}
-
       {/* No Contradiction — hidden, always active */}
       <button className="lp-add-cond-btn" onClick={addCond}>+ CONDITION</button>
 
@@ -493,11 +613,20 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
       .filter(l => l.requestId && botTradeIds.has(String(l.requestId)))
       .map(l => {
         const localLog = rawLogs.find(x => String(x.id) === String(l.requestId));
-        const profitVal = l.profit !== null && l.profit !== undefined ? parseFloat(String(l.profit)) : 0;
+        
+        // Fallback to local instant results if Deriv WebSocket response is still pending or RUNNING
+        const isDerivPending = !l.result || l.result === 'RUNNING...' || l.result === 'RUNNING' || l.result === 'SENT' || l.result === 'BUYING...';
+        const isWon = l.result === 'WON' || l.result === 'RISE WIN' || l.result === 'FALL WIN' || l.result === 'RISE_WIN' || l.result === 'FALL_WIN'
+          || (isDerivPending && localLog?.result === 'WON');
+        const isLost = l.result === 'LOST' || l.result === 'RISE LOSS' || l.result === 'FALL LOSS' || l.result === 'RISE_LOSS' || l.result === 'FALL_LOSS'
+          || (isDerivPending && localLog?.result === 'LOST');
+          
+        const resultLabel = isWon ? 'WON' : isLost ? 'LOST' : (l.result || localLog?.result || 'RUNNING...');
+        const profitVal = (l.profit !== null && l.profit !== undefined && l.profit !== 0)
+          ? parseFloat(String(l.profit))
+          : (localLog?.profit || 0);
+
         const stakeVal = parseFloat(String(l.stake)) || localLog?.stake || 1;
-        const isWon = l.result === 'WON' || l.result === 'RISE WIN' || l.result === 'FALL WIN' || l.result === 'RISE_WIN' || l.result === 'FALL_WIN';
-        const isLost = l.result === 'LOST' || l.result === 'RISE LOSS' || l.result === 'FALL LOSS' || l.result === 'RISE_LOSS' || l.result === 'FALL_LOSS';
-        const resultLabel = isWon ? 'WON' : isLost ? 'LOST' : (l.result || 'RUNNING...');
 
         return {
           id: String(l.requestId),
@@ -505,8 +634,8 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
           contract: l.contract,
           symbol: l.symbol || localLog?.symbol || 'V10(1s)',
           stake: stakeVal,
-          exitSpot: l.exit || '-',
-          entrySpot: l.entrySpot || '-',
+          exitSpot: (l.exit && l.exit !== '-') ? l.exit : (localLog?.exitSpot || '-'),
+          entrySpot: (l.entrySpot && l.entrySpot !== '-') ? l.entrySpot : (localLog?.entrySpot || '-'),
           profit: profitVal,
           result: resultLabel,
           step: localLog?.step || 1,
@@ -596,15 +725,20 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
           ) : (
             <div className="lp-tx-list">
               {combinedLogs.slice(0, 30).map(log => {
-                const won = log.result === 'WON';
-                const lost = log.result === 'LOST';
-                const live = log.result === 'SENT' || log.result === 'BUYING...' || log.result === 'RUNNING...' || log.result === 'RUNNING' || log.result === 'VIRTUAL';
+                const isVirt = String(log.id).startsWith('VIRT_');
+                const won    = !isVirt && (log.result === 'WON');
+                const lost   = !isVirt && (log.result === 'LOST');
+                const virtWon  = isVirt && (log.result === 'VIRT WON'  || log.result === 'WON');
+                const virtLost = isVirt && (log.result === 'VIRT LOST' || log.result === 'LOST');
+                const live   = !isVirt && (log.result === 'SENT' || log.result === 'BUYING...' || log.result === 'RUNNING...' || log.result === 'RUNNING');
+                const virtLive = isVirt && log.result === 'VIRTUAL';
 
                 return (
-                  <div key={log.id} className={`lp-tx-row ${won ? 'won' : lost ? 'lost' : ''}`}>
+                  <div key={log.id} className={`lp-tx-row ${won ? 'won' : lost ? 'lost' : isVirt ? 'virt' : ''}`}>
                     <div className="lp-tx-contract">
                       <span className="lp-tx-type">{contractLabel(log.contract)}</span>
                       <span className="lp-tx-sym">{log.symbol}</span>
+                      {isVirt && <span className="lp-virt-badge">VIRT</span>}
                       {log.step > 1 && <span style={{ fontSize: 8, color: '#f59e0b', fontWeight: 'bold' }}>Step {log.step}</span>}
                     </div>
 
@@ -614,9 +748,15 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
                       {getExitDisplay(log)}
                     </span>
 
-                    <div className={`lp-tx-pnl ${log.profit >= 0 ? 'pos' : 'neg'}`}>
-                      {live ? (
+                    <div className={`lp-tx-pnl ${isVirt ? 'virt' : log.profit >= 0 ? 'pos' : 'neg'}`}>
+                      {virtLive ? (
+                        <span style={{ fontSize: 9, color: '#818cf8', fontStyle: 'italic' }}>VIRT…</span>
+                      ) : live ? (
                         <Loader2 size={10} className="lp-spin" />
+                      ) : isVirt ? (
+                        <span style={{ fontSize: 9, color: (virtWon ? '#818cf8' : '#a78bfa'), fontStyle: 'italic' }}>
+                          {virtWon ? '+' : ''}{log.profit.toFixed(2)}
+                        </span>
                       ) : (
                         `${log.profit >= 0 ? '+' : ''}${log.profit.toFixed(2)}`
                       )}
@@ -1058,135 +1198,138 @@ export default function LaxPrimePage() {
 const STYLES = `
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap');
 /* ── Root ──────────────────────────────────────────────── */
-.lp-root { display:flex; gap:0; min-height:calc(100vh - 90px); font-family:'Inter',sans-serif; }
+/* Use !important throughout so our scoped styles beat Tailwind's global html.dark cascade */
+.lp-root { display:flex !important; gap:0; min-height:calc(100vh - 90px); font-family:'Inter',sans-serif; background:#f3f4f6 !important; }
 .lp-main { flex:1; display:flex; flex-direction:column; gap:0; min-width:0; }
 
 /* ── Header ─────────────────────────────────────────────── */
-.lp-header-card { background:#fff; border:1px solid #e5e7eb; border-radius:10px 10px 0 0; padding:16px 22px 12px; text-align:center; }
+.lp-header-card { background:#fff !important; border:1px solid #e5e7eb !important; border-radius:10px 10px 0 0; padding:16px 22px 12px; text-align:center; }
 .lp-title-row { display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:4px; }
-.lp-title { font-size:22px; font-weight:900; color:#111; display:flex; align-items:center; gap:8px; }
-.lp-ai-badge { background:#06b6d4; color:#fff; font-size:10px; font-weight:900; padding:2px 7px; border-radius:4px; letter-spacing:1px; }
-.lp-premium-badge { background:linear-gradient(135deg,#f59e0b,#d97706); color:#fff; font-size:10px; font-weight:800; padding:2px 10px; border-radius:20px; letter-spacing:1px; }
-.lp-subtitle { font-size:12px; color:#6b7280; }
-.lp-subtitle strong { color:#06b6d4; }
+.lp-title { font-size:22px; font-weight:900; color:#111 !important; display:flex; align-items:center; gap:8px; }
+.lp-ai-badge { background:#06b6d4 !important; color:#fff !important; font-size:10px; font-weight:900; padding:2px 7px; border-radius:4px; letter-spacing:1px; }
+.lp-premium-badge { background:linear-gradient(135deg,#f59e0b,#d97706) !important; color:#fff !important; font-size:10px; font-weight:800; padding:2px 10px; border-radius:20px; letter-spacing:1px; }
+.lp-subtitle { font-size:12px; color:#6b7280 !important; }
+.lp-subtitle strong { color:#06b6d4 !important; }
 
 /* ── Auth Warning ───────────────────────────────────────── */
-.lp-auth-warn { display:flex; align-items:center; gap:8px; padding:8px 14px; font-size:11px; font-weight:600; background:#fef9c3; color:#854d0e; border-bottom:1px solid #fde68a; }
-.lp-disconnected { background:#fee2e2; color:#991b1b; }
+.lp-auth-warn { display:flex; align-items:center; gap:8px; padding:8px 14px; font-size:11px; font-weight:600; background:#fef9c3 !important; color:#854d0e !important; border-bottom:1px solid #fde68a !important; }
+.lp-disconnected { background:#fee2e2 !important; color:#991b1b !important; }
 
 /* ── Settings Row ───────────────────────────────────────── */
-.lp-settings-row { display:flex; gap:0; border:1px solid #e5e7eb; border-top:none; background:#fff; }
-.lp-sg { flex:1; padding:10px 12px; border-right:1px solid #e5e7eb; min-width:0; }
-.lp-sg:last-child { border-right:none; }
+.lp-settings-row { display:flex; gap:0; border:1px solid #e5e7eb !important; border-top:none !important; background:#fff !important; }
+.lp-sg { flex:1; padding:10px 12px; border-right:1px solid #e5e7eb !important; min-width:0; }
+.lp-sg:last-child { border-right:none !important; }
 .lp-sg-wide { flex:1.5; }
-.lp-sl { display:block; font-size:10px; font-weight:800; color:#9ca3af; letter-spacing:0.8px; text-transform:uppercase; margin-bottom:3px; }
+.lp-sl { display:block; font-size:10px; font-weight:800; color:#9ca3af !important; letter-spacing:0.8px; text-transform:uppercase; margin-bottom:3px; }
 .lp-sl-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:3px; }
 .lp-sl-row .lp-sl { margin-bottom:0; }
-.lp-mode-pill { font-size:9px; font-weight:800; padding:1px 5px; border-radius:20px; border:1px solid #06b6d4; background:#ecfeff; color:#0e7490; cursor:pointer; letter-spacing:.3px; transition:all .15s; white-space:nowrap; line-height:1.4; }
-.lp-mode-pill:hover { background:#06b6d4; color:#fff; }
-.lp-theme-toggle { font-size:13px; background:none; border:none; cursor:pointer; padding:1px 4px; border-radius:5px; transition:transform .2s; line-height:1; vertical-align:middle; opacity:.75; }
+.lp-mode-pill { font-size:9px; font-weight:800; padding:1px 5px; border-radius:20px; border:1px solid #06b6d4 !important; background:#ecfeff !important; color:#0e7490 !important; cursor:pointer; letter-spacing:.3px; transition:all .15s; white-space:nowrap; line-height:1.4; }
+.lp-mode-pill:hover { background:#06b6d4 !important; color:#fff !important; }
+.lp-theme-toggle { font-size:13px; background:none !important; border:none !important; cursor:pointer; padding:1px 4px; border-radius:5px; transition:transform .2s; line-height:1; vertical-align:middle; opacity:.75; }
 .lp-theme-toggle:hover { opacity:1; transform:scale(1.15); }
-.lp-si { width:100%; border:1px solid #e5e7eb; border-radius:5px; padding:6px 8px; font-size:13px; font-weight:600; color:#111; background:#fff; outline:none; }
-.lp-si:focus { border-color:#06b6d4; }
+.lp-si { width:100%; border:1px solid #e5e7eb !important; border-radius:5px; padding:6px 8px; font-size:13px; font-weight:600; color:#111 !important; background:#fff !important; outline:none; }
+.lp-si:focus { border-color:#06b6d4 !important; }
 .lp-mode { font-size:11px; }
 
 /* ══ DARK THEME (.lp-dark on .lp-root) ══════════════════════════════════════ */
-.lp-dark { background:linear-gradient(160deg,#070d1e 0%,#0d1330 40%,#0a1225 100%); }
-.lp-dark .lp-header-card { background:linear-gradient(135deg,#0d1630 0%,#120e38 100%); border-color:#1e3558; box-shadow:0 4px 24px rgba(6,182,212,.1); }
-.lp-dark .lp-title { color:#e2e8f0; }
-.lp-dark .lp-subtitle { color:#4b6cb7; }
-.lp-dark .lp-subtitle strong { color:#22d3ee; }
-.lp-dark .lp-auth-warn { background:rgba(133,77,14,.18); color:#fcd34d; border-color:rgba(252,211,77,.18); }
-.lp-dark .lp-disconnected { background:rgba(153,27,27,.2); color:#fca5a5; border-color:rgba(252,165,165,.15); }
-.lp-dark .lp-settings-row { background:linear-gradient(135deg,#0c1830,#0f0d30); border-color:#1e3558; }
-.lp-dark .lp-sg { border-right-color:#1e3558; }
-.lp-dark .lp-sl { color:#4b6cb7; }
-.lp-dark .lp-si { background:#06091a; border-color:#1e3558; color:#e2e8f0; }
-.lp-dark .lp-si:focus { border-color:#22d3ee; box-shadow:0 0 0 2px rgba(34,211,238,.12); }
-.lp-dark select.lp-si option { background:#06091a; color:#e2e8f0; }
-.lp-dark .lp-mode-pill { background:rgba(34,211,238,.08); border-color:#22d3ee; color:#22d3ee; }
-.lp-dark .lp-mode-pill:hover { background:#22d3ee; color:#06091a; }
-.lp-dark .lp-strategy-section { background:linear-gradient(135deg,#0a1428 0%,#0c0d28 100%); border-color:#1e3558; }
-.lp-dark .lp-sec-title { color:transparent; background:linear-gradient(90deg,#22d3ee 0%,#818cf8 100%); -webkit-background-clip:text; background-clip:text; }
-.lp-dark .lp-strategy { background:rgba(12,22,55,.65); border-color:#1e3558; }
-.lp-dark .lp-strat-blue   { background:rgba(30,58,138,.22); border-color:#1e3a8a55; }
-.lp-dark .lp-strat-pink   { background:rgba(131,24,67,.18); border-color:#83184355; }
-.lp-dark .lp-strat-purple { background:rgba(88,28,135,.22); border-color:#581c8755; }
-.lp-dark .lp-strat-green  { background:rgba(6,78,59,.22); border-color:#064e3b55; }
-.lp-dark .lp-strat-orange { background:rgba(120,53,15,.22); border-color:#78350f55; }
-.lp-dark .lp-strat-name { color:#cbd5e1; }
-.lp-dark .lp-cond-badge { background:rgba(34,211,238,.08); color:#22d3ee; }
-.lp-dark .lp-toggle-label { color:#64748b; }
-.lp-dark .lp-if-label { color:#64748b; }
-.lp-dark .lp-sel { background:#06091a; border-color:#1e3558; color:#cbd5e1; }
-.lp-dark .lp-add-cond-btn { background:rgba(34,211,238,.08); color:#22d3ee; border:1px dashed rgba(34,211,238,.35); }
-.lp-dark .lp-add-cond-btn:hover { background:rgba(34,211,238,.18); }
-.lp-dark .lp-add-strat-btn { background:linear-gradient(135deg,#065f46,#047857); }
-.lp-dark .lp-summary { background:rgba(34,211,238,.04); border-color:rgba(34,211,238,.12); color:#4b6cb7; }
-.lp-dark .lp-summary strong { color:#22d3ee; }
-.lp-dark .lp-rm-strat { background:#7f1d1d; }
-.lp-dark .lp-then-row { background:rgba(34,211,238,.05); border-color:rgba(34,211,238,.12); }
-.lp-dark .lp-markets-section { background:linear-gradient(135deg,#070d1e,#0a0d25); border-color:#1e3558; }
-.lp-dark .lp-market-chips { background:transparent; }
-.lp-dark .lp-mc-chip { background:#0a1430; border-color:#1e3558; color:#64748b; }
-.lp-dark .lp-mc-chip.active { background:rgba(34,211,238,.12); border-color:#22d3ee; color:#22d3ee; }
-.lp-dark .lp-market-card { background:rgba(12,22,55,.8); border-color:#1e3558; }
-.lp-dark .lp-mc-label { color:#94a3b8; }
-.lp-dark .lp-mc-sym { color:#e2e8f0; }
-.lp-dark .lp-bubble { background:#1e3558; color:#94a3b8; }
-.lp-dark .lp-bubble.even { background:rgba(34,211,238,.15); color:#22d3ee; }
-.lp-dark .lp-bubble.odd  { background:rgba(129,140,248,.15); color:#818cf8; }
-.lp-dark .lp-run-hdr { background:rgba(12,22,55,.9); border-color:#1e3558; }
-.lp-dark .lp-status-row { background:rgba(6,9,26,.6); border-color:#1e3558; }
-.lp-dark .lp-status-box { border-color:#1e3558; }
-.lp-dark .lp-status-label { color:#4b6cb7; }
-.lp-dark .lp-status-text { color:#e2e8f0; }
-.lp-dark .lp-signal-text { color:#22d3ee; }
-.lp-dark .lp-bot-ctrl { background:linear-gradient(135deg,#070d1e,#0a0c25); border-color:#1e3558; }
-.lp-dark .lp-ctrl-status { background:#06091a; border-color:#1e3558; color:#4b6cb7; }
-.lp-dark .lp-stats-row { background:#06091a; border-color:#1e3558; }
-.lp-dark .lp-stat-val { color:#e2e8f0; }
-.lp-dark .lp-stat-val.pos { color:#34d399; }
-.lp-dark .lp-stat-val.neg { color:#f87171; }
-.lp-dark .lp-stat-lbl { color:#4b6cb7; }
-.lp-dark .lp-right { border-color:#1e3558; }
-.lp-dark .lp-right-card { background:linear-gradient(135deg,#070d1e,#0a0c25); border-color:#1e3558; }
-.lp-dark .lp-last-signal { background:rgba(34,211,238,.06); border-color:rgba(34,211,238,.18); color:#22d3ee; }
-.lp-dark .lp-tx-panel { background:#06091a; border-color:#1e3558; }
-.lp-dark .lp-tx-tabs { background:#070d1e; border-bottom-color:#1e3558; }
-.lp-dark .lp-tx-tab { color:#4b6cb7; }
-.lp-dark .lp-tx-tab.active { color:#22d3ee; border-bottom-color:#22d3ee; }
-.lp-dark .lp-tx-actions { background:#06091a; border-bottom-color:#1e3558; }
-.lp-dark .lp-tx-btn { background:#0a1225; border-color:#1e3558; color:#64748b; }
-.lp-dark .lp-tx-btn:hover { border-color:#22d3ee; color:#22d3ee; }
-.lp-dark .lp-tx-hdr { border-bottom-color:#1e3558; }
-.lp-dark .lp-tx-hdr span { color:#4b6cb7; }
-.lp-dark .lp-tx-row { border-bottom-color:#1e3558; }
-.lp-dark .lp-tx-row.won { background:rgba(6,78,59,.22); }
-.lp-dark .lp-tx-row.lost { background:rgba(127,29,29,.22); }
-.lp-dark .lp-tx-type { color:#e2e8f0; }
-.lp-dark .lp-tx-sym { color:#4b6cb7; }
-.lp-dark .lp-tx-empty span { color:#4b6cb7; }
-.lp-dark .lp-tx-stats { background:#070d1e; border-top-color:#1e3558; }
-.lp-dark .lp-tsl { color:#4b6cb7; }
-.lp-dark .lp-tsv { color:#94a3b8; }
-.lp-dark .lp-tsv.pos { color:#34d399; }
-.lp-dark .lp-tsv.neg { color:#f87171; }
-.lp-dark .lp-reset-btn { background:rgba(127,29,29,.3); border-color:rgba(239,68,68,.3); color:#f87171; }
-.lp-dark .lp-right-footer { background:#06091a; border-top-color:#1e3558; color:#4b6cb7; }
-.lp-dark .lp-dot { background:#4b6cb7; }
-.lp-dark .lp-dot.connected { background:#22d3ee; box-shadow:0 0 6px #22d3ee88; }
-.lp-dark .lp-time { color:#4b6cb7; }
-.lp-dark .lp-virt-toggle-btn { background:linear-gradient(135deg,#1e1b4b,#2e1065); border-color:#4338ca; color:#c7d2fe; }
-.lp-dark .lp-vp { background:rgba(14,26,64,.8); border-color:#1e3558; }
-.lp-dark .lp-vp-card { background:rgba(12,22,55,.8); border-color:#1e3558; }
-.lp-dark .lp-vp-card-lbl { color:#e0e7ff; }
-.lp-dark .lp-vp-sub-lbl { color:#818cf8; }
-.lp-dark .lp-pnl-pos { color:#34d399; }
-.lp-dark .lp-pnl-neg { color:#f87171; }
-.lp-dark .lp-run-btn.running { box-shadow:0 0 28px rgba(239,68,68,.35); }
-.lp-dark .lp-run-btn { box-shadow:0 0 18px rgba(34,211,238,.2); }
-.lp-dark .lp-tpb-lbl-check { color:#64748b; }
+.lp-dark { background:linear-gradient(160deg,#070d1e 0%,#0d1330 40%,#0a1225 100%) !important; }
+.lp-dark .lp-header-card { background:linear-gradient(135deg,#0d1630 0%,#120e38 100%) !important; border-color:#1e3558 !important; box-shadow:0 4px 24px rgba(6,182,212,.1); }
+.lp-dark .lp-title { color:#e2e8f0 !important; }
+.lp-dark .lp-subtitle { color:#4b6cb7 !important; }
+.lp-dark .lp-subtitle strong { color:#22d3ee !important; }
+.lp-dark .lp-auth-warn { background:rgba(133,77,14,.18) !important; color:#fcd34d !important; border-color:rgba(252,211,77,.18) !important; }
+.lp-dark .lp-disconnected { background:rgba(153,27,27,.2) !important; color:#fca5a5 !important; border-color:rgba(252,165,165,.15) !important; }
+.lp-dark .lp-settings-row { background:linear-gradient(135deg,#0c1830,#0f0d30) !important; border-color:#1e3558 !important; }
+.lp-dark .lp-sg { border-right-color:#1e3558 !important; }
+.lp-dark .lp-sl { color:#4b6cb7 !important; }
+.lp-dark .lp-si { background:#06091a !important; border-color:#1e3558 !important; color:#e2e8f0 !important; }
+.lp-dark .lp-si:focus { border-color:#22d3ee !important; box-shadow:0 0 0 2px rgba(34,211,238,.12); }
+.lp-dark select.lp-si option { background:#06091a !important; color:#e2e8f0 !important; }
+.lp-dark .lp-mode-pill { background:rgba(34,211,238,.08) !important; border-color:#22d3ee !important; color:#22d3ee !important; }
+.lp-dark .lp-mode-pill:hover { background:#22d3ee !important; color:#06091a !important; }
+.lp-dark .lp-strategy-section { background:linear-gradient(135deg,#0a1428 0%,#0c0d28 100%) !important; border-color:#1e3558 !important; }
+.lp-dark .lp-sec-title { color:transparent !important; background:linear-gradient(90deg,#22d3ee 0%,#818cf8 100%) !important; -webkit-background-clip:text; background-clip:text; }
+.lp-dark .lp-strategy { background:rgba(12,22,55,.65) !important; border-color:#1e3558 !important; }
+.lp-dark .lp-strat-blue   { background:rgba(30,58,138,.22) !important; border-color:#1e3a8a55 !important; }
+.lp-dark .lp-strat-pink   { background:rgba(131,24,67,.18) !important; border-color:#83184355 !important; }
+.lp-dark .lp-strat-purple { background:rgba(88,28,135,.22) !important; border-color:#581c8755 !important; }
+.lp-dark .lp-strat-green  { background:rgba(6,78,59,.22) !important; border-color:#064e3b55 !important; }
+.lp-dark .lp-strat-orange { background:rgba(120,53,15,.22) !important; border-color:#78350f55 !important; }
+.lp-dark .lp-strat-name { color:#cbd5e1 !important; }
+.lp-dark .lp-cond-badge { background:rgba(34,211,238,.08) !important; color:#22d3ee !important; }
+.lp-dark .lp-toggle-label { color:#64748b !important; }
+.lp-dark .lp-if-label { color:#64748b !important; }
+.lp-dark .lp-sel { background:#06091a !important; border-color:#1e3558 !important; color:#cbd5e1 !important; }
+.lp-dark .lp-add-cond-btn { background:rgba(34,211,238,.08) !important; color:#22d3ee !important; border:1px dashed rgba(34,211,238,.35) !important; }
+.lp-dark .lp-add-cond-btn:hover { background:rgba(34,211,238,.18) !important; }
+.lp-dark .lp-add-strat-btn { background:linear-gradient(135deg,#065f46,#047857) !important; }
+.lp-dark .lp-summary { background:rgba(34,211,238,.04) !important; border-color:rgba(34,211,238,.12) !important; color:#4b6cb7 !important; }
+.lp-dark .lp-summary strong { color:#22d3ee !important; }
+.lp-dark .lp-rm-strat { background:#7f1d1d !important; }
+.lp-dark .lp-then-row { background:rgba(34,211,238,.05) !important; border-color:rgba(34,211,238,.12) !important; }
+.lp-dark .lp-markets-section { background:linear-gradient(135deg,#070d1e,#0a0d25) !important; border-color:#1e3558 !important; }
+.lp-dark .lp-market-chips { background:transparent !important; }
+.lp-dark .lp-mc-chip { background:#0a1430 !important; border-color:#1e3558 !important; color:#64748b !important; }
+.lp-dark .lp-mc-chip.active { background:rgba(34,211,238,.12) !important; border-color:#22d3ee !important; color:#22d3ee !important; }
+.lp-dark .lp-market-card { background:rgba(12,22,55,.8) !important; border-color:#1e3558 !important; }
+.lp-dark .lp-mc-label { color:#94a3b8 !important; }
+.lp-dark .lp-mc-sym { color:#e2e8f0 !important; }
+.lp-dark .lp-bubble { background:#1e3558 !important; color:#94a3b8 !important; }
+.lp-dark .lp-bubble.even { background:rgba(34,211,238,.15) !important; color:#22d3ee !important; }
+.lp-dark .lp-bubble.odd  { background:rgba(129,140,248,.15) !important; color:#818cf8 !important; }
+.lp-dark .lp-run-hdr { background:rgba(12,22,55,.9) !important; border-color:#1e3558 !important; }
+.lp-dark .lp-status-row { background:rgba(6,9,26,.6) !important; border-color:#1e3558 !important; }
+.lp-dark .lp-status-box { border-color:#1e3558 !important; }
+.lp-dark .lp-status-label { color:#4b6cb7 !important; }
+.lp-dark .lp-status-text { color:#e2e8f0 !important; }
+.lp-dark .lp-signal-text { color:#22d3ee !important; }
+.lp-dark .lp-bot-ctrl { background:linear-gradient(135deg,#070d1e,#0a0c25) !important; border-color:#1e3558 !important; }
+.lp-dark .lp-ctrl-status { background:#06091a !important; border-color:#1e3558 !important; color:#4b6cb7 !important; }
+.lp-dark .lp-stats-row { background:#06091a !important; border-color:#1e3558 !important; }
+.lp-dark .lp-stat-val { color:#e2e8f0 !important; }
+.lp-dark .lp-stat-val.pos { color:#34d399 !important; }
+.lp-dark .lp-stat-val.neg { color:#f87171 !important; }
+.lp-dark .lp-stat-lbl { color:#4b6cb7 !important; }
+.lp-dark .lp-right { border-color:#1e3558 !important; }
+.lp-dark .lp-right-card { background:linear-gradient(135deg,#070d1e,#0a0c25) !important; border-color:#1e3558 !important; }
+.lp-dark .lp-last-signal { background:rgba(34,211,238,.06) !important; border-color:rgba(34,211,238,.18) !important; color:#22d3ee !important; }
+.lp-dark .lp-tx-panel { background:#06091a !important; border-color:#1e3558 !important; }
+.lp-dark .lp-tx-tabs { background:#070d1e !important; border-bottom-color:#1e3558 !important; }
+.lp-dark .lp-tx-tab { color:#4b6cb7 !important; }
+.lp-dark .lp-tx-tab.active { color:#22d3ee !important; border-bottom-color:#22d3ee !important; }
+.lp-dark .lp-tx-actions { background:#06091a !important; border-bottom-color:#1e3558 !important; }
+.lp-dark .lp-tx-btn { background:#0a1225 !important; border-color:#1e3558 !important; color:#64748b !important; }
+.lp-dark .lp-tx-btn:hover { border-color:#22d3ee !important; color:#22d3ee !important; }
+.lp-dark .lp-tx-hdr { border-bottom-color:#1e3558 !important; }
+.lp-dark .lp-tx-hdr span { color:#4b6cb7 !important; }
+.lp-dark .lp-tx-row { border-bottom-color:#1e3558 !important; }
+.lp-dark .lp-tx-row.won  { background:rgba(6,78,59,.22) !important; }
+.lp-dark .lp-tx-row.lost { background:rgba(127,29,29,.22) !important; }
+.lp-dark .lp-tx-row.virt { background:rgba(88,28,135,.18) !important; border-left-color:#818cf8 !important; }
+.lp-dark .lp-virt-badge  { background:#818cf8 !important; }
+.lp-dark .lp-tx-type  { color:#e2e8f0 !important; }
+.lp-dark .lp-tx-sym { color:#4b6cb7 !important; }
+.lp-dark .lp-tx-empty span { color:#4b6cb7 !important; }
+.lp-dark .lp-tx-stats { background:#070d1e !important; border-top-color:#1e3558 !important; }
+.lp-dark .lp-tsl { color:#4b6cb7 !important; }
+.lp-dark .lp-tsv { color:#94a3b8 !important; }
+.lp-dark .lp-tsv.pos { color:#34d399 !important; }
+.lp-dark .lp-tsv.neg { color:#f87171 !important; }
+.lp-dark .lp-reset-btn { background:rgba(127,29,29,.3) !important; border-color:rgba(239,68,68,.3) !important; color:#f87171 !important; }
+.lp-dark .lp-right-footer { background:#06091a !important; border-top-color:#1e3558 !important; color:#4b6cb7 !important; }
+.lp-dark .lp-dot { background:#4b6cb7 !important; }
+.lp-dark .lp-dot.connected { background:#22d3ee !important; box-shadow:0 0 6px #22d3ee88; }
+.lp-dark .lp-time { color:#4b6cb7 !important; }
+.lp-dark .lp-virt-toggle-btn { background:linear-gradient(135deg,#1e1b4b,#2e1065) !important; border-color:#4338ca !important; color:#c7d2fe !important; }
+.lp-dark .lp-vp { background:rgba(14,26,64,.8) !important; border-color:#1e3558 !important; }
+.lp-dark .lp-vp-card { background:rgba(12,22,55,.8) !important; border-color:#1e3558 !important; }
+.lp-dark .lp-vp-card-lbl { color:#e0e7ff !important; }
+.lp-dark .lp-vp-sub-lbl { color:#818cf8 !important; }
+.lp-dark .lp-pnl-pos { color:#34d399 !important; }
+.lp-dark .lp-pnl-neg { color:#f87171 !important; }
+.lp-dark .lp-run-btn.running { box-shadow:0 0 28px rgba(239,68,68,.35) !important; }
+.lp-dark .lp-run-btn { box-shadow:0 0 18px rgba(34,211,238,.2) !important; }
+.lp-dark .lp-tpb-lbl-check { color:#64748b !important; }
 
 /* ── Strategy Section ───────────────────────────────────── */
 .lp-strategy-section { background:#f0fdfc; border:1px solid #e5e7eb; border-top:none; padding:12px 14px; }
@@ -1239,6 +1382,26 @@ const STYLES = `
 .lp-rm-cond { width:20px; height:20px; border-radius:50%; border:none; background:#ef4444; color:#fff; font-size:15px; font-weight:700; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
 .lp-rm-cond:hover { background:#dc2626; }
 
+/* Advanced Pattern Builder Styles */
+.lp-apb { display:flex; flex-direction:column; gap:6px; background:rgba(6,182,212,.03); border:1px dashed rgba(6,182,212,.3); border-radius:8px; padding:8px; margin-top:4px; }
+.lp-dark .lp-apb { background:rgba(6,182,212,.01) !important; border-color:rgba(6,182,212,.15) !important; }
+.lp-apb-header { display:flex; justify-content:space-between; align-items:center; }
+.lp-apb-title { font-size:10px; font-weight:800; color:#0891b2; text-transform:uppercase; letter-spacing:.3px; }
+.lp-dark .lp-apb-title { color:#22d3ee !important; }
+.lp-apb-add-btn { background:#0891b2; color:#fff; border:none; border-radius:4px; padding:2px 8px; font-size:10px; font-weight:800; cursor:pointer; }
+.lp-apb-add-btn:hover { background:#0e7490; }
+.lp-apb-grid { display:flex; gap:6px; flex-wrap:wrap; margin-top:2px; }
+.lp-apb-card { flex:1; min-width:65px; background:#fff; border:1px solid #e5e7eb; border-radius:6px; padding:5px; text-align:center; display:flex; flex-direction:column; align-items:center; gap:4px; position:relative; }
+.lp-dark .lp-apb-card { background:#0a122c !important; border-color:#1e3558 !important; }
+.lp-apb-card-hdr { display:flex; justify-content:space-between; align-items:center; width:100%; border-bottom:1px solid #f3f4f6; padding-bottom:3px; margin-bottom:1px; }
+.lp-dark .lp-apb-card-hdr { border-bottom-color:#1e3558 !important; }
+.lp-apb-card-title { font-size:9px; font-weight:700; color:#6b7280; }
+.lp-dark .lp-apb-card-title { color:#94a3b8 !important; }
+.lp-apb-card-remove { border:none; background:none; color:#ef4444; font-size:9px; font-weight:800; cursor:pointer; padding:0 2px; }
+.lp-apb-sel { font-size:11px !important; padding:1px 3px !important; width:100% !important; height:auto !important; }
+.lp-apb-input { width:100% !important; margin:0 !important; font-size:11px !important; padding:1px 3px !important; height:auto !important; text-align:center; }
+.lp-apb-placeholder { font-size:11px; font-weight:700; color:#9ca3af; line-height:18px; }
+
 /* THEN TRADE row */
 .lp-then-row { display:flex; align-items:center; gap:7px; margin:4px 0 8px; flex-wrap:wrap; }
 .lp-then-lbl { font-size:12px; font-weight:700; color:#374151; }
@@ -1247,6 +1410,16 @@ const STYLES = `
 .lp-add-cond-btn { background:#0e7490; color:#fff; border:none; border-radius:20px; padding:4px 14px; font-size:11px; font-weight:800; cursor:pointer; display:inline-block; margin-bottom:7px; }
 .lp-add-cond-btn:hover { background:#0c6680; }
 .lp-summary { font-size:11px; color:#6b7280; font-style:italic; }
+
+/* Custom Contracts sequence box grid */
+.lp-custom-boxes-grid { display:flex; gap:8px; margin:6px 0 10px; flex-wrap:wrap; }
+.lp-custom-box-card { flex:1; min-width:65px; background:rgba(245,158,11,.05); border:1px solid rgba(245,158,11,.2); border-radius:6px; padding:6px; text-align:center; display:flex; flex-direction:column; align-items:center; gap:4px; }
+.lp-dark .lp-custom-box-card { background:rgba(245,158,11,.03) !important; border-color:rgba(245,158,11,.15) !important; }
+.lp-custom-box-title { font-size:9px; font-weight:800; color:#b45309; text-transform:uppercase; letter-spacing:.3px; }
+.lp-dark .lp-custom-box-title { color:#f59e0b; }
+.lp-custom-box-sel { font-size:11px !important; padding:2px 4px !important; width:100% !important; text-align:center; }
+.lp-custom-box-input { width:100% !important; margin:0 !important; font-size:11px !important; padding:2px 4px !important; }
+.lp-custom-box-placeholder { font-size:11px; font-weight:700; color:#9ca3af; line-height:22px; }
 
 /* ── Markets Section ────────────────────────────────────── */
 .lp-markets-section { background:#fff; border:1px solid #e5e7eb; border-top:none; padding:10px 14px; }
@@ -1384,14 +1557,18 @@ const STYLES = `
 
 .lp-tx-list { overflow-y:auto; max-height:260px; }
 .lp-tx-row { display:grid; grid-template-columns:1fr 1fr 1.2fr 1fr; padding:5px 10px; border-bottom:1px solid #f9fafb; font-size:10px; align-items:center; }
-.lp-tx-row.won { background:#f0fdf4; }
+.lp-tx-row.won  { background:#f0fdf4; }
 .lp-tx-row.lost { background:#fef2f2; }
+.lp-tx-row.virt { background:#f5f3ff; border-left:2px solid #818cf8; }
 .lp-tx-contract { display:flex; flex-direction:column; gap:1px; }
 .lp-tx-type { font-weight:800; color:#374151; }
 .lp-tx-sym { font-size:9px; color:#9ca3af; }
+.lp-virt-badge { display:inline-block; font-size:7px; font-weight:900; background:#818cf8; color:#fff; border-radius:3px; padding:1px 4px; letter-spacing:.5px; line-height:1.4; margin-top:1px; }
 .lp-tx-pnl { font-size:11px; font-weight:800; text-align:right; }
-.lp-tx-pnl.pos { color:#16a34a; }
-.lp-tx-pnl.neg { color:#ef4444; }.lp-spin { animation:spin 1s linear infinite; }
+.lp-tx-pnl.pos  { color:#16a34a; }
+.lp-tx-pnl.neg  { color:#ef4444; }
+.lp-tx-pnl.virt { color:#818cf8; }
+.lp-spin { animation:spin 1s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }
 
 .lp-tx-stats { padding:10px; border-top:1px solid #e5e7eb; margin-top:auto; }
