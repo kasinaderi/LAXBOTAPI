@@ -586,10 +586,23 @@ export const useBotStore = create<BotStoreState>()(
         _tradeQueue.length = 0;
         botTradeIds.clear();
         set({
+          // Clear session data
           tradeLogs:   [],
           globalStats: { won: 0, lost: 0, totalProfit: 0, totalTrades: 0 },
+          botStatusMsg: 'Ready.',
+          lastSignal:   '',
+          signalFlash:  {},
+          // Reset all trading settings to defaults
+          stake:            '1',
+          targetProfit:     '100',
+          targetProfitMode: 'profit',
+          stopLoss:         '100',
+          stopLossMode:     'loss',
+          martingale:       '2.1',
+          tradingMode:      'continuous',
         });
       },
+
 
       set_status: (msg: string) => set({ botStatusMsg: msg }),
 
@@ -663,20 +676,17 @@ export const useBotStore = create<BotStoreState>()(
           });
 
           // ── Virtual-only stats (do NOT touch globalStats / real P/L) ────
-          // Martingale and strategy state still apply
+          // NOTE: Virtual results do NOT affect martingale stake or lossCount.
+          // Martingale only tracks real trade results so virtual testing
+          // cannot distort the real betting progression.
           if (isWin) {
-            ss.won++; ss.totalProfit += resultProfit; ss.lossCount = 0;
-            ss.currentStake = Math.round(baseStake * 100) / 100;
-            eng.patternPos[stratId] = 0;            // reset pipeline on win
+            ss.won++; ss.totalProfit += resultProfit;
+            // Do NOT reset lossCount or currentStake — those belong to real martingale
+            eng.patternPos[stratId] = 0;            // reset pipeline on virtual win
           } else {
-            ss.lost++; ss.totalProfit += resultProfit; ss.lossCount++;
-            if (tradingMode === 'continuous') {
-              const rawNextStake = ss.currentStake * parseFloat(martingale || '2.1');
-              ss.currentStake = Math.round(Math.min(
-                rawNextStake,
-                baseStake * Math.pow(parseFloat(martingale || '2.1'), 10)
-              ) * 100) / 100;
-            }
+            ss.lost++; ss.totalProfit += resultProfit;
+            // Do NOT increment lossCount or double currentStake — virtual loss
+            // must not affect real trade martingale progression
           }
 
 

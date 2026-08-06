@@ -940,7 +940,12 @@ export default function LaxPrimePage() {
               <input className="lp-si" type="number" min="0" value={stopLoss} onChange={e => setStopLoss(e.target.value)} />
             </div>
             <div className="lp-sg">
-              <label className="lp-sl">MARTINGALE</label>
+              <div className="lp-sl-row">
+                <label className="lp-sl">MARTINGALE</label>
+                {tradingMode === 'continuous' && (
+                  <span className="lp-mg-dot" title="Martingale active" />
+                )}
+              </div>
               <input className="lp-si" type="number" min="1" step="0.1" value={martingale} onChange={e => setMartingale(e.target.value)} />
             </div>
             <div className="lp-sg lp-sg-wide">
@@ -1198,22 +1203,34 @@ export default function LaxPrimePage() {
 const STYLES = `
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap');
 
+/* ── Parent Layout Override (Full Screen Support) ─────────── */
+main:has(.lp-root) {
+  max-width: 100% !important;
+  width: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow-x: hidden !important;
+}
+
 /* ── Liquid Glass Core Design System ──────────────────────── */
 .lp-root {
   display: flex !important;
-  gap: 0;
-  min-height: calc(100vh - 90px);
+  gap: 16px !important;
+  min-height: 100dvh;
+  width: 100%;
   font-family: 'Outfit', sans-serif;
-  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-  padding: 10px;
+  padding: 16px;
+  box-sizing: border-box;
+  align-items: flex-start;
+  overflow-x: hidden;
 }
 .lp-main {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
-  padding-right: 10px;
+  margin-right: 306px; /* Space for fixed right panel */
 }
 
 /* Light Theme Variables */
@@ -2268,12 +2285,14 @@ const STYLES = `
   border-top: 1px solid var(--glass-border) !important;
   box-shadow: var(--card-shadow) !important;
   border-radius: 16px;
-  position: sticky;
-  top: 64px;
-  height: calc(100vh - 110px);
+  position: fixed !important;
+  right: 16px;
+  top: 80px;
+  height: calc(100vh - 96px) !important;
   overflow-y: auto;
   gap: 12px;
   padding: 12px;
+  z-index: 90;
 }
 .lp-run-hdr {
   display: flex;
@@ -2644,6 +2663,38 @@ const STYLES = `
 }
 
 /* ── Virtual System Panel ──────────────────────────────── */
+.lp-virt-toggle-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid var(--glass-border) !important;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--text-main) !important;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: var(--card-shadow);
+}
+.lp-virt-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: var(--accent-purple) !important;
+  color: var(--accent-purple) !important;
+}
+.lp-virt-active-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 8px #10b981;
+  animation: lp-pulse 1.2s infinite;
+  margin-left: 4px;
+}
+
 .lp-vp {
   background: var(--glass-bg) !important;
   backdrop-filter: blur(16px) saturate(180%);
@@ -2861,12 +2912,109 @@ const STYLES = `
 .lp-tpb-leg-t { font-size:10px; font-weight:800; color:#4ade80; }
 .lp-tpb-leg-s { font-size:10px; font-weight:800; color:#fca5a5; }
 
-/* ── Responsive ─────────────────────────────────────────── */
-@media (max-width:900px) {
-  .lp-root { flex-direction:column; }
-  .lp-right { width:100%; height:auto; position:static; }
-  .lp-settings-row { flex-wrap:wrap; }
-  .lp-sg { min-width:140px; }
-  .lp-mc-grid { grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); }
+/* ── Martingale Active Dot ──────────────────────────────── */
+.lp-mg-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  animation: lp-mg-blink 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes lp-mg-blink {
+  0%   { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); opacity: 1; }
+  50%  { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); opacity: 0.7; }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); opacity: 1; }
+}
+
+/* ── Responsive: Tablet (< 900px) ───────────────────────── */
+@media (max-width: 900px) {
+  .lp-root {
+    flex-direction: column;
+    padding: 16px;
+    align-items: stretch !important;
+  }
+  .lp-main {
+    overflow: visible;
+    margin-right: 0 !important;
+  }
+  .lp-right {
+    width: 100% !important;
+    height: auto !important;
+    position: static !important;
+    max-height: none !important;
+    border-radius: 14px;
+    margin-top: 12px;
+  }
+  .lp-settings-row { flex-wrap: wrap; gap: 6px; }
+  .lp-sg { min-width: calc(50% - 4px); flex: none; }
+  .lp-sg-wide { min-width: 100%; flex: none; }
+  .lp-mc-grid { grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); gap: 6px; }
+  .lp-title { font-size: 20px !important; }
+}
+
+/* ── Responsive: Mobile (< 600px) ───────────────────────── */
+@media (max-width: 600px) {
+  .lp-root { padding: 16px; }
+  .lp-main { gap: 6px; }
+
+  /* Settings: 2-column grid */
+  .lp-settings-row {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+  }
+  .lp-sg { min-width: 0; width: 100%; flex: none; }
+  .lp-sg-wide { grid-column: 1 / -1; }
+
+  /* Stack virtual system cards vertically for better space */
+  .lp-vp-grid {
+    grid-template-columns: 1fr !important;
+    gap: 8px;
+  }
+
+  /* Market cards: exactly 2 per row */
+  .lp-mc-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 5px;
+    padding: 8px;
+  }
+  .lp-market-card { padding: 7px; }
+  .lp-mc-label { font-size: 11px !important; }
+  .lp-mc-rl { font-size: 8px !important; width: 28px !important; }
+  .lp-bubble { width: 18px !important; height: 18px !important; font-size: 9px !important; }
+  .lp-bubbles { gap: 2px !important; }
+
+  /* Market chip filter */
+  .lp-market-chips { gap: 4px; }
+  .lp-chip { padding: 3px 8px; font-size: 11px; }
+
+  /* Header */
+  .lp-header-card { padding: 10px 10px 8px; border-radius: 12px; }
+  .lp-title { font-size: 17px !important; }
+  .lp-subtitle { font-size: 11px !important; }
+
+  /* Strategy builder */
+  .lp-strategy { padding: 10px; }
+  .lp-cond-row { gap: 4px; }
+
+  /* Exec button */
+  .lp-exec-btn { padding: 12px 0; font-size: 13px !important; }
+
+  /* Right panel */
+  .lp-right { border-radius: 12px; padding: 8px; gap: 8px; }
+  .lp-run-hdr { flex-wrap: wrap; }
+  .lp-tx-list { max-height: 200px !important; }
+}
+
+/* ── Responsive: Small phones (< 400px) ─────────────────── */
+@media (max-width: 400px) {
+  .lp-title { font-size: 15px !important; }
+  .lp-bubble { width: 16px !important; height: 16px !important; font-size: 8px !important; }
+  .lp-market-card { padding: 5px; }
+  .lp-sg { padding: 8px 10px; }
 }
 `;
+
