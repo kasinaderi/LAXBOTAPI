@@ -376,55 +376,8 @@ const eng = {
 // Single onTick subscription handle — registered once, lives forever
 let _onTickUnsub: (() => void) | null = null;
 
-// ── Trade Retry Queue ─────────────────────────────────────────────────────────
-interface QueuedTrade {
-  params: any;
-  stratId: string;
-  symbol: string;
-  si: number;
-  tradeStake: number;
-  contractType: string;
-  barrier: number | undefined;
-  label: string;
-  mLabel: string;
-  entryDigit: number;
-  lossCount: number;
-  retries: number;
-}
-const _tradeQueue: QueuedTrade[] = [];
-let _tradeQueueTimer: ReturnType<typeof setInterval> | null = null;
-
 // Exported set of requestIds placed by the bot — lets the UI read from Deriv store directly (instant)
 export const botTradeIds = new Set<string>();
-
-function _startTradeQueue() {
-  if (_tradeQueueTimer) return;
-  _tradeQueueTimer = setInterval(() => {
-    if (_tradeQueue.length === 0) return;
-    const item = _tradeQueue[0];
-    // Only retry if bot is still running
-    if (!useBotStore.getState().isRunning) { _tradeQueue.shift(); return; }
-    const requestId = tradeWS.executeDirectTrade(item.params);
-    if (requestId) {
-      _tradeQueue.shift();
-      const now = Date.now();
-      botTradeIds.add(requestId);
-      eng.activeTrades.set(requestId, { stratId: item.stratId, symbol: item.symbol, stake: item.tradeStake, startTime: now });
-      eng.cooldown[`${item.stratId}_${item.symbol}`] = now;
-      eng.lastTradeTime = now;
-      useBotStore.getState().addLog({
-        id: requestId, time: now, symbol: item.symbol, strategyIndex: item.si,
-        contract: item.contractType, stake: item.tradeStake,
-        result: 'SENT', profit: 0,
-        entrySpot: String(item.entryDigit),
-        exitSpot: '-',
-        step: item.lossCount + 1,
-      });
-      useBotStore.getState().set_status(`✓ Sent: ${item.label} on ${item.mLabel}`);
-    }
-    // If socket not ready: silently wait (no drop, no counter — socket will reconnect automatically)
-  }, 150); // 150ms — near-instant recovery once socket reopens
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STORE INTERFACE
@@ -551,7 +504,6 @@ export const useBotStore = create<BotStoreState>()(
         // Proactively connect/ensure the trade socket is open
         if (typeof window !== 'undefined') {
           tradeWS.connect();
-          _startTradeQueue();
           // Defensively ensure the socket event listener is bound to the latest store
           tradeWS.offEvent(onTradeWSEvent);
           tradeWS.onEvent(onTradeWSEvent);
@@ -583,7 +535,6 @@ export const useBotStore = create<BotStoreState>()(
         eng.retrigger     = {};
         eng.waitingForOpposite = {};
         eng.lastTradeTime = 0;
-        _tradeQueue.length = 0;
         botTradeIds.clear();
         set({
           // Clear session data
@@ -911,17 +862,9 @@ export const useBotStore = create<BotStoreState>()(
             const requestId = tradeWS.executeDirectTrade(tradeParams);
 
             if (!requestId) {
-              // Socket not ready — queue this trade for retry instead of dropping it
-              set({ botStatusMsg: `⏳ Queued: ${label} on ${mLabel} (socket not ready)` });
-              _startTradeQueue();
-              _tradeQueue.push({
-                params: tradeParams,
-                stratId, symbol, si, tradeStake, contractType, barrier,
-                label, mLabel, entryDigit, lossCount: ss.lossCount, retries: 0,
-              });
-              // Hold contradiction lock until trade actually fires
-              eng.cooldown[ck] = now;
-              eng.lastTradeTime = now;
+              // Socket not ready — skip silently, do NOT lock cooldown or lastTradeTime
+              // so the very next tick scan can immediately try a fresh signal
+              continue;
             } else {
               eng.cooldown[ck] = now;
               eng.lastTradeTime = now;
