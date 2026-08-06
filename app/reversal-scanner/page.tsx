@@ -1,5 +1,6 @@
 'use client';
 
+import './scanner.css';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useDerivStore } from '@/store/useDerivStore';
 import { useScannerStore } from '@/store/useScannerStore';
@@ -533,7 +534,7 @@ function StrategyBlock({ strategy, index, onChange, onRemove }: {
 // MARKET CARD COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 
-function MarketCard({ symbol, label, isFlashing }: {
+function MarketCardInner({ symbol, label, isFlashing }: {
   symbol: string;
   label: string;
   isFlashing: boolean;
@@ -592,6 +593,9 @@ function MarketCard({ symbol, label, isFlashing }: {
     </div>
   );
 }
+
+// Memoized — only re-renders when symbol/label/isFlashing actually change
+const MarketCard = React.memo(MarketCardInner);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TRADE LOG PANEL
@@ -867,8 +871,6 @@ export default function LaxPrimePage() {
 
   return (
     <>
-      <style>{STYLES}</style>
-
       <div className="lp-risk-disc">⚠ Risk Disclaimer!</div>
 
       <div className={`lp-root ${theme === 'dark' ? 'lp-dark' : ''}`}>
