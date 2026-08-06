@@ -401,15 +401,7 @@ function StrategyBlock({ strategy, index, onChange, onRemove }: {
         />
       )}
 
-      {/* No Contradiction toggle */}
-      <div className="lp-tpb-row" style={{ marginTop: 6 }}>
-        <label className="lp-tpb-lbl-check">
-          <input type="checkbox" checked={!!strategy.noContradiction}
-            onChange={e => u({ noContradiction: e.target.checked })} />
-          <ShieldAlert size={11} style={{ marginLeft: 3, marginRight: 3, color: '#f59e0b' }} />
-          <span style={{ fontSize: 11, fontWeight: 700, color: '#d97706' }}>NO CONTRADICTION (WAIT FOR OPPOSITE)</span>
-        </label>
-      </div>
+      {/* No Contradiction — hidden, always active */}
       <button className="lp-add-cond-btn" onClick={addCond}>+ CONDITION</button>
 
       <div className="lp-summary">{strategySummary(strategy, index)}</div>
@@ -683,7 +675,9 @@ export default function LaxPrimePage() {
   const {
     stake, setStake,
     targetProfit, setTargetProfit,
+    targetProfitMode, setTargetProfitMode,
     stopLoss, setStopLoss,
+    stopLossMode, setStopLossMode,
     martingale, setMartingale,
     tradingMode, setTradingMode,
     strategies, setStrategies,
@@ -695,6 +689,7 @@ export default function LaxPrimePage() {
     globalStats,
     signalFlash,
     startBot, stopBot, resetAll,
+    theme, setTheme,
   } = useBotStore();
 
   const [showVirtualPanel, setShowVirtualPanel] = useState(false);
@@ -736,7 +731,7 @@ export default function LaxPrimePage() {
 
       <div className="lp-risk-disc">⚠ Risk Disclaimer!</div>
 
-      <div className="lp-root">
+      <div className={`lp-root ${theme === 'dark' ? 'lp-dark' : ''}`}>
         <div className="lp-main">
 
           <div className="lp-header-card">
@@ -746,6 +741,13 @@ export default function LaxPrimePage() {
                 <span className="lp-ai-badge">AI</span>
                 <span className="lp-premium-badge">PREMIUM</span>
               </h1>
+              <button
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                className="lp-theme-toggle"
+                title={theme === 'dark' ? 'Switch to Light' : 'Switch to Dark'}
+              >
+                {theme === 'dark' ? '☀️' : '🌑'}
+              </button>
             </div>
             <p className="lp-subtitle">
               A Multi-Strategy Trading Bot that allows you to execute up to 5 Strategies at Once. Example:{' '}
@@ -772,11 +774,29 @@ export default function LaxPrimePage() {
               <input className="lp-si" type="number" min="0.35" step="0.01" value={stake} onChange={e => setStake(e.target.value)} />
             </div>
             <div className="lp-sg">
-              <label className="lp-sl">TARGET PROFIT</label>
+              <div className="lp-sl-row">
+                <label className="lp-sl">{targetProfitMode === 'wins' ? 'TARGET WINS' : 'TARGET PROFIT'}</label>
+                <button
+                  className="lp-mode-pill"
+                  onClick={() => setTargetProfitMode(targetProfitMode === 'profit' ? 'wins' : 'profit')}
+                  title="Toggle between USD profit and number of wins"
+                >
+                  {targetProfitMode === 'wins' ? '🏆 Wins' : '💵 USD'}
+                </button>
+              </div>
               <input className="lp-si" type="number" min="0" value={targetProfit} onChange={e => setTargetProfit(e.target.value)} />
             </div>
             <div className="lp-sg">
-              <label className="lp-sl">STOP LOSS</label>
+              <div className="lp-sl-row">
+                <label className="lp-sl">{stopLossMode === 'losses' ? 'STOP LOSSES' : 'STOP LOSS'}</label>
+                <button
+                  className="lp-mode-pill"
+                  onClick={() => setStopLossMode(stopLossMode === 'loss' ? 'losses' : 'loss')}
+                  title="Toggle between USD loss and number of losses"
+                >
+                  {stopLossMode === 'losses' ? '🔢 Count' : '💵 USD'}
+                </button>
+              </div>
               <input className="lp-si" type="number" min="0" value={stopLoss} onChange={e => setStopLoss(e.target.value)} />
             </div>
             <div className="lp-sg">
@@ -1060,9 +1080,113 @@ const STYLES = `
 .lp-sg:last-child { border-right:none; }
 .lp-sg-wide { flex:1.5; }
 .lp-sl { display:block; font-size:10px; font-weight:800; color:#9ca3af; letter-spacing:0.8px; text-transform:uppercase; margin-bottom:3px; }
+.lp-sl-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:3px; }
+.lp-sl-row .lp-sl { margin-bottom:0; }
+.lp-mode-pill { font-size:9px; font-weight:800; padding:1px 5px; border-radius:20px; border:1px solid #06b6d4; background:#ecfeff; color:#0e7490; cursor:pointer; letter-spacing:.3px; transition:all .15s; white-space:nowrap; line-height:1.4; }
+.lp-mode-pill:hover { background:#06b6d4; color:#fff; }
+.lp-theme-toggle { font-size:13px; background:none; border:none; cursor:pointer; padding:1px 4px; border-radius:5px; transition:transform .2s; line-height:1; vertical-align:middle; opacity:.75; }
+.lp-theme-toggle:hover { opacity:1; transform:scale(1.15); }
 .lp-si { width:100%; border:1px solid #e5e7eb; border-radius:5px; padding:6px 8px; font-size:13px; font-weight:600; color:#111; background:#fff; outline:none; }
 .lp-si:focus { border-color:#06b6d4; }
 .lp-mode { font-size:11px; }
+
+/* ══ DARK THEME (.lp-dark on .lp-root) ══════════════════════════════════════ */
+.lp-dark { background:linear-gradient(160deg,#070d1e 0%,#0d1330 40%,#0a1225 100%); }
+.lp-dark .lp-header-card { background:linear-gradient(135deg,#0d1630 0%,#120e38 100%); border-color:#1e3558; box-shadow:0 4px 24px rgba(6,182,212,.1); }
+.lp-dark .lp-title { color:#e2e8f0; }
+.lp-dark .lp-subtitle { color:#4b6cb7; }
+.lp-dark .lp-subtitle strong { color:#22d3ee; }
+.lp-dark .lp-auth-warn { background:rgba(133,77,14,.18); color:#fcd34d; border-color:rgba(252,211,77,.18); }
+.lp-dark .lp-disconnected { background:rgba(153,27,27,.2); color:#fca5a5; border-color:rgba(252,165,165,.15); }
+.lp-dark .lp-settings-row { background:linear-gradient(135deg,#0c1830,#0f0d30); border-color:#1e3558; }
+.lp-dark .lp-sg { border-right-color:#1e3558; }
+.lp-dark .lp-sl { color:#4b6cb7; }
+.lp-dark .lp-si { background:#06091a; border-color:#1e3558; color:#e2e8f0; }
+.lp-dark .lp-si:focus { border-color:#22d3ee; box-shadow:0 0 0 2px rgba(34,211,238,.12); }
+.lp-dark select.lp-si option { background:#06091a; color:#e2e8f0; }
+.lp-dark .lp-mode-pill { background:rgba(34,211,238,.08); border-color:#22d3ee; color:#22d3ee; }
+.lp-dark .lp-mode-pill:hover { background:#22d3ee; color:#06091a; }
+.lp-dark .lp-strategy-section { background:linear-gradient(135deg,#0a1428 0%,#0c0d28 100%); border-color:#1e3558; }
+.lp-dark .lp-sec-title { color:transparent; background:linear-gradient(90deg,#22d3ee 0%,#818cf8 100%); -webkit-background-clip:text; background-clip:text; }
+.lp-dark .lp-strategy { background:rgba(12,22,55,.65); border-color:#1e3558; }
+.lp-dark .lp-strat-blue   { background:rgba(30,58,138,.22); border-color:#1e3a8a55; }
+.lp-dark .lp-strat-pink   { background:rgba(131,24,67,.18); border-color:#83184355; }
+.lp-dark .lp-strat-purple { background:rgba(88,28,135,.22); border-color:#581c8755; }
+.lp-dark .lp-strat-green  { background:rgba(6,78,59,.22); border-color:#064e3b55; }
+.lp-dark .lp-strat-orange { background:rgba(120,53,15,.22); border-color:#78350f55; }
+.lp-dark .lp-strat-name { color:#cbd5e1; }
+.lp-dark .lp-cond-badge { background:rgba(34,211,238,.08); color:#22d3ee; }
+.lp-dark .lp-toggle-label { color:#64748b; }
+.lp-dark .lp-if-label { color:#64748b; }
+.lp-dark .lp-sel { background:#06091a; border-color:#1e3558; color:#cbd5e1; }
+.lp-dark .lp-add-cond-btn { background:rgba(34,211,238,.08); color:#22d3ee; border:1px dashed rgba(34,211,238,.35); }
+.lp-dark .lp-add-cond-btn:hover { background:rgba(34,211,238,.18); }
+.lp-dark .lp-add-strat-btn { background:linear-gradient(135deg,#065f46,#047857); }
+.lp-dark .lp-summary { background:rgba(34,211,238,.04); border-color:rgba(34,211,238,.12); color:#4b6cb7; }
+.lp-dark .lp-summary strong { color:#22d3ee; }
+.lp-dark .lp-rm-strat { background:#7f1d1d; }
+.lp-dark .lp-then-row { background:rgba(34,211,238,.05); border-color:rgba(34,211,238,.12); }
+.lp-dark .lp-markets-section { background:linear-gradient(135deg,#070d1e,#0a0d25); border-color:#1e3558; }
+.lp-dark .lp-market-chips { background:transparent; }
+.lp-dark .lp-mc-chip { background:#0a1430; border-color:#1e3558; color:#64748b; }
+.lp-dark .lp-mc-chip.active { background:rgba(34,211,238,.12); border-color:#22d3ee; color:#22d3ee; }
+.lp-dark .lp-market-card { background:rgba(12,22,55,.8); border-color:#1e3558; }
+.lp-dark .lp-mc-label { color:#94a3b8; }
+.lp-dark .lp-mc-sym { color:#e2e8f0; }
+.lp-dark .lp-bubble { background:#1e3558; color:#94a3b8; }
+.lp-dark .lp-bubble.even { background:rgba(34,211,238,.15); color:#22d3ee; }
+.lp-dark .lp-bubble.odd  { background:rgba(129,140,248,.15); color:#818cf8; }
+.lp-dark .lp-run-hdr { background:rgba(12,22,55,.9); border-color:#1e3558; }
+.lp-dark .lp-status-row { background:rgba(6,9,26,.6); border-color:#1e3558; }
+.lp-dark .lp-status-box { border-color:#1e3558; }
+.lp-dark .lp-status-label { color:#4b6cb7; }
+.lp-dark .lp-status-text { color:#e2e8f0; }
+.lp-dark .lp-signal-text { color:#22d3ee; }
+.lp-dark .lp-bot-ctrl { background:linear-gradient(135deg,#070d1e,#0a0c25); border-color:#1e3558; }
+.lp-dark .lp-ctrl-status { background:#06091a; border-color:#1e3558; color:#4b6cb7; }
+.lp-dark .lp-stats-row { background:#06091a; border-color:#1e3558; }
+.lp-dark .lp-stat-val { color:#e2e8f0; }
+.lp-dark .lp-stat-val.pos { color:#34d399; }
+.lp-dark .lp-stat-val.neg { color:#f87171; }
+.lp-dark .lp-stat-lbl { color:#4b6cb7; }
+.lp-dark .lp-right { border-color:#1e3558; }
+.lp-dark .lp-right-card { background:linear-gradient(135deg,#070d1e,#0a0c25); border-color:#1e3558; }
+.lp-dark .lp-last-signal { background:rgba(34,211,238,.06); border-color:rgba(34,211,238,.18); color:#22d3ee; }
+.lp-dark .lp-tx-panel { background:#06091a; border-color:#1e3558; }
+.lp-dark .lp-tx-tabs { background:#070d1e; border-bottom-color:#1e3558; }
+.lp-dark .lp-tx-tab { color:#4b6cb7; }
+.lp-dark .lp-tx-tab.active { color:#22d3ee; border-bottom-color:#22d3ee; }
+.lp-dark .lp-tx-actions { background:#06091a; border-bottom-color:#1e3558; }
+.lp-dark .lp-tx-btn { background:#0a1225; border-color:#1e3558; color:#64748b; }
+.lp-dark .lp-tx-btn:hover { border-color:#22d3ee; color:#22d3ee; }
+.lp-dark .lp-tx-hdr { border-bottom-color:#1e3558; }
+.lp-dark .lp-tx-hdr span { color:#4b6cb7; }
+.lp-dark .lp-tx-row { border-bottom-color:#1e3558; }
+.lp-dark .lp-tx-row.won { background:rgba(6,78,59,.22); }
+.lp-dark .lp-tx-row.lost { background:rgba(127,29,29,.22); }
+.lp-dark .lp-tx-type { color:#e2e8f0; }
+.lp-dark .lp-tx-sym { color:#4b6cb7; }
+.lp-dark .lp-tx-empty span { color:#4b6cb7; }
+.lp-dark .lp-tx-stats { background:#070d1e; border-top-color:#1e3558; }
+.lp-dark .lp-tsl { color:#4b6cb7; }
+.lp-dark .lp-tsv { color:#94a3b8; }
+.lp-dark .lp-tsv.pos { color:#34d399; }
+.lp-dark .lp-tsv.neg { color:#f87171; }
+.lp-dark .lp-reset-btn { background:rgba(127,29,29,.3); border-color:rgba(239,68,68,.3); color:#f87171; }
+.lp-dark .lp-right-footer { background:#06091a; border-top-color:#1e3558; color:#4b6cb7; }
+.lp-dark .lp-dot { background:#4b6cb7; }
+.lp-dark .lp-dot.connected { background:#22d3ee; box-shadow:0 0 6px #22d3ee88; }
+.lp-dark .lp-time { color:#4b6cb7; }
+.lp-dark .lp-virt-toggle-btn { background:linear-gradient(135deg,#1e1b4b,#2e1065); border-color:#4338ca; color:#c7d2fe; }
+.lp-dark .lp-vp { background:rgba(14,26,64,.8); border-color:#1e3558; }
+.lp-dark .lp-vp-card { background:rgba(12,22,55,.8); border-color:#1e3558; }
+.lp-dark .lp-vp-card-lbl { color:#e0e7ff; }
+.lp-dark .lp-vp-sub-lbl { color:#818cf8; }
+.lp-dark .lp-pnl-pos { color:#34d399; }
+.lp-dark .lp-pnl-neg { color:#f87171; }
+.lp-dark .lp-run-btn.running { box-shadow:0 0 28px rgba(239,68,68,.35); }
+.lp-dark .lp-run-btn { box-shadow:0 0 18px rgba(34,211,238,.2); }
+.lp-dark .lp-tpb-lbl-check { color:#64748b; }
 
 /* ── Strategy Section ───────────────────────────────────── */
 .lp-strategy-section { background:#f0fdfc; border:1px solid #e5e7eb; border-top:none; padding:12px 14px; }

@@ -133,7 +133,7 @@ export function createStrategy(_index: number): Strategy {
     enabled: true,
     tradePattern: [true, true, true, true],
     useTradePattern: false,
-    noContradiction: false,
+    noContradiction: true,
   };
 }
 
@@ -347,11 +347,14 @@ interface BotStoreState {
   // ── Persisted settings ─────────────────────────────────────────────────────
   stake:          string;
   targetProfit:   string;
+  targetProfitMode: 'profit' | 'wins';
   stopLoss:       string;
+  stopLossMode:   'loss' | 'losses';
   martingale:     string;
   tradingMode:    string;
   strategies:     Strategy[];
   selectedMarkets: string[];
+  theme:          'dark' | 'light';
 
   // ── Session state (NOT persisted) ─────────────────────────────────────────
   isRunning:    boolean;
@@ -364,11 +367,14 @@ interface BotStoreState {
   // ── Settings setters ───────────────────────────────────────────────────────
   setStake:           (v: string) => void;
   setTargetProfit:    (v: string) => void;
+  setTargetProfitMode: (mode: 'profit' | 'wins') => void;
   setStopLoss:        (v: string) => void;
+  setStopLossMode:    (mode: 'loss' | 'losses') => void;
   setMartingale:      (v: string) => void;
   setTradingMode:     (v: string) => void;
   setStrategies:      (s: Strategy[] | ((p: Strategy[]) => Strategy[])) => void;
   setSelectedMarkets: (m: string[] | ((p: string[]) => string[])) => void;
+  setTheme:           (theme: 'dark' | 'light') => void;
 
   // ── Bot controls ───────────────────────────────────────────────────────────
   startBot:   () => void;
@@ -397,11 +403,14 @@ export const useBotStore = create<BotStoreState>()(
       // ── Defaults ─────────────────────────────────────────────────────────────
       stake:           '1',
       targetProfit:    '100',
+      targetProfitMode: 'profit',
       stopLoss:        '100',
+      stopLossMode:    'loss',
       martingale:      '2.1',
       tradingMode:     'continuous',
       strategies:      [createStrategy(0)],
       selectedMarkets: ['1HZ10V', 'R_10', '1HZ25V', 'R_25', '1HZ50V', '1HZ75V'],
+      theme:           'dark',
 
       isRunning:    false,
       botStatusMsg: 'Ready.',
@@ -413,7 +422,9 @@ export const useBotStore = create<BotStoreState>()(
       // ── Setters ───────────────────────────────────────────────────────────────
       setStake:           (v) => set({ stake: v }),
       setTargetProfit:    (v) => set({ targetProfit: v }),
+      setTargetProfitMode: (mode) => set({ targetProfitMode: mode }),
       setStopLoss:        (v) => set({ stopLoss: v }),
+      setStopLossMode:    (mode) => set({ stopLossMode: mode }),
       setMartingale:      (v) => set({ martingale: v }),
       setTradingMode:     (v) => set({ tradingMode: v }),
       setStrategies: (s) => set(state => ({
@@ -422,6 +433,7 @@ export const useBotStore = create<BotStoreState>()(
       setSelectedMarkets: (m) => set(state => ({
         selectedMarkets: typeof m === 'function' ? m(state.selectedMarkets) : m,
       })),
+      setTheme:           (theme) => set({ theme }),
 
       addLog: (log) => set(state => ({
         tradeLogs: [log, ...state.tradeLogs].slice(0, 50),
@@ -606,8 +618,20 @@ export const useBotStore = create<BotStoreState>()(
 
           // Stop if limits hit
           const live = get().globalStats;
-          if (live.totalProfit >=  parseFloat(targetProfit)) { get().stopBot('Target profit reached!'); return; }
-          if (live.totalProfit <= -parseFloat(stopLoss))     { get().stopBot('Stop loss reached!');     return; }
+          const tpMode = state.targetProfitMode || 'profit';
+          const slMode = state.stopLossMode || 'loss';
+
+          if (tpMode === 'wins') {
+            if (live.won >= parseInt(targetProfit)) { get().stopBot('Target wins reached!'); return; }
+          } else {
+            if (live.totalProfit >= parseFloat(targetProfit)) { get().stopBot('Target profit reached!'); return; }
+          }
+
+          if (slMode === 'losses') {
+            if (live.lost >= parseInt(stopLoss)) { get().stopBot('Stop losses reached!'); return; }
+          } else {
+            if (live.totalProfit <= -parseFloat(stopLoss)) { get().stopBot('Stop loss reached!'); return; }
+          }
 
           eng.cooldown[`${stratId}_${vtSym}`] = now;
         }
@@ -926,8 +950,20 @@ export const useBotStore = create<BotStoreState>()(
 
         // Stop if limits hit
         const liveStats = get().globalStats;
-        if (liveStats.totalProfit >=  parseFloat(state.targetProfit)) { get().stopBot('Target profit reached!'); }
-        if (liveStats.totalProfit <= -parseFloat(state.stopLoss))     { get().stopBot('Stop loss reached!'); }
+        const tpMode = state.targetProfitMode || 'profit';
+        const slMode = state.stopLossMode || 'loss';
+
+        if (tpMode === 'wins') {
+          if (liveStats.won >= parseInt(state.targetProfit)) { get().stopBot('Target wins reached!'); }
+        } else {
+          if (liveStats.totalProfit >= parseFloat(state.targetProfit)) { get().stopBot('Target profit reached!'); }
+        }
+
+        if (slMode === 'losses') {
+          if (liveStats.lost >= parseInt(state.stopLoss)) { get().stopBot('Stop losses reached!'); }
+        } else {
+          if (liveStats.totalProfit <= -parseFloat(state.stopLoss)) { get().stopBot('Stop loss reached!'); }
+        }
 
         eng.activeTrades.delete(requestId);
         eng.cooldown[`${stratId}_${symbol}`] = Date.now();
@@ -947,11 +983,14 @@ export const useBotStore = create<BotStoreState>()(
       partialize: (state) => ({
         stake:           state.stake,
         targetProfit:    state.targetProfit,
+        targetProfitMode: state.targetProfitMode,
         stopLoss:        state.stopLoss,
+        stopLossMode:    state.stopLossMode,
         martingale:      state.martingale,
         tradingMode:     state.tradingMode,
         strategies:      state.strategies,
         selectedMarkets: state.selectedMarkets,
+        theme:           state.theme,
       }),
     },
   ),
