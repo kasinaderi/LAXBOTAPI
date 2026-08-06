@@ -68,6 +68,7 @@ class TradeWS {
     private reconnectAttempts = 0;
     private heartbeatTimer: NodeJS.Timeout | null = null;
     private shouldReconnect = true; // Set to false on explicit disconnect()
+    private isConnecting = false;
 
     constructor() {
         if (typeof window !== 'undefined') {
@@ -89,13 +90,14 @@ class TradeWS {
 
         // Mark pending trades as ERROR before clearing
         const store = this.getState ? this.getState() : null;
-        this.tradePool.forEach((trade, id) => {
+        const poolCopy = new Map(this.tradePool);
+        this.tradePool.clear(); // Clear BEFORE emitting to prevent recursive loops!
+        poolCopy.forEach((trade, id) => {
             if (store) {
                 store.updateTradeLog(id, { result: 'ERROR', error: 'Disconnected manually' });
             }
             this.emitEvent('TRADE_ERROR', { requestId: id, error: 'Disconnected manually' });
         });
-        this.tradePool.clear();
 
         if (store) {
             store.setTradeWsStatus('disconnected');
@@ -126,6 +128,10 @@ class TradeWS {
     }
 
     public async connect() {
+        if (this.isConnecting) {
+            console.log('[TradeWS] connect() called while already connecting — ignoring.');
+            return;
+        }
         const store = this.getState ? this.getState() : null;
         const hasCredentials = !!(store?.token && store?.account?.loginid);
 
@@ -146,6 +152,7 @@ class TradeWS {
             }
             return;
         }
+        this.isConnecting = true;
         this.shouldReconnect = true; // Allow reconnects when we explicitly connect
         this.updateStatus('connecting');
 
@@ -154,6 +161,7 @@ class TradeWS {
             this.socket = new WebSocket(url);
 
             this.socket.onopen = () => {
+                this.isConnecting = false;
                 this.updateStatus('connected');
                 this.reconnectAttempts = 0;
                 this.startHeartbeat();
@@ -178,7 +186,9 @@ class TradeWS {
 
             this.socket.onmessage = (event) => this.handleMessage(JSON.parse(event.data));
 
+            const activeSocket = this.socket;
             this.socket.onclose = (e) => {
+                this.isConnecting = false;
                 console.warn(`[TradeWS] Connection Closed. Code: ${e.code}, Reason: ${e.reason || 'None'}`);
                 this.updateStatus('disconnected');
                 this.isAuthorized = false;
@@ -186,20 +196,25 @@ class TradeWS {
 
                 // Mark pending trades as ERROR before clearing
                 const store = this.getState ? this.getState() : null;
-                this.tradePool.forEach((trade, id) => {
+                const poolCopy = new Map(this.tradePool);
+                this.tradePool.clear(); // Clear BEFORE emitting to prevent recursive loops!
+                poolCopy.forEach((trade, id) => {
                     if (store) {
                         store.updateTradeLog(id, { result: 'ERROR', error: 'Connection Lost' });
                     }
                     this.emitEvent('TRADE_ERROR', { requestId: id, error: 'Connection Lost' });
                 });
-                this.tradePool.clear();
                 this.stopHeartbeat();
-                if (this.shouldReconnect) {
+
+                // If a force reconnect or other connection has already been started by the event listener,
+                // this.socket will no longer point to the activeSocket that just closed.
+                if (this.socket === activeSocket && this.shouldReconnect) {
                     this.handleReconnect();
                 }
             };
 
             this.socket.onerror = (err: any) => {
+                this.isConnecting = false;
                 if (err && err.message) {
                     console.warn('[TradeWS] Socket Error:', err.message);
                 }
@@ -207,14 +222,16 @@ class TradeWS {
             };
 
         } catch (e) {
+            this.isConnecting = false;
             console.error('[TradeWS] Failed to create socket:', e);
             this.handleReconnect();
         }
     }
 
     public forceReconnect() {
+        this.reconnectAttempts = 0; // reset backoff so first retry is immediate
         this.disconnect();
-        setTimeout(() => this.connect(), 1000);
+        this.connect();
     }
     
     private handleReconnect() {
@@ -743,8 +760,8 @@ class TradeWS {
 
     public executeDirectTrade(payload: any): string {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.isAuthorized) {
-      // Proactively reconnect so the queue retries succeed as soon as possible
-      this.connect();
+      // Socket not ready — return empty, caller will continue to next tick immediately.
+      // Do NOT call connect() here; reconnection is managed by the onclose handler.
       return '';
     }
     if (this.tradePool.size >= 20) {

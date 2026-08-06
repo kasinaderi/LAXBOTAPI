@@ -722,7 +722,6 @@ export const useBotStore = create<BotStoreState>()(
               eng.waitingForOpposite[ck] = null;
               console.log(`[BotEngine] 🔄 Contradiction Cleared: Opposite digit/state detected (${currentDigit}) on ${symbol}. Resuming scanning.`);
             } else {
-              // Still waiting for contradiction to clear
               continue;
             }
           }
@@ -737,6 +736,7 @@ export const useBotStore = create<BotStoreState>()(
             t => t.stratId === stratId && t.symbol === symbol
           );
           if (hasRecentReal || hasVirt) continue;
+
           // Digit pattern retrigger guard
           const dpCond = s.conditions.find(c => c.type === 'DIGIT_PATTERN');
           if (dpCond && dpCond.patternRetrigger !== 'any') {
@@ -748,12 +748,17 @@ export const useBotStore = create<BotStoreState>()(
             const patNowTrue   = evaluateDigitPattern(dpCond, digits, quotes);
 
             if (dpCond.patternRetrigger === 'no_contra') {
-              if (patNowTrue && rts.lastWasTrue) continue;   // already fired on this edge
+              if (patNowTrue && rts.lastWasTrue) {
+                // already fired on this edge
+                continue;
+              }
               rts.lastWasTrue = patNowTrue;
               if (!patNowTrue) continue;
             } else if (dpCond.patternRetrigger === 'wait_opp') {
               if (patNowTrue) {
-                if (rts.waitingForOpposite) continue;
+                if (rts.waitingForOpposite) {
+                  continue;
+                }
                 rts.waitingForOpposite = true;
               } else {
                 rts.waitingForOpposite = false;
@@ -862,8 +867,6 @@ export const useBotStore = create<BotStoreState>()(
             const requestId = tradeWS.executeDirectTrade(tradeParams);
 
             if (!requestId) {
-              // Socket not ready — skip silently, do NOT lock cooldown or lastTradeTime
-              // so the very next tick scan can immediately try a fresh signal
               continue;
             } else {
               eng.cooldown[ck] = now;
@@ -903,9 +906,19 @@ export const useBotStore = create<BotStoreState>()(
           return;
         }
         if (type === 'TRADE_ERROR') {
+          const errTrade = eng.activeTrades.get(data.requestId);
           eng.activeTrades.delete(data.requestId);
           get().updateLog(data.requestId, { result: 'ERROR', profit: 0 });
-          set({ botStatusMsg: `⚠ Trade Error: ${data.error}` });
+          // Clear cooldown for this strategy+market so next signal fires immediately
+          if (errTrade) {
+            const ck = `${errTrade.stratId}_${errTrade.symbol}`;
+            delete eng.cooldown[ck];
+            eng.lastTradeTime = 0;
+          }
+          // Force tradeWS to reconnect immediately (resets backoff to 0ms) so re-auth happens ASAP
+          if (typeof window !== 'undefined') tradeWS.forceReconnect();
+          // Don't block with an error status — just stay ready
+          set({ botStatusMsg: 'Running. Waiting for conditions...' });
           return;
         }
         if (type !== 'TRADE_RESULT') return;
