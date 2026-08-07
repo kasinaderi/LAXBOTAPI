@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useDerivStore } from '@/store/useDerivStore';
+import { usePageSettings } from '@/store/usePageSettings';
 import { derivWS } from '@/lib/deriv/websocket';
 import { Bot, Play } from 'lucide-react';
 
@@ -82,6 +83,11 @@ export default function TradingStation() {
   const { token, account, manualMarket: storeSymbol, setManualMarket: setMarket, sidebarView, setSidebarView, isRunning, startBot, stopBot, virtualSettings, setVirtualSettings, setTradingApp } = useDerivStore();
   const symbol = storeSymbol || 'R_100';
   const displayName = DISPLAY_NAMES[symbol] ?? symbol;
+
+  // Isolate this page's settings from all other trading pages.
+  // Stake, martingale, triggers, trade pattern, virtual/recovery settings
+  // and trade logs are all stored under the 'dtrader' namespace.
+  usePageSettings('dtrader');
 
   React.useEffect(() => {
     setTradingApp('dtrader');

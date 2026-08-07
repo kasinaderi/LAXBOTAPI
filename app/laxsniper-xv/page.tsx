@@ -16,9 +16,15 @@ import { AdminDashboard } from '@/components/AdminDashboard';
 import { SettingsTabs } from '@/components/SettingsTabs';
 import { TrendingUp, ShieldCheck } from 'lucide-react';
 import { useDerivStore } from '@/store/useDerivStore';
+import { usePageSettings } from '@/store/usePageSettings';
 
 export default function LaxSniperXV() {
     const { status, account, ticks, setTradingApp } = useDerivStore();
+
+    // Isolate this page's settings from all other trading pages.
+    // Stake, martingale, triggers, trade pattern, virtual/recovery settings
+    // and trade logs are all stored under the 'laxsniper-xv' namespace.
+    usePageSettings('laxsniper-xv');
 
     React.useEffect(() => {
         setTradingApp('laxsniper');

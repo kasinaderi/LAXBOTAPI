@@ -13,6 +13,7 @@ import {
     Target, ChevronRight, ArrowLeftRight, AlertTriangle, FlaskConical
 } from 'lucide-react';
 import { useDerivStore } from '@/store/useDerivStore';
+import { usePageSettings } from '@/store/usePageSettings';
 import { useScannerStore } from '@/store/useScannerStore';
 import { ticksToDecimals } from '@/lib/deriv/constants';
 import { tradeEngine } from '@/lib/deriv/trade-engine';
@@ -172,6 +173,11 @@ export default function AutoTradePage() {
         setTradePattern: setStoreTradePattern,
         setTradingMode: setStoreTradingMode,
     } = useDerivStore();
+
+    // Isolate this page's settings from all other trading pages.
+    // Stake, martingale, triggers, trade pattern, virtual/recovery settings
+    // and trade logs are all stored under the 'auto-trade' namespace.
+    usePageSettings('auto-trade');
     const { marketRegimes, signals, ensureScanner, startScanning, stopScanning, activeCount } = useScannerStore();
 
     // ── Admin Guard ────────────────────────────────────────────────────────

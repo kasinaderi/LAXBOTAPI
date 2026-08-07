@@ -3,6 +3,7 @@
 import './scanner.css';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useDerivStore } from '@/store/useDerivStore';
+import { usePageSettings } from '@/store/usePageSettings';
 import { useScannerStore } from '@/store/useScannerStore';
 import { derivWS } from '@/lib/deriv/websocket';
 import { Play, Square, ChevronDown, AlertTriangle, Loader2, Layers, ShieldAlert } from 'lucide-react';
@@ -919,6 +920,11 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
 export default function LaxPrimePage() {
   const { status, account, isTradeAuthorized, virtualSettings, setVirtualSettings } = useDerivStore();
   const { startScanning, stopScanning, ensureScanner } = useScannerStore();
+
+  // Isolate this page's useDerivStore settings (virtual settings, trade logs, etc.)
+  // from all other trading pages. Core bot settings are in useBotStore which
+  // already has its own isolated persist key ('laxprime-bot-v1').
+  usePageSettings('reversal-scanner');
 
   const {
     stake, setStake,
