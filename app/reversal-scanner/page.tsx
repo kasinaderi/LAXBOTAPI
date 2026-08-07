@@ -129,12 +129,24 @@ const STRATEGY_BG = [
 // ─────────────────────────────────────────────────────────────────────────────
 
 function tokenNeedsBarrier(token: string): boolean {
-  return token === 'V' || token === 'U';
+  return token === 'V' || token === 'U' || token === 'M' || token === 'D';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ADVANCED PATTERN BUILDER — Multi-Entry Sequence (LaxSniper XV style)
 // ─────────────────────────────────────────────────────────────────────────────
+
+function getTokenBgColor(token: string): string {
+  switch (token) {
+    case 'U': return '#2563eb'; // Blue
+    case 'V': return '#059669'; // Green
+    case 'E': return '#0d9488'; // Teal
+    case 'O': return '#ea580c'; // Orange
+    case 'D': return '#dc2626'; // Red
+    case 'M': return '#7c3aed'; // Purple
+    default: return '#475569';  // Gray
+  }
+}
 
 function AdvancedPatternBuilder({ cond, onChange }: {
   cond: Condition;
@@ -181,56 +193,148 @@ function AdvancedPatternBuilder({ cond, onChange }: {
   return (
     <div className="lp-apb">
       {/* Header */}
-      <div className="lp-apb-header">
-        <span className="lp-apb-title">Multi-Entry Sequence</span>
+      <div className="lp-apb-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span className="lp-apb-title">Multi-Entry Sequence</span>
+          {/* Simple toggle slider matching the design */}
+          <div 
+            style={{ width: '30px', height: '16px', background: (cond.patternBoxes && cond.patternBoxes.length > 0) ? '#10b981' : '#334155', borderRadius: '8px', position: 'relative', cursor: 'pointer', transition: 'background-color 0.2s' }}
+            onClick={() => {
+              // Toggle sequence ON/OFF (just empty boxes to toggle off)
+              if (cond.patternBoxes && cond.patternBoxes.length > 0) {
+                onChange({ ...cond, patternBoxes: [] });
+              } else {
+                onChange({ ...cond, patternBoxes: [{ triggers: [{ token: 'E' }] }] });
+              }
+            }}
+          >
+            <div style={{
+              width: '12px',
+              height: '12px',
+              background: '#fff',
+              borderRadius: '50%',
+              position: 'absolute',
+              top: '2px',
+              right: (cond.patternBoxes && cond.patternBoxes.length > 0) ? '2px' : 'auto',
+              left: (cond.patternBoxes && cond.patternBoxes.length > 0) ? 'auto' : '2px',
+              transition: 'all 0.2s'
+            }}></div>
+          </div>
+        </div>
         <button className="lp-apb-add-btn" onClick={addBox}>+ Add Box</button>
       </div>
 
-      {/* Boxes */}
-      <div className="lp-apb-grid">
-        {boxes.map((box, bi) => (
-          <div key={bi} className="lp-apb-card">
-            <div className="lp-apb-card-hdr">
-              <span className="lp-apb-card-title">Box {bi + 1}</span>
-              {boxes.length > 1 && (
-                <button className="lp-apb-card-remove" onClick={() => removeBox(bi)}>✕</button>
-              )}
-            </div>
+      {/* Boxes Grid */}
+      {cond.patternBoxes && cond.patternBoxes.length > 0 && (
+        <div className="lp-apb-grid">
+          {boxes.map((box, bi) => (
+            <div key={bi} className={`lp-apb-card ${bi === 0 ? 'active-step' : ''}`}>
+              <div className="lp-apb-card-hdr">
+                <span className="lp-apb-card-title">Box {bi + 1}</span>
+                {boxes.length > 1 && (
+                  <button className="lp-apb-card-remove" onClick={() => removeBox(bi)}>✕</button>
+                )}
+              </div>
 
-            {/* Triggers list */}
-            <div className="lp-apb-triggers">
-              {box.triggers.map((trig, ti) => (
-                <div key={ti} className="lp-apb-trig-row">
-                  <select
-                    className="lp-sel lp-apb-tok-sel"
-                    value={trig.token}
-                    onChange={e => updateTrigger(bi, ti, { token: e.target.value, barrier: tokenNeedsBarrier(e.target.value) ? (trig.barrier ?? 4) : undefined })}
-                  >
-                    {PATTERN_TOKENS.map(pt => (
-                      <option key={pt.value} value={pt.value} title={pt.title}>{pt.label}</option>
-                    ))}
-                  </select>
-                  {tokenNeedsBarrier(trig.token) ? (
-                    <input
-                      className="lp-num lp-apb-trig-inp"
-                      type="number" min={0} max={9}
-                      value={trig.barrier ?? 4}
-                      onChange={e => updateTrigger(bi, ti, { barrier: +e.target.value })}
-                    />
-                  ) : (
-                    <span className="lp-apb-trig-dash">—</span>
-                  )}
-                  {box.triggers.length > 1 && (
-                    <button className="lp-apb-trig-rm" onClick={() => removeTrigger(bi, ti)}>✕</button>
-                  )}
-                </div>
-              ))}
-            </div>
+              {/* Triggers list */}
+              <div className="lp-apb-triggers">
+                {box.triggers.map((trig, ti) => {
+                  const bNeedsBarrier = tokenNeedsBarrier(trig.token);
+                  return (
+                    <div key={ti} className="lp-badge-trigger">
+                      {/* Token Select badge */}
+                      <select
+                        value={trig.token}
+                        onChange={e => {
+                          const token = e.target.value;
+                          const barrier = tokenNeedsBarrier(token) ? (trig.barrier ?? 4) : undefined;
+                          updateTrigger(bi, ti, { token, barrier });
+                        }}
+                        style={{
+                          background: getTokenBgColor(trig.token),
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: bNeedsBarrier ? '4px 0 0 4px' : '4px',
+                          padding: '0 6px',
+                          height: '100%',
+                          fontSize: '10px',
+                          fontWeight: '900',
+                          cursor: 'pointer',
+                          outline: 'none',
+                          appearance: 'none',
+                          textAlign: 'center',
+                          minWidth: '22px'
+                        }}
+                      >
+                        <option value="E">E</option>
+                        <option value="O">O</option>
+                        <option value="U">U</option>
+                        <option value="V">V</option>
+                        <option value="M">M</option>
+                        <option value="D">D</option>
+                        <option value="SE">SE</option>
+                        <option value="SO">SO</option>
+                        <option value="R">R</option>
+                        <option value="F">F</option>
+                      </select>
 
-            <button className="lp-apb-add-trig" onClick={() => addTrigger(bi)}>+ trigger</button>
-          </div>
-        ))}
-      </div>
+                      {/* Barrier Select (0-9) inside badge */}
+                      {bNeedsBarrier && (
+                        <select
+                          value={trig.barrier ?? 4}
+                          onChange={e => updateTrigger(bi, ti, { barrier: +e.target.value })}
+                          style={{
+                            background: 'rgba(0, 0, 0, 0.45)',
+                            color: '#fff',
+                            border: 'none',
+                            padding: '0 6px',
+                            height: '100%',
+                            fontSize: '10px',
+                            fontWeight: '700',
+                            cursor: 'pointer',
+                            outline: 'none',
+                            appearance: 'none',
+                            textAlign: 'center',
+                            minWidth: '20px'
+                          }}
+                        >
+                          {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(d => (
+                            <option key={d} value={d}>{d}</option>
+                          ))}
+                        </select>
+                      )}
+
+                      {/* Delete Trigger Button */}
+                      {box.triggers.length > 1 && (
+                        <button
+                          onClick={() => removeTrigger(bi, ti)}
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            color: 'rgba(255, 255, 255, 0.4)',
+                            padding: '0 6px',
+                            fontSize: '9px',
+                            cursor: 'pointer',
+                            height: '100%',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {/* Dashed plus button to add trigger */}
+                <button className="lp-apb-add-trig-dashed" onClick={() => addTrigger(bi)}>+</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Retrigger */}
       <div className="lp-apb-retrig-row">
@@ -241,7 +345,7 @@ function AdvancedPatternBuilder({ cond, onChange }: {
         </select>
       </div>
 
-      {/* USE CUSTOM CONTRACTS — only visible inside DIGIT_PATTERN */}
+      {/* USE CUSTOM CONTRACTS */}
       <div className="lp-apb-ucc-row">
         <label className="lp-tpb-lbl-check">
           <input type="checkbox" checked={!!cond.useCustomContracts}

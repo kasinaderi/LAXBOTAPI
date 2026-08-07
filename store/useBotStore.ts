@@ -224,26 +224,29 @@ function matchPatternToken(token: string, digits: number[], quotes: number[], id
 /** Match a single PatternTrigger against the digit/quote at history position idx */
 function matchTrigger(
   trig: PatternTrigger,
-  dSlice: number[],
-  qSlice: number[],
+  digits: number[],
+  quotes: number[],
   idx: number
 ): boolean {
-  const d  = dSlice[idx];
-  const pd = dSlice[idx - 1];
-  const q  = qSlice[idx];
-  const pq = qSlice[idx - 1];
+  if (idx < 0 || idx >= digits.length) return false;
+
+  const d  = digits[idx];
+  const pd = idx > 0 ? digits[idx - 1] : d;
+  const q  = quotes[idx];
+  const pq = idx > 0 ? quotes[idx - 1] : q;
   const b  = trig.barrier ?? 4;
+
   switch (trig.token) {
     case 'E':  return d % 2 === 0;
     case 'O':  return d % 2 !== 0;
-    case 'D':  return idx > 0 && d !== pd;
-    case 'M':  return idx > 0 && d === pd;
-    case 'V':  return d > b;
-    case 'U':  return d <= b;
-    case 'SE': return d % 2 === 0 && idx > 0 && d === pd;
-    case 'SO': return d % 2 !== 0 && idx > 0 && d === pd;
-    case 'R':  return idx > 0 && q > pq;
-    case 'F':  return idx > 0 && q < pq;
+    case 'D':  return d !== b;   // Differs barrier
+    case 'M':  return d === b;   // Match barrier
+    case 'V':  return d > b;     // Over
+    case 'U':  return d < b;     // Under
+    case 'SE': return d % 2 === 0 && d === pd;
+    case 'SO': return d % 2 !== 0 && d === pd;
+    case 'R':  return q > pq;
+    case 'F':  return q < pq;
     default:   return false;
   }
 }
@@ -253,30 +256,28 @@ function evaluateDigitPattern(cond: Condition, digits: number[], quotes: number[
 
   // ── Multi-Entry Sequence (new format) ──────────────────────────────────────
   if (boxes && boxes.length > 0) {
-    // Each Box is an alternative sequence (OR across boxes)
-    for (const box of boxes) {
+    const M = boxes.length;
+    // Need at least M history points (and M+1 for index-1 comparisons like SE/SO/R/F)
+    if (digits.length < M + 1) return false;
+
+    // Box 1 (index 0) = newest tick (digits.length - 1)
+    // Box 2 (index 1) = tick N-1 (digits.length - 2)
+    // All boxes in the sequence must match (AND across boxes)
+    for (let i = 0; i < M; i++) {
+      const box = boxes[i];
       const triggers = box.triggers;
-      if (!triggers || triggers.length === 0) continue;
-      const n = triggers.length;
-      // Need at least n+1 history points for idx-1 comparisons
-      if (digits.length < n + 1) continue;
+      if (!triggers || triggers.length === 0) continue; // Empty box doesn't restrict
 
-      // Take the last n digits (and n+1 quotes for direction comparisons)
-      const dSlice = digits.slice(-(n + 1));   // length = n+1
-      const qSlice = quotes.slice(-(n + 1));
+      const digitIdx = digits.length - 1 - i;
 
-      // triggers[0] matches dSlice[1] (most-recent - (n-1) positions back)
-      // triggers[n-1] matches dSlice[n] (most recent digit)
-      let allMatch = true;
-      for (let i = 0; i < n; i++) {
-        if (!matchTrigger(triggers[i], dSlice, qSlice, i + 1)) {
-          allMatch = false;
-          break;
+      // All triggers in this box must match (AND within the box)
+      for (const trig of triggers) {
+        if (!matchTrigger(trig, digits, quotes, digitIdx)) {
+          return false; // If any trigger fails, sequence fails
         }
       }
-      if (allMatch) return true; // OR: any box matching fires the condition
     }
-    return false;
+    return true; // All boxes matched!
   }
 
   // ── Legacy string-pattern fallback ────────────────────────────────────────
@@ -284,10 +285,16 @@ function evaluateDigitPattern(cond: Condition, digits: number[], quotes: number[
   if (!pat || pat.length === 0) return false;
   const n = pat.length;
   if (digits.length < n + 1) return false;
-  const dSlice = digits.slice(-(n + 1));
-  const qSlice = quotes.slice(-(n + 1));
+
   for (let i = 0; i < n; i++) {
-    if (!matchPatternToken(pat[i], dSlice, qSlice, i + 1)) return false;
+    const token = pat[i];
+    const digitIdx = digits.length - n + i;
+    const tempTrig: PatternTrigger = { token };
+    if (token === 'V') tempTrig.barrier = 4; // Over 4
+    if (token === 'U') tempTrig.barrier = 4; // Under 5 (<= 4)
+    if (!matchTrigger(tempTrig, digits, quotes, digitIdx)) {
+      return false;
+    }
   }
   return true;
 }
@@ -536,21 +543,14 @@ export const useBotStore = create<BotStoreState>()(
         eng.waitingForOpposite = {};
         eng.lastTradeTime = 0;
         botTradeIds.clear();
+        // Only clear session data — stake, targetProfit, stopLoss, martingale
+        // and tradingMode are intentionally preserved across resets.
         set({
-          // Clear session data
-          tradeLogs:   [],
-          globalStats: { won: 0, lost: 0, totalProfit: 0, totalTrades: 0 },
+          tradeLogs:    [],
+          globalStats:  { won: 0, lost: 0, totalProfit: 0, totalTrades: 0 },
           botStatusMsg: 'Ready.',
           lastSignal:   '',
           signalFlash:  {},
-          // Reset all trading settings to defaults
-          stake:            '1',
-          targetProfit:     '100',
-          targetProfitMode: 'profit',
-          stopLoss:         '100',
-          stopLossMode:     'loss',
-          martingale:       '2.1',
-          tradingMode:      'continuous',
         });
       },
 
