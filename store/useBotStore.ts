@@ -724,13 +724,18 @@ export const useBotStore = create<BotStoreState>()(
           const stratId = s.id;
           const ck      = `${stratId}_${symbol}`;
 
-          if (!eng.strategyState[stratId]) {
-            eng.strategyState[stratId] = {
+          // ── GLOBAL shared martingale state (across ALL strategies and ALL markets) ─
+          // Every strategy and every market share ONE stake ladder. A loss on ANY
+          // strategy/market advances the global martingale for the NEXT trade,
+          // regardless of which strategy fires next. A win resets it for all.
+          const GLOBAL_KEY = '__global__';
+          if (!eng.strategyState[GLOBAL_KEY]) {
+            eng.strategyState[GLOBAL_KEY] = {
               currentStake: baseStake, lossCount: 0, totalProfit: 0,
               won: 0, lost: 0, lastTriggerMarket: '', cooldown: false,
             };
           }
-          const ss = eng.strategyState[stratId];
+          const ss = eng.strategyState[GLOBAL_KEY];
 
           // ── 1-second cooldown per strategy+market ─────────────────────────
           if (now - (eng.cooldown[ck] || 0) < 1000) continue;
@@ -754,16 +759,18 @@ export const useBotStore = create<BotStoreState>()(
             }
           }
 
-          // ── Guard: skip only if there's a VERY recent live trade (within ticks+2 seconds) ─
-          // This prevents double-firing on the same signal without blocking indefinitely.
-          const guardWindowMs = (s.ticks + 2) * 1200; // generous per-tick window
-          const hasRecentReal = [...eng.activeTrades.values()].some(
-            t => t.stratId === stratId && t.symbol === symbol && now - t.startTime < guardWindowMs
-          );
+          // ── ONE TRADE AT A TIME GLOBALLY (critical for martingale accuracy) ─
+          //
+          // All strategies share ONE stake ladder, so if ANY strategy/market
+          // has an in-flight trade, we block ALL others. This guarantees:
+          //   1. The global martingale state (currentStake / lossCount) is always
+          //      fully updated before ANY next trade fires.
+          //   2. No two strategies can race to update the ladder with stale stakes.
+          const hasAnyActiveGlobally = eng.activeTrades.size > 0;
           const hasVirt = eng.activeVirtual.some(
-            t => t.stratId === stratId && t.symbol === symbol
+            t => t.symbol === symbol
           );
-          if (hasRecentReal || hasVirt) continue;
+          if (hasAnyActiveGlobally || hasVirt) continue;
 
           // Digit pattern retrigger guard
           const dpCond = s.conditions.find(c => c.type === 'DIGIT_PATTERN');
@@ -821,11 +828,11 @@ export const useBotStore = create<BotStoreState>()(
           // ── TRIGGER FIRED ─────────────────────────────────────────────────
           get()._flashSignal(symbol);
 
-          // Set contradiction lock if enabled - will be set below once contractType is resolved
-
           // Enforce 2 decimal places strictly on the stake
           const rawStake = Math.max(0.35, ss.currentStake);
           const tradeStake = Math.round(rawStake * 100) / 100;
+
+
 
           let contractType = s.tradeType;
           let barrier      = needsBarrier(contractType) ? s.prediction : undefined;
@@ -883,7 +890,9 @@ export const useBotStore = create<BotStoreState>()(
 
             // Customizable cross-market gap: prevent two different markets firing simultaneously
             const delayMs = parseFloat(state.crossMarketDelay || '1.5') * 1000;
-            if (now - eng.lastTradeTime < delayMs) continue;
+            if (now - eng.lastTradeTime < delayMs) {
+              continue;
+            }
 
             const entryDigit = digits[digits.length - 1] ?? 0;
             const tradeParams = {
@@ -957,7 +966,8 @@ export const useBotStore = create<BotStoreState>()(
         if (!trade) return;
 
         const { stratId, symbol, stake: tradeStake } = trade;
-        const ss = eng.strategyState[stratId];
+        // Global martingale state — one ladder shared by ALL strategies and markets
+        const ss = eng.strategyState['__global__'];
         const state      = get();
         const derivState = useDerivStore.getState();
         const baseStake  = parseFloat(state.stake) || 0.35;
@@ -1014,10 +1024,14 @@ export const useBotStore = create<BotStoreState>()(
         set({ globalStats: newStats });
 
         if (ss) {
+          const prevStake = ss.currentStake;
+          const prevLoss  = ss.lossCount;
           if (isWin) {
             ss.won++; ss.totalProfit += resultProfit; ss.lossCount = 0;
             ss.currentStake = Math.round(baseStake * 100) / 100;
-            eng.patternPos[stratId] = 0;
+            // Reset pattern position for ALL strategies on a global win
+            state.strategies.forEach(strat => { eng.patternPos[strat.id] = 0; });
+
           } else {
             ss.lost++; ss.totalProfit += resultProfit; ss.lossCount++;
             if (state.tradingMode === 'continuous') {
@@ -1027,7 +1041,14 @@ export const useBotStore = create<BotStoreState>()(
                 baseStake * Math.pow(parseFloat(state.martingale || '2.1'), 10)
               ) * 100) / 100;
             }
+
           }
+        } else {
+
+          eng.strategyState['__global__'] = {
+            currentStake: baseStake, lossCount: 0, totalProfit: 0,
+            won: 0, lost: 0, lastTriggerMarket: '', cooldown: false,
+          };
         }
 
         // Real streak tracking → auto-switch to virtual

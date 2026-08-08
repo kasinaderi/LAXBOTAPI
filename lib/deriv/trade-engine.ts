@@ -877,28 +877,32 @@ class TradeEngine {
                     const poc = data.poc;
                     const isRF = poc?.contract_type === 'CALL' || poc?.contract_type === 'PUT';
 
-                    // Standard WS path — fire Martingale and Compounding
-                    this.handleTradeResult(data.isWin, data.profit);
+                    // Only handle trade result if this trade was placed by the trade-engine itself
+                    if (this.activeRealTrade && this.activeRealTrade.requestId === reqIdStr) {
+                        // Standard WS path — fire Martingale and Compounding
+                        this.handleTradeResult(data.isWin, data.profit);
 
-                    // Reconcile and update UI Log with 100% official Deriv data
-                    if (isRF && poc) {
-                        const officialExit = poc.exit_tick_display_value
-                            || (poc.exit_tick != null ? String(poc.exit_tick) : null)
-                            || (poc.exit_spot != null ? String(poc.exit_spot) : null);
-                        const officialEntry = poc.entry_spot_display_value
-                            || (poc.entry_spot != null ? String(poc.entry_spot) : null);
+                        // Reconcile and update UI Log with 100% official Deriv data
+                        if (isRF && poc) {
+                            const officialExit = poc.exit_tick_display_value
+                                || (poc.exit_tick != null ? String(poc.exit_tick) : null)
+                                || (poc.exit_spot != null ? String(poc.exit_spot) : null);
+                            const officialEntry = poc.entry_spot_display_value
+                                || (poc.entry_spot != null ? String(poc.entry_spot) : null);
 
-                        const derivWin = poc.status === 'won';
-                        const derivResult = poc.contract_type === 'CALL'
-                            ? (derivWin ? 'RISE WIN' : 'RISE LOSS')
-                            : (derivWin ? 'FALL WIN' : 'FALL LOSS');
+                            const derivWin = poc.status === 'won';
+                            const derivResult = poc.contract_type === 'CALL'
+                                ? (derivWin ? 'RISE WIN' : 'RISE LOSS')
+                                : (derivWin ? 'FALL WIN' : 'FALL LOSS');
 
-                        state.updateTradeLog(data.requestId, {
-                            result: derivResult,
-                            profit: data.profit,
-                            exit: officialExit || undefined,
-                            entrySpot: officialEntry || undefined
-                        });
+                            state.updateTradeLog(data.requestId, {
+                                result: derivResult,
+                                profit: data.profit,
+                                exit: officialExit || undefined,
+                                entrySpot: officialEntry || undefined
+                            });
+                        }
+                        this.activeRealTrade = null;
                     }
                 }
                 break;

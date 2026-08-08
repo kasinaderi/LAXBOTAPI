@@ -763,6 +763,7 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
           profit: profitVal,
           result: resultLabel,
           step: localLog?.step || 1,
+          strategyIndex: localLog?.strategyIndex,
         };
       });
 
@@ -780,6 +781,7 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
         profit: l.profit,
         result: l.result,
         step: l.step || 1,
+        strategyIndex: l.strategyIndex,
       }));
 
     // 3. Merge and sort
@@ -862,6 +864,20 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
                     <div className="lp-tx-contract">
                       <span className="lp-tx-type">{contractLabel(log.contract)}</span>
                       <span className="lp-tx-sym">{log.symbol}</span>
+                      {log.strategyIndex !== undefined && (
+                        <span style={{ 
+                          fontSize: 8, 
+                          background: 'rgba(255,255,255,0.06)', 
+                          border: '1px solid rgba(255,255,255,0.1)', 
+                          borderRadius: '3px', 
+                          padding: '0 4px', 
+                          fontWeight: '800', 
+                          color: '#38bdf8',
+                          marginLeft: 3
+                        }}>
+                          S{log.strategyIndex + 1}
+                        </span>
+                      )}
                       {isVirt && <span className="lp-virt-badge">VIRT</span>}
                       {log.step > 1 && <span style={{ fontSize: 8, color: '#f59e0b', fontWeight: 'bold' }}>Step {log.step}</span>}
                     </div>
