@@ -136,8 +136,10 @@ export function createCondition(): Condition {
     pattern: ['E', 'E', 'E', 'E'],
     patternRetrigger: 'any',
     patternBoxes: [
-      { triggers: [{ token: 'U', barrier: 7 }, { token: 'E' }] }, // Box 1: last digit U7 AND before that E
-      { triggers: [{ token: 'V', barrier: 2 }] },                  // Box 2: last digit V2
+      // Box 1: 2-tick sequence — tick before last = Under 7  AND  last tick = Even
+      { triggers: [{ token: 'U', barrier: 7 }, { token: 'E' }] },
+      // Box 2: single-tick — last digit = Over 2 (alternative trigger)
+      { triggers: [{ token: 'V', barrier: 2 }] },
     ],
     useCustomContracts: false,
     customContracts: [
@@ -254,30 +256,51 @@ function matchTrigger(
 function evaluateDigitPattern(cond: Condition, digits: number[], quotes: number[]): boolean {
   const boxes = cond.patternBoxes;
 
-  // ── Multi-Entry Sequence (new format) ──────────────────────────────────────
+  // ── Multi-Entry Sequence (box format) ──────────────────────────────────────
+  //
+  // Each BOX is an ALTERNATIVE SEQUENCE (OR across boxes — any single box
+  // matching is enough to fire).
+  //
+  // Within a box, triggers are SEQUENTIAL:
+  //   trigger[0] = oldest tick in the window
+  //   trigger[1] = next tick
+  //   ...
+  //   trigger[N-1] = the LATEST (newest) tick
+  //
+  // Example: Box 1 with [O, O, O, E] means:
+  //   digits[-3]=Odd  AND  digits[-2]=Odd  AND  digits[-1]=Odd  AND  digits[0]=Even
+  //
+  // Example: Box 1 with [U:7, E] AND Box 2 with [V:2]:
+  //   Box 1: 2 ticks ago=Under7 AND latest=Even  → fires OR
+  //   Box 2: latest=Over2                          → fires
+  //
   if (boxes && boxes.length > 0) {
-    const M = boxes.length;
-    // Need at least M history points (and M+1 for index-1 comparisons like SE/SO/R/F)
-    if (digits.length < M + 1) return false;
-
-    // Box 1 (index 0) = newest tick (digits.length - 1)
-    // Box 2 (index 1) = tick N-1 (digits.length - 2)
-    // All boxes in the sequence must match (AND across boxes)
-    for (let i = 0; i < M; i++) {
-      const box = boxes[i];
+    // Try each box as an alternative; return true as soon as one box fully matches.
+    for (const box of boxes) {
       const triggers = box.triggers;
-      if (!triggers || triggers.length === 0) continue; // Empty box doesn't restrict
+      if (!triggers || triggers.length === 0) continue; // Empty box = skip
 
-      const digitIdx = digits.length - 1 - i;
+      const N = triggers.length; // Number of sequential ticks this box needs
 
-      // All triggers in this box must match (AND within the box)
-      for (const trig of triggers) {
+      // Need at least N ticks in history (+ 1 extra for relative comparisons like SE/SO/R/F)
+      if (digits.length < N + 1) continue;
+
+      // Match each trigger against its assigned tick position.
+      // trigger[0] → digits[last - (N-1)]  (oldest in the window)
+      // trigger[N-1] → digits[last]         (newest tick)
+      let boxMatches = true;
+      for (let ti = 0; ti < N; ti++) {
+        const trig     = triggers[ti];
+        const digitIdx = digits.length - N + ti; // oldest first, newest last
         if (!matchTrigger(trig, digits, quotes, digitIdx)) {
-          return false; // If any trigger fails, sequence fails
+          boxMatches = false;
+          break;
         }
       }
+
+      if (boxMatches) return true; // OR across boxes — one match is enough
     }
-    return true; // All boxes matched!
+    return false; // No box matched
   }
 
   // ── Legacy string-pattern fallback ────────────────────────────────────────
@@ -298,6 +321,7 @@ function evaluateDigitPattern(cond: Condition, digits: number[], quotes: number[
   }
   return true;
 }
+
 
 function evaluateCondition(cond: Condition, digits: number[], quotes: number[]): boolean {
   const period = Math.max(1, cond.period || 100);
@@ -402,6 +426,7 @@ interface BotStoreState {
   strategies:     Strategy[];
   selectedMarkets: string[];
   theme:          'dark' | 'light';
+  crossMarketDelay: string;
 
   // ── Session state (NOT persisted) ─────────────────────────────────────────
   isRunning:    boolean;
@@ -422,6 +447,7 @@ interface BotStoreState {
   setStrategies:      (s: Strategy[] | ((p: Strategy[]) => Strategy[])) => void;
   setSelectedMarkets: (m: string[] | ((p: string[]) => string[])) => void;
   setTheme:           (theme: 'dark' | 'light') => void;
+  setCrossMarketDelay: (v: string) => void;
 
   // ── Bot controls ───────────────────────────────────────────────────────────
   startBot:   () => void;
@@ -458,6 +484,7 @@ export const useBotStore = create<BotStoreState>()(
       strategies:      [createStrategy(0)],
       selectedMarkets: ['1HZ10V', 'R_10', '1HZ25V', 'R_25', '1HZ50V', '1HZ75V'],
       theme:           'dark',
+      crossMarketDelay: '1.5',
 
       isRunning:    false,
       botStatusMsg: 'Ready.',
@@ -481,6 +508,7 @@ export const useBotStore = create<BotStoreState>()(
         selectedMarkets: typeof m === 'function' ? m(state.selectedMarkets) : m,
       })),
       setTheme:           (theme) => set({ theme }),
+      setCrossMarketDelay: (v) => set({ crossMarketDelay: v }),
 
       addLog: (log) => set(state => ({
         tradeLogs: [log, ...state.tradeLogs].slice(0, 50),
@@ -853,8 +881,9 @@ export const useBotStore = create<BotStoreState>()(
           } else {
             // ── REAL ──────────────────────────────────────────────────────
 
-            // 1.5 second cross-market gap: prevent two different markets firing simultaneously
-            if (now - eng.lastTradeTime < 1500) continue;
+            // Customizable cross-market gap: prevent two different markets firing simultaneously
+            const delayMs = parseFloat(state.crossMarketDelay || '1.5') * 1000;
+            if (now - eng.lastTradeTime < delayMs) continue;
 
             const entryDigit = digits[digits.length - 1] ?? 0;
             const tradeParams = {
@@ -1062,6 +1091,7 @@ export const useBotStore = create<BotStoreState>()(
         strategies:      state.strategies,
         selectedMarkets: state.selectedMarkets,
         theme:           state.theme,
+        crossMarketDelay: state.crossMarketDelay,
       }),
     },
   ),

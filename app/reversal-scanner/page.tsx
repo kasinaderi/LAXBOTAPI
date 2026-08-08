@@ -224,18 +224,32 @@ function AdvancedPatternBuilder({ cond, onChange }: {
         </div>
         <button className="lp-apb-add-btn" onClick={addBox}>+ Add Box</button>
       </div>
+      {/* Orientation hint */}
+      {cond.patternBoxes && cond.patternBoxes.length > 0 && (
+        <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)', marginBottom: 2, paddingLeft: 2 }}>
+          Each trigger = 1 tick &nbsp;·&nbsp; Left = oldest, Right = latest &nbsp;·&nbsp; Multiple boxes = OR alternatives
+        </div>
+      )}
 
       {/* Boxes Grid */}
       {cond.patternBoxes && cond.patternBoxes.length > 0 && (
         <div className="lp-apb-grid">
           {boxes.map((box, bi) => (
-            <div key={bi} className={`lp-apb-card ${bi === 0 ? 'active-step' : ''}`}>
-              <div className="lp-apb-card-hdr">
-                <span className="lp-apb-card-title">Box {bi + 1}</span>
-                {boxes.length > 1 && (
-                  <button className="lp-apb-card-remove" onClick={() => removeBox(bi)}>✕</button>
-                )}
-              </div>
+            <React.Fragment key={bi}>
+              {/* OR separator between boxes */}
+              {bi > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 2px' }}>
+                  <span style={{ fontSize: 9, fontWeight: 900, color: '#f59e0b', letterSpacing: 1, background: 'rgba(245,158,11,0.1)', borderRadius: 4, padding: '2px 4px' }}>OR</span>
+                </div>
+              )}
+              <div className={`lp-apb-card ${bi === 0 ? 'active-step' : ''}`}>
+                <div className="lp-apb-card-hdr">
+                  <span className="lp-apb-card-title">Box {bi + 1}</span>
+                  <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.3)', marginLeft: 4 }}>oldest→latest</span>
+                  {boxes.length > 1 && (
+                    <button className="lp-apb-card-remove" onClick={() => removeBox(bi)}>✕</button>
+                  )}
+                </div>
 
               {/* Triggers list */}
               <div className="lp-apb-triggers">
@@ -332,7 +346,8 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                 {/* Dashed plus button to add trigger */}
                 <button className="lp-apb-add-trig-dashed" onClick={() => addTrigger(bi)}>+</button>
               </div>
-            </div>
+              </div>
+            </React.Fragment>
           ))}
         </div>
       )}
@@ -944,9 +959,23 @@ export default function LaxPrimePage() {
     signalFlash,
     startBot, stopBot, resetAll,
     theme, setTheme,
+    crossMarketDelay, setCrossMarketDelay,
   } = useBotStore();
 
   const [showVirtualPanel, setShowVirtualPanel] = useState(false);
+  const [isModeDropdownOpen, setIsModeDropdownOpen] = useState(false);
+  const modeDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (modeDropdownRef.current && !modeDropdownRef.current.contains(event.target as Node)) {
+        setIsModeDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   useEffect(() => {
     if (status === 'connected') {
@@ -1060,11 +1089,159 @@ export default function LaxPrimePage() {
               </div>
               <input className="lp-si" type="number" min="1" step="0.1" value={martingale} onChange={e => setMartingale(e.target.value)} />
             </div>
-            <div className="lp-sg lp-sg-wide">
+            <div className="lp-sg lp-sg-wide" style={{ position: 'relative', zIndex: isModeDropdownOpen ? 100 : 1 }} ref={modeDropdownRef}>
               <label className="lp-sl">TRADING MODE</label>
-              <select className="lp-si lp-mode" value={tradingMode} onChange={e => setTradingMode(e.target.value)}>
-                {TRADING_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-              </select>
+              
+              {/* Custom Trigger Button */}
+              <div 
+                className="lp-si lp-mode" 
+                onClick={() => setIsModeDropdownOpen(!isModeDropdownOpen)}
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'space-between',
+                  cursor: 'pointer',
+                  position: 'relative',
+                  userSelect: 'none',
+                  height: '34px',
+                  boxSizing: 'border-box'
+                }}
+              >
+                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, marginRight: '8px' }}>
+                  {tradingMode === 'continuous' 
+                    ? `Trade continuously when there is a loss (${crossMarketDelay}s)`
+                    : TRADING_MODES.find(m => m.value === tradingMode)?.label}
+                </span>
+                <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', transition: 'transform 0.2s', transform: isModeDropdownOpen ? 'rotate(180deg)' : 'none', flexShrink: 0 }}>
+                  ▼
+                </span>
+              </div>
+
+              {/* Custom Dropdown Overlay */}
+              {isModeDropdownOpen && (
+                <div 
+                  className="lp-dd-menu" 
+                  style={{ 
+                    position: 'absolute',
+                    top: '100%',
+                    left: 0,
+                    right: 0,
+                    width: '100%',
+                    marginTop: '4px',
+                    zIndex: 999,
+                    background: 'rgba(15, 23, 42, 0.95)',
+                    border: '1px solid var(--glass-border)',
+                    borderRadius: '8px',
+                    boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+                    backdropFilter: 'blur(12px)',
+                    overflow: 'hidden'
+                  }}
+                >
+                  {/* Option 1: Continuous */}
+                  <div 
+                    style={{
+                      borderBottom: '1px solid rgba(255,255,255,0.05)',
+                      background: tradingMode === 'continuous' ? 'rgba(255,255,255,0.03)' : 'transparent'
+                    }}
+                  >
+                    <div 
+                      className={`lp-dd-item ${tradingMode === 'continuous' ? 'active' : ''}`}
+                      onClick={() => {
+                        setTradingMode('continuous');
+                        // Keep dropdown open so they can click the delay options if they want
+                      }}
+                      style={{
+                        padding: '10px 14px',
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        cursor: 'pointer',
+                        color: tradingMode === 'continuous' ? 'var(--accent-cyan)' : '#f1f5f9',
+                        transition: 'all 0.15s'
+                      }}
+                    >
+                      Trade continuously when there is a loss
+                    </div>
+                    
+                    {/* Delayed Option Selector (Nested inside dropdown under Option 1) */}
+                    <div 
+                      style={{ 
+                        padding: '0 14px 10px 20px', 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: '8px'
+                      }}
+                    >
+                      <span style={{ fontSize: '9px', fontWeight: '900', color: 'rgba(255, 255, 255, 0.4)', textTransform: 'uppercase' }}>
+                        Delay:
+                      </span>
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        {['1.5', '2.0', '3.0'].map(sec => (
+                          <button
+                            key={sec}
+                            onClick={(e) => {
+                              e.stopPropagation(); // prevent closing/triggering outer selection
+                              setCrossMarketDelay(sec);
+                              setTradingMode('continuous');
+                            }}
+                            style={{
+                              background: crossMarketDelay === sec ? '#0d9488' : '#1e293b',
+                              color: '#fff',
+                              border: '1px solid rgba(255,255,255,0.05)',
+                              borderRadius: '4px',
+                              padding: '2px 8px',
+                              fontSize: '9px',
+                              fontWeight: 'bold',
+                              cursor: 'pointer',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            {sec}s
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Option 2: Once per signal */}
+                  <div 
+                    className={`lp-dd-item ${tradingMode === 'once' ? 'active' : ''}`}
+                    onClick={() => {
+                      setTradingMode('once');
+                      setIsModeDropdownOpen(false);
+                    }}
+                    style={{
+                      padding: '10px 14px',
+                      fontSize: '11px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                      borderBottom: '1px solid rgba(255,255,255,0.05)',
+                      color: tradingMode === 'once' ? 'var(--accent-cyan)' : '#f1f5f9',
+                      transition: 'all 0.15s'
+                    }}
+                  >
+                    Trade once per signal
+                  </div>
+
+                  {/* Option 3: Until Target Profit */}
+                  <div 
+                    className={`lp-dd-item ${tradingMode === 'target' ? 'active' : ''}`}
+                    onClick={() => {
+                      setTradingMode('target');
+                      setIsModeDropdownOpen(false);
+                    }}
+                    style={{
+                      padding: '10px 14px',
+                      fontSize: '11px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                      color: tradingMode === 'target' ? 'var(--accent-cyan)' : '#f1f5f9',
+                      transition: 'all 0.15s'
+                    }}
+                  >
+                    Trade until target profit
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
