@@ -145,6 +145,19 @@ const getTopAlternatingPairAndCount = (digits: number[]) => {
     return { pair: bestPair, count: maxCount };
 };
 
+const getTopOddPair = (digits: number[]) => {
+    const counts: Record<number, number> = { 1: 0, 3: 0, 5: 0, 7: 0, 9: 0 };
+    digits.forEach(d => {
+        if (d % 2 !== 0) {
+            counts[d] = (counts[d] || 0) + 1;
+        }
+    });
+    const sorted = [1, 3, 5, 7, 9].sort((a, b) => counts[b] - counts[a]);
+    const pair: [number, number] = [sorted[0], sorted[1]];
+    const count = counts[sorted[0]] + counts[sorted[1]];
+    return { pair, count };
+};
+
 const RATING_CLS = {
     EXCELLENT: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
     GOOD:      'text-teal-400 bg-teal-500/10 border-teal-500/30',
@@ -332,60 +345,107 @@ export default function AutoTradePage() {
             // warmup for the cycle-counter path — only trigger here when neither has.
             if (cycleIntervalRef.current === 'continuous' && !warmupTriggeredRef.current) {
                 warmupTriggeredRef.current = true;
-                if (scannerWarmupRef.current) clearTimeout(scannerWarmupRef.current);
-                if (warmupCountRef.current)   clearInterval(warmupCountRef.current);
-                setIsScannerWarmup(true);
-                TARGET_MARKETS.forEach(m => ensureScanner(m.value));
-                const WARMUP_SECS = 60;
-                let remaining = WARMUP_SECS;
-                setNextExecCd(`${String(Math.floor(remaining / 60)).padStart(2, '0')}:${String(remaining % 60).padStart(2, '0')}`);
-                warmupCountRef.current = setInterval(() => {
-                    remaining -= 1;
-                    if (remaining <= 0) { if (warmupCountRef.current) clearInterval(warmupCountRef.current); setNextExecCd(null); return; }
+                const runWarmup = () => {
+                    if (scannerWarmupRef.current) clearTimeout(scannerWarmupRef.current);
+                    if (warmupCountRef.current)   clearInterval(warmupCountRef.current);
+                    setIsScannerWarmup(true);
+                    TARGET_MARKETS.forEach(m => ensureScanner(m.value));
+                    const WARMUP_SECS = 60;
+                    let remaining = WARMUP_SECS;
                     setNextExecCd(`${String(Math.floor(remaining / 60)).padStart(2, '0')}:${String(remaining % 60).padStart(2, '0')}`);
-                }, 1000);
-                scannerWarmupRef.current = setTimeout(() => {
-                    if (warmupCountRef.current) clearInterval(warmupCountRef.current);
-                    warmupTriggeredRef.current = false;
-                    setIsScannerWarmup(false);
-                    setNextExecCd(null);
-                    cycleTradesCountRef.current = 0;
-                    setCycleTradesCount(0);
-                    const preset = selectedPresetRef.current;
-                    const liveRegimes = useScannerStore.getState().marketRegimes;
-                    const ranked = TARGET_MARKETS.map(m => {
-                        const r = liveRegimes[m.value];
-                        if (!r?.historyReady) return { symbol: m.value, label: m.label, score: -1 };
-                        if (preset === 'differ_1') { const { count } = getTopAlternatingPairAndCount((r.digits || []).slice(-100)); return { symbol: m.value, label: m.label, score: count }; }
-                        return { symbol: m.value, label: m.label, score: Math.round((r.details?.gap || 0) * 200) };
-                    }).filter(m => m.symbol !== lastTradedMarketRef.current).sort((a, b) => b.score - a.score);
-                    const best = ranked[0];
-                    if (!best || best.score < 0) { addAuditLog('⚠️ No suitable market found after warmup. Retrying next cycle.', 'warn'); return; }
-                    setSelectedMarket(best.symbol); setMarket(best.symbol); subscribeToMarket(best.symbol);
-                    if (preset === 'differ_1') {
-                        const r = useScannerStore.getState().marketRegimes[best.symbol];
-                        const last100 = (r?.digits || []).slice(-100);
-                        const { pair, count } = getTopAlternatingPairAndCount(last100);
-                        // React state (UI)
-                        setEntryDigits(pair);
-                        setPipelineSteps([{ id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[0], reps: 1 }, { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[1], reps: 1 }]);
-                        setContractType('DIGITDIFF'); setPrediction(pair[0]);
-                        // Zustand store (synchronous — engine reads this on the first tick)
-                        const _s = useDerivStore.getState();
-                        _s.setPrediction(pair[0]);
-                        _s.setContractType('DIGITDIFF');
-                        _s.setPipelineSteps([{ id: uid(), contractType: 'DIGITDIFF', prediction: pair[0], reps: 1 }, { id: uid(), contractType: 'DIGITDIFF', prediction: pair[1], reps: 1 }]);
-                        _s.setTrigger('entryDigit', { enabled: false, entryDigit: pair[0], multiEnabled: true, multiDigits: pair, monitorTicks: 10 });
-                        _s.setTriggerMode('sequential');
-                        addAuditLog(`🔄 Warmup done → ${best.label} | Pair: [${pair.join(', ')}] (${count} patterns)`, 'success');
-                    } else {
-                        addAuditLog(`🔄 Warmup done → ${best.label}`, 'success');
-                    }
-                    const s = calcStake(); setCurrentStake(s);
-                    setRiskSettings({ initialStake: Number(s), maxMartingaleSteps: Number(maxMartSteps), martingaleMultiplier: isMartingaleEnabled ? Number(martingaleMul) : 1.0, stopOnMaxSteps, takeProfit: Number(takeProfit), stopLoss: Number(stopLoss) });
-                    setCurStep(0); setCurRep(0); lastIdRef.current = null;
-                    startBot();
-                }, WARMUP_SECS * 1000);
+                    warmupCountRef.current = setInterval(() => {
+                        remaining -= 1;
+                        if (remaining <= 0) { if (warmupCountRef.current) clearInterval(warmupCountRef.current); setNextExecCd(null); return; }
+                        setNextExecCd(`${String(Math.floor(remaining / 60)).padStart(2, '0')}:${String(remaining % 60).padStart(2, '0')}`);
+                    }, 1000);
+                    scannerWarmupRef.current = setTimeout(() => {
+                        if (warmupCountRef.current) clearInterval(warmupCountRef.current);
+                        warmupTriggeredRef.current = false;
+                        setIsScannerWarmup(false);
+                        setNextExecCd(null);
+                        cycleTradesCountRef.current = 0;
+                        setCycleTradesCount(0);
+                        const preset = selectedPresetRef.current;
+                        const liveRegimes = useScannerStore.getState().marketRegimes;
+                        const ranked = TARGET_MARKETS.map(m => {
+                            const r = liveRegimes[m.value];
+                            if (!r?.historyReady) return { symbol: m.value, label: m.label, score: -1 };
+                            if (preset === 'differ_1') { const { count } = getTopAlternatingPairAndCount((r.digits || []).slice(-100)); return { symbol: m.value, label: m.label, score: count }; }
+                            if (preset === 'differ_2') {
+                                const digits = r.digits || [];
+                                const last100 = digits.slice(-100);
+                                if (last100.length === 0) return { symbol: m.value, label: m.label, score: -1 };
+                                let consecEvens = 0;
+                                for (let i = last100.length - 1; i >= 0; i--) {
+                                    if (last100[i] % 2 === 0) consecEvens++;
+                                    else break;
+                                }
+                                if (consecEvens >= 5) {
+                                    const oddCount = last100.filter(d => d % 2 !== 0).length;
+                                    const pct = (oddCount / last100.length) * 100;
+                                    return { symbol: m.value, label: m.label, score: pct };
+                                } else {
+                                    return { symbol: m.value, label: m.label, score: -1 };
+                                }
+                            }
+                            return { symbol: m.value, label: m.label, score: Math.round((r.details?.gap || 0) * 200) };
+                        }).filter(m => m.symbol !== lastTradedMarketRef.current).sort((a, b) => b.score - a.score);
+                        const best = ranked[0];
+                        if (!best || best.score < 0) {
+                            addAuditLog(preset === 'differ_2' ? '⚠️ No market with 5+ consecutive evens found. Restarting scanner warmup…' : '⚠️ No suitable market found after warmup. Restarting warmup…', 'warn');
+                            warmupTriggeredRef.current = true;
+                            runWarmup();
+                            return;
+                        }
+                        setSelectedMarket(best.symbol); setMarket(best.symbol); subscribeToMarket(best.symbol);
+                        if (preset === 'differ_1') {
+                            const r = useScannerStore.getState().marketRegimes[best.symbol];
+                            const last100 = (r?.digits || []).slice(-100);
+                            const { pair, count } = getTopAlternatingPairAndCount(last100);
+                            setEntryDigits(pair);
+                            setPipelineSteps([{ id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[0], reps: 1 }, { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[1], reps: 1 }]);
+                            setContractType('DIGITDIFF'); setPrediction(pair[0]);
+                            const _s = useDerivStore.getState();
+                            _s.setPrediction(pair[0]);
+                            _s.setContractType('DIGITDIFF');
+                            _s.setPipelineSteps([{ id: uid(), contractType: 'DIGITDIFF', prediction: pair[0], reps: 1 }, { id: uid(), contractType: 'DIGITDIFF', prediction: pair[1], reps: 1 }]);
+                            _s.setTrigger('entryDigit', { enabled: true, entryDigit: pair[0], multiEnabled: true, multiDigits: pair, monitorTicks: 10, triggerOnEntry: true });
+                            _s.setTriggerMode('sequential');
+                            addAuditLog(`🔄 Warmup done → ${best.label} | Pair: [${pair.join(', ')}] (${count} patterns)`, 'success');
+                        } else if (preset === 'differ_2') {
+                            const r = useScannerStore.getState().marketRegimes[best.symbol];
+                            const last100 = (r?.digits || []).slice(-100);
+                            const { pair, count } = getTopOddPair(last100);
+                            setEntryDigits(pair);
+                            setPipelineSteps([{ id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[0], reps: 1 }, { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[1], reps: 1 }]);
+                            setContractType('DIGITDIFF'); setPrediction(pair[0]);
+                            const _s = useDerivStore.getState();
+                            _s.setPrediction(pair[0]);
+                            _s.setContractType('DIGITDIFF');
+                            _s.setPipelineSteps([{ id: uid(), contractType: 'DIGITDIFF', prediction: pair[0], reps: 1 }, { id: uid(), contractType: 'DIGITDIFF', prediction: pair[1], reps: 1 }]);
+                            _s.setTrigger('entryDigit', {
+                                enabled: true,
+                                entryDigit: pair[0],
+                                triggerOnEntry: true,
+                                consecutive: 2,
+                                type: 'Under',
+                                monitorTicks: 10,
+                                multiDigits: pair,
+                                useMulti: true
+                            });
+                            _s.setTrigger('digitPattern', { enabled: false });
+                            _s.setTriggerMode('sequential');
+                            addAuditLog(`🔄 Warmup done → ${best.label} | Top Odds: [${pair.join(', ')}] (${count} hits)`, 'success');
+                        } else {
+                            addAuditLog(`🔄 Warmup done → ${best.label}`, 'success');
+                        }
+                        const s = calcStake(); setCurrentStake(s);
+                        setRiskSettings({ initialStake: Number(s), maxMartingaleSteps: Number(maxMartSteps), martingaleMultiplier: isMartingaleEnabled ? Number(martingaleMul) : 1.0, stopOnMaxSteps, takeProfit: Number(takeProfit), stopLoss: Number(stopLoss) });
+                        setCurStep(0); setCurRep(0); lastIdRef.current = null;
+                        startBot();
+                    }, WARMUP_SECS * 1000);
+                };
+                runWarmup();
             }
         } else {
             // ── Virtual → Real (virtual threshold met) ────────────────────────────
@@ -847,6 +907,14 @@ export default function AutoTradePage() {
                                 const { count } = getTopAlternatingPairAndCount((r.digits || []).slice(-100));
                                 return { symbol: m.value, label: m.label, score: count };
                             }
+                            if (preset === 'differ_2') {
+                                const digits = r.digits || [];
+                                const last100 = digits.slice(-100);
+                                if (last100.length === 0) return { symbol: m.value, label: m.label, score: 0 };
+                                const oddCount = last100.filter(d => d % 2 !== 0).length;
+                                const pct = (oddCount / last100.length) * 100;
+                                return { symbol: m.value, label: m.label, score: pct };
+                            }
                             const gap = r.details?.gap || 0;
                             return { symbol: m.value, label: m.label, score: Math.round(gap * 200) };
                         })
@@ -888,14 +956,52 @@ export default function AutoTradePage() {
                                 { id: uid(), contractType: 'DIGITDIFF', prediction: pair[1], reps: 1 },
                             ]);
                             store.setTrigger('entryDigit', {
-                                enabled: false,
+                                enabled: true,
                                 entryDigit: pair[0],
-                                multiEnabled: true,
-                                multiDigits: pair,
+                                triggerOnEntry: true,
+                                consecutive: 2,
+                                type: 'Under',
                                 monitorTicks: 10,
+                                multiDigits: pair,
+                                useMulti: true
                             });
                             store.setTriggerMode('sequential');
                             addAuditLog(`🔄 Warmup done → ${best.label} | Pair: [${pair.join(', ')}] (${count} patterns)`, 'success');
+                        } else if (preset === 'differ_2') {
+                            const freshRegimes = useScannerStore.getState().marketRegimes;
+                            const r = freshRegimes[best.symbol];
+                            const last100 = (r?.digits || []).slice(-100);
+                            const { pair, count } = getTopOddPair(last100);
+                            // ── React state (UI sync) ────────────────────────────
+                            setEntryDigits(pair);
+                            setPipelineMode('sequential');
+                            setStorePipelineMode('sequential');
+                            setPipelineSteps([
+                                { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[0], reps: 1 },
+                                { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[1], reps: 1 },
+                            ]);
+                            setContractType('DIGITDIFF');
+                            setPrediction(pair[0]);
+                            // ── Zustand store (engine sync — synchronous, no React render needed) ──
+                            const store = useDerivStore.getState();
+                            store.setPrediction(pair[0]);
+                            store.setContractType('DIGITDIFF');
+                            store.setPipelineSteps([
+                                { id: uid(), contractType: 'DIGITDIFF', prediction: pair[0], reps: 1 },
+                                { id: uid(), contractType: 'DIGITDIFF', prediction: pair[1], reps: 1 },
+                            ]);
+                            store.setTrigger('entryDigit', {
+                                enabled: true,
+                                entryDigit: pair[0],
+                                triggerOnEntry: false,
+                                consecutive: 5,
+                                type: 'Even',
+                                monitorTicks: 10,
+                                multiDigits: pair,
+                                useMulti: true
+                            });
+                            store.setTriggerMode('sequential');
+                            addAuditLog(`🔄 Warmup done → ${best.label} | Top Odds: [${pair.join(', ')}]`, 'success');
                         } else {
                             addAuditLog(`🔄 Warmup done → Best: ${best.label} (Score: ${best.score})`, 'success');
                         }
@@ -940,6 +1046,28 @@ export default function AutoTradePage() {
                     score = count;
                     rating = count >= 12 ? 'EXCELLENT' : count >= 8 ? 'GOOD' : count >= 5 ? 'NEUTRAL' : 'AVOID';
                     rationale = `Top Pair: {${pair.join(', ')}} (Alternation Count: ${count})`;
+                } else if (selectedPreset === 'differ_2') {
+                    const digits = r.digits || [];
+                    const last100 = digits.slice(-100);
+                    if (last100.length > 0) {
+                        let consecEvens = 0;
+                        for (let i = last100.length - 1; i >= 0; i--) {
+                            if (last100[i] % 2 === 0) consecEvens++;
+                            else break;
+                        }
+                        const oddCount = last100.filter((d: number) => d % 2 !== 0).length;
+                        const pct = (oddCount / last100.length) * 100;
+                        const { pair } = getTopOddPair(last100);
+                        if (consecEvens >= 5) {
+                            score = Math.round(pct * 10);
+                            rating = pct >= 55 ? 'EXCELLENT' : pct >= 50 ? 'GOOD' : pct >= 45 ? 'NEUTRAL' : 'AVOID';
+                            rationale = `Evens: ${consecEvens} | Odd%: ${pct.toFixed(1)}% | Top Odds: [${pair.join(', ')}]`;
+                        } else {
+                            score = consecEvens;
+                            rating = 'AVOID';
+                            rationale = `Waiting for 5 evens (Current: ${consecEvens}/5) | Odd%: ${pct.toFixed(1)}%`;
+                        }
+                    }
                 } else if (r.details) {
                     score = Math.round(r.details.gap * 200 + r.details.top3Sum * 100);
                     if (r.regime !== 'NEUTRAL') {
@@ -954,6 +1082,7 @@ export default function AutoTradePage() {
                     if (s != null && s.confidence != null && s.confidence >= 75) { score += 80; rating = 'EXCELLENT'; rationale = `Reversal signal (${s.confidence}%)`; }
                 }
             }
+
             return { symbol: m.value, label: m.label, score, rating, rationale, gap: r?.details?.gap || 0 };
         }).sort((a, b) => b.score - a.score);
     }, [marketRegimes, signals, selectedPreset]);
@@ -1051,6 +1180,14 @@ export default function AutoTradePage() {
                                 const { count } = getTopAlternatingPairAndCount((r.digits || []).slice(-100));
                                 return { symbol: m.value, label: m.label, score: count };
                             }
+                            if (preset === 'differ_2') {
+                                const digits = r.digits || [];
+                                const last100 = digits.slice(-100);
+                                if (last100.length === 0) return { symbol: m.value, label: m.label, score: 0 };
+                                const oddCount = last100.filter(d => d % 2 !== 0).length;
+                                const pct = (oddCount / last100.length) * 100;
+                                return { symbol: m.value, label: m.label, score: pct };
+                            }
                             const gap = r.details?.gap || 0;
                             return { symbol: m.value, label: m.label, score: Math.round(gap * 200) };
                         })
@@ -1088,14 +1225,53 @@ export default function AutoTradePage() {
                                     { id: uid(), contractType: 'DIGITDIFF', prediction: pair[1], reps: 1 },
                                 ]);
                                 store.setTrigger('entryDigit', {
-                                    enabled: false,
+                                    enabled: true,
                                     entryDigit: pair[0],
-                                    multiEnabled: true,
-                                    multiDigits: pair,
+                                    triggerOnEntry: true,
+                                    consecutive: 2,
+                                    type: 'Under',
                                     monitorTicks: 10,
+                                    multiDigits: pair,
+                                    useMulti: true
                                 });
                                 store.setTriggerMode('sequential');
                                 addAuditLog(`🔄 Interval warmup done → ${best.label} | Pair: [${pair.join(', ')}] (${count} patterns)`, 'success');
+                            } else if (preset === 'differ_2') {
+                                const freshRegimes = useScannerStore.getState().marketRegimes;
+                                const r = freshRegimes[best.symbol];
+                                const last100 = (r?.digits || []).slice(-100);
+                                const { pair, count } = getTopOddPair(last100);
+                                // ── React state (UI sync) ────────────────────────────
+                                setEntryDigits(pair);
+                                setPipelineMode('sequential');
+                                setStorePipelineMode('sequential');
+                                const newSteps = [
+                                    { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[0], reps: 1 },
+                                    { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[1], reps: 1 },
+                                ];
+                                setPipelineSteps(newSteps);
+                                setContractType('DIGITDIFF');
+                                setPrediction(pair[0]);
+                                // ── Zustand store (engine sync — synchronous, no React render needed) ──
+                                const store = useDerivStore.getState();
+                                store.setPrediction(pair[0]);
+                                store.setContractType('DIGITDIFF');
+                                store.setPipelineSteps([
+                                    { id: uid(), contractType: 'DIGITDIFF', prediction: pair[0], reps: 1 },
+                                    { id: uid(), contractType: 'DIGITDIFF', prediction: pair[1], reps: 1 },
+                                ]);
+                                store.setTrigger('entryDigit', {
+                                    enabled: true,
+                                    entryDigit: pair[0],
+                                    triggerOnEntry: false,
+                                    consecutive: 5,
+                                    type: 'Even',
+                                    monitorTicks: 10,
+                                    multiDigits: pair,
+                                    useMulti: true
+                                });
+                                store.setTriggerMode('sequential');
+                                addAuditLog(`🔄 Interval warmup done → ${best.label} | Top Odds: [${pair.join(', ')}]`, 'success');
                             } else {
                                 addAuditLog(`🔄 Interval warmup done → Best: ${best.label} (Score: ${best.score})`, 'success');
                             }
@@ -1153,8 +1329,7 @@ export default function AutoTradePage() {
             setMarket(best.symbol);
             setSelectedMarket(best.symbol);
             
-            // differ_1 dynamic setup on session manual launch
-            // differ_1 dynamic setup on session manual launch
+            // differ_1: dynamic pair setup on session manual launch
             if (selectedPreset === 'differ_1') {
                 const r = marketRegimes[best.symbol];
                 const last100 = (r?.digits || []).slice(-100);
@@ -1178,6 +1353,42 @@ export default function AutoTradePage() {
                 addAuditLog(`differ 1 launch setup: Selected entry digits ${pair.join(', ')} for market ${best.label} (Pattern Count: ${count})`, 'info');
                 // applyStep with explicit pair so stale closure is bypassed
                 applyStep(0, pair[0], 'DIGITDIFF');
+            } else if (selectedPreset === 'differ_2') {
+                // differ_2: pick highest-odd-% market, extract top 2 odd digits
+                const r = marketRegimes[best.symbol];
+                const last100 = (r?.digits || []).slice(-100);
+                const { pair, count } = getTopOddPair(last100);
+                const newSteps = [
+                    { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[0], reps: 1 },
+                    { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[1], reps: 1 },
+                ];
+                setPipelineMode('sequential');
+                setStorePipelineMode('sequential');
+                setPipelineSteps(newSteps);
+                setEntryDigits(pair);
+                setEntryDigitEnabled(true);
+                setInstantTrigger(true);
+                setDigitPatternEnabled(false);
+
+                // Push to Zustand synchronously so engine sees it on tick 1
+                const _s2 = useDerivStore.getState();
+                _s2.setPrediction(pair[0]);
+                _s2.setContractType('DIGITDIFF');
+                _s2.setPipelineSteps(newSteps);
+                _s2.setTrigger('entryDigit', {
+                    enabled: true,
+                    entryDigit: pair[0],
+                    multiDigits: pair,
+                    useMulti: true,
+                    triggerOnEntry: true,
+                    consecutive: 2,
+                    type: 'Under',
+                    monitorTicks: 10
+                });
+                _s2.setTrigger('digitPattern', { enabled: false });
+                _s2.setTriggerMode('sequential');
+                addAuditLog(`differ 2 launch: Market=${best.label} | Top odd pair: [${pair.join(', ')}] (${count} odd hits)`, 'info');
+                applyStep(0, pair[0], 'DIGITDIFF', newSteps);
             } else {
                 applyStep(0);
             }
@@ -1351,6 +1562,104 @@ export default function AutoTradePage() {
                 rTriggerMode: 'consec',
                 rThreshold: 3,                 // retreat to virtual after 3 consecutive wins
             });
+        } else if (preset === 'differ_2') {
+            // ── differ 2: Highest odd-% market with 5+ consecutive evens, ──
+            // ── trade DIGITDIFF with top 2 most-frequent odd digits          ──
+
+            // Compute top odd pair from live scanner data.
+            // Score each market: must have >= 5 consecutive evens at the end, then rank by odd-digit %.
+            const allMarketData = useScannerStore.getState().marketRegimes;
+            let initialPair: [number, number] = [1, 3]; // safe fallback
+            let bestOddPct = -1;
+            let bestSym = '';
+            
+            // First try matching markets with >= 5 evens
+            for (const [sym, r] of Object.entries(allMarketData)) {
+                if (!r.historyReady) continue;
+                const last100 = (r.digits || []).slice(-100);
+                if (last100.length === 0) continue;
+                
+                let consecEvens = 0;
+                for (let i = last100.length - 1; i >= 0; i--) {
+                    if (last100[i] % 2 === 0) consecEvens++;
+                    else break;
+                }
+                
+                if (consecEvens >= 5) {
+                    const oddCount = last100.filter(d => d % 2 !== 0).length;
+                    const pct = (oddCount / last100.length) * 100;
+                    if (pct > bestOddPct) {
+                        bestOddPct = pct;
+                        bestSym = sym;
+                        const { pair } = getTopOddPair(last100);
+                        initialPair = pair;
+                    }
+                }
+            }
+            
+            // Fallback if no market currently has 5+ consecutive evens
+            if (bestOddPct === -1) {
+                for (const [sym, r] of Object.entries(allMarketData)) {
+                    if (!r.historyReady) continue;
+                    const last100 = (r.digits || []).slice(-100);
+                    if (last100.length === 0) continue;
+                    const oddCount = last100.filter(d => d % 2 !== 0).length;
+                    const pct = (oddCount / last100.length) * 100;
+                    if (pct > bestOddPct) {
+                        bestOddPct = pct;
+                        bestSym = sym;
+                        const { pair } = getTopOddPair(last100);
+                        initialPair = pair;
+                    }
+                }
+            }
+
+            // ── Pipeline: alternating Differ contracts on the two top odd digits ──
+            setPipelineSteps([
+                { id: uid(), contractType: 'DIGITDIFF', prediction: initialPair[0], reps: 1 },
+                { id: uid(), contractType: 'DIGITDIFF', prediction: initialPair[1], reps: 1 },
+            ]);
+            setPipelineMode('sequential');
+            setAdaptiveSwitch(false);
+
+            // ── Triggers: Entry digit trigger A and B, trigger immediately on entry ──
+            setEntryDigitEnabled(true);
+            setEntryDigits(initialPair);
+            setInstantTrigger(true);
+            setDigitPatternEnabled(false);
+
+            // ── Trade Pattern ──
+            setTradePattern(['trade']);
+
+            // ── Continuous Mode ──
+            setContinuousMode('continuous_check');
+
+            // ── Risk ──
+            setIsMartingaleEnabled(false);
+            setStopLoss('1.00');
+
+            // ── Compounding ──
+            setIsCompounding(true);
+            setCompoundPct('50.0');
+            setIsCapitalCompound(false);
+
+            // ── Virtual: same ladder as differ_1 ──
+            setVirtualSettings({
+                isVirtualMode: true,
+                startVirtualToReal: true,
+                vTriggerType: 'losses',
+                vTriggerMode: 'consec',
+                vThreshold: 1,
+                startRealToVirtual: true,
+                rTriggerType: 'wins',
+                rTriggerMode: 'consec',
+                rThreshold: 3,
+            });
+
+            addAuditLog(
+                `differ 2 preset loaded | Best market: ${bestSym || 'scanning…'} (odd%: ${bestOddPct >= 0 ? bestOddPct.toFixed(1) : '?'}%) | Top odd pair: [${initialPair.join(', ')}]`,
+                'info'
+            );
         }
     };
 
@@ -1498,6 +1807,7 @@ export default function AutoTradePage() {
                                 options={[
                                     { value: 'custom', label: 'Custom (Manual)' },
                                     { value: 'differ_1', label: 'differ 1' },
+                                    { value: 'differ_2', label: 'differ 2' },
                                     { value: 'rise_fall', label: 'Rise/Fall Follower' },
                                     { value: 'even_odd', label: 'Even/Odd Sequence' },
                                     { value: 'differs', label: 'Differs Shield' },

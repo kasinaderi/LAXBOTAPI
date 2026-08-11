@@ -565,9 +565,32 @@ class TradeEngine {
                     return;
                 }
             } else {
-                // Always block if a real trade is pending — prevents duplicate buys on consecutive ticks.
-                if (tradeWS.hasPendingTrade()) {
-                    state.setTriggerStatus("Wait: Trade Pending...");
+                // ── DUPLICATE-TRADE GUARD ──────────────────────────────────────────────
+                // Two separate windows must BOTH be clear before we allow another buy:
+                //  1. tradeWS.hasPendingTrade() — buy request sent but buy response not yet received
+                //  2. this.activeRealTrade !== null — buy confirmed but contract not yet settled
+                // Without the second check, duplicates fire in the gap between buy confirmation
+                // and contract settlement (usually 1-2 ticks for digit contracts).
+                const isPendingBuy     = tradeWS.hasPendingTrade();
+                const isContractActive = this.activeRealTrade !== null;
+
+                // Diagnostic log — emitted on EVERY tick that evaluates a real-mode trade action.
+                // This lets us trace exactly why a trade fires or is blocked in the audit log.
+                const diagMsg = [
+                    `[DupGuard] tick=${tick.epoch}`,
+                    `digit=${currentDigit}`,
+                    `pendingBuy=${isPendingBuy}`,
+                    `contractActive=${isContractActive}`,
+                    isContractActive
+                        ? `activeId=${this.activeRealTrade!.requestId} settled=${this.activeRealTrade!.isSettled}`
+                        : 'noActive',
+                ].join(' | ');
+                console.log(`[TradeEngine] ${diagMsg}`);
+
+                if (isPendingBuy || isContractActive) {
+                    const reason = isPendingBuy ? 'Buy Pending (no response yet)' : `Contract Active (${this.activeRealTrade!.requestId})`;
+                    state.setTriggerStatus(`Wait: ${reason}`);
+                    console.log(`[TradeEngine] 🚫 Duplicate blocked — ${reason}`);
                     return;
                 }
             }

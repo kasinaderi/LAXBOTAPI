@@ -32,6 +32,10 @@ function toDerivContract(tradeType: string): string {
 const CONDITION_TYPES = [
   { value: 'EVEN_PCT',      label: 'EVEN % IS' },
   { value: 'ODD_PCT',       label: 'ODD % IS' },
+  { value: 'FALL_PCT',      label: 'FALL % IS' },
+  { value: 'RISE_PCT',      label: 'RISE % IS' },
+  { value: 'OVER_PCT',      label: 'OVER ( ) % IS' },
+  { value: 'UNDER_PCT',     label: 'UNDER ( ) % IS' },
   { value: 'LAST_DIGITS',   label: 'LAST N DIGITS ARE' },
   { value: 'GREEN_BAR',     label: 'GREEN BAR IS ON DIGIT' },
   { value: 'DIGIT_PATTERN', label: 'DIGIT PATTERN' },
@@ -90,6 +94,10 @@ function conditionText(c: Condition): string {
   switch (c.type) {
     case 'EVEN_PCT':      return `EVEN % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
     case 'ODD_PCT':       return `ODD % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
+    case 'FALL_PCT':      return `FALL % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
+    case 'RISE_PCT':      return `RISE % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
+    case 'OVER_PCT':      return `OVER(${c.digitBarrier ?? 4}) % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
+    case 'UNDER_PCT':     return `UNDER(${c.digitBarrier ?? 4}) % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
     case 'LAST_DIGITS': {
       const showB = c.digitValue === 'OVER' || c.digitValue === 'UNDER' || c.digitValue === 'EQUAL';
       return `last ${c.lastN} digits are ${c.digitValue}${showB ? ' ' + (c.digitBarrier ?? 4) : ''}`;
@@ -433,8 +441,26 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
         {CONDITION_TYPES.map(ct => <option key={ct.value} value={ct.value}>{ct.label}</option>)}
       </select>
 
-      {(cond.type === 'EVEN_PCT' || cond.type === 'ODD_PCT') && (
+      {(cond.type === 'EVEN_PCT' || cond.type === 'ODD_PCT' || cond.type === 'FALL_PCT' || cond.type === 'RISE_PCT') && (
         <>
+          <select className="lp-sel lp-cmp" value={cond.comparator} onChange={e => u({ comparator: e.target.value })}>
+            {COMPARATORS.map(c => <option key={c}>{c}</option>)}
+          </select>
+          <input className="lp-num" type="number" min={0} max={100} value={cond.value}
+            onChange={e => u({ value: +e.target.value })} />
+          <span className="lp-unit">% in last</span>
+          <input className="lp-num lp-sm" type="number" min={1} max={1000} value={cond.period}
+            onChange={e => u({ period: +e.target.value })} />
+          <span className="lp-unit">ticks</span>
+        </>
+      )}
+
+      {(cond.type === 'OVER_PCT' || cond.type === 'UNDER_PCT') && (
+        <>
+          <span className="lp-unit">( </span>
+          <input className="lp-num lp-sm" type="number" min={0} max={9} value={cond.digitBarrier ?? 4}
+            onChange={e => u({ digitBarrier: +e.target.value })} title="Barrier digit" />
+          <span className="lp-unit"> )</span>
           <select className="lp-sel lp-cmp" value={cond.comparator} onChange={e => u({ comparator: e.target.value })}>
             {COMPARATORS.map(c => <option key={c}>{c}</option>)}
           </select>

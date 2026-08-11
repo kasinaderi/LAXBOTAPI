@@ -31,7 +31,7 @@ export interface PatternBox {
 
 export interface Condition {
   id: string;
-  type: 'EVEN_PCT' | 'ODD_PCT' | 'LAST_DIGITS' | 'GREEN_BAR' | 'DIGIT_PATTERN';
+  type: 'EVEN_PCT' | 'ODD_PCT' | 'LAST_DIGITS' | 'GREEN_BAR' | 'DIGIT_PATTERN' | 'FALL_PCT' | 'RISE_PCT' | 'OVER_PCT' | 'UNDER_PCT';
   comparator: string;
   value: number;
   lastN: number;
@@ -289,9 +289,30 @@ function evaluateDigitPattern(cond: Condition, digits: number[], quotes: number[
       // trigger[0] → digits[last - (N-1)]  (oldest in the window)
       // trigger[N-1] → digits[last]         (newest tick)
       let boxMatches = true;
+      // SE/SO use variable binding across a box sequence:
+      //   First SE in the box captures the digit; subsequent SE tokens must equal it.
+      //   This makes SE→E→SE mean "tick1 and tick3 are the SAME even digit".
+      let capturedSE: number | null = null;
+      let capturedSO: number | null = null;
       for (let ti = 0; ti < N; ti++) {
         const trig     = triggers[ti];
         const digitIdx = digits.length - N + ti; // oldest first, newest last
+        if (digitIdx < 0 || digitIdx >= digits.length) { boxMatches = false; break; }
+        const d = digits[digitIdx];
+
+        if (trig.token === 'SE') {
+          if (d % 2 !== 0) { boxMatches = false; break; }      // must be even
+          if (capturedSE === null) { capturedSE = d; }         // first SE: capture value
+          else if (d !== capturedSE) { boxMatches = false; break; } // subsequent SE: must match
+          continue;
+        }
+        if (trig.token === 'SO') {
+          if (d % 2 === 0) { boxMatches = false; break; }      // must be odd
+          if (capturedSO === null) { capturedSO = d; }         // first SO: capture value
+          else if (d !== capturedSO) { boxMatches = false; break; } // subsequent SO: must match
+          continue;
+        }
+
         if (!matchTrigger(trig, digits, quotes, digitIdx)) {
           boxMatches = false;
           break;
@@ -370,6 +391,32 @@ function evaluateCondition(cond: Condition, digits: number[], quotes: number[]):
     }
     case 'DIGIT_PATTERN':
       return evaluateDigitPattern(cond, digits, quotes);
+    case 'FALL_PCT': {
+      const sub = quotes.slice(-(period + 1));
+      if (sub.length < period + 1) return false;
+      let falls = 0;
+      for (let i = 1; i < sub.length; i++) if (sub[i] < sub[i - 1]) falls++;
+      return compare((falls / period) * 100, cond.comparator, cond.value);
+    }
+    case 'RISE_PCT': {
+      const sub = quotes.slice(-(period + 1));
+      if (sub.length < period + 1) return false;
+      let rises = 0;
+      for (let i = 1; i < sub.length; i++) if (sub[i] > sub[i - 1]) rises++;
+      return compare((rises / period) * 100, cond.comparator, cond.value);
+    }
+    case 'OVER_PCT': {
+      const sub = digits.slice(-period);
+      if (sub.length < period) return false;
+      const pct = (sub.filter(d => d > (cond.digitBarrier ?? 4)).length / period) * 100;
+      return compare(pct, cond.comparator, cond.value);
+    }
+    case 'UNDER_PCT': {
+      const sub = digits.slice(-period);
+      if (sub.length < period) return false;
+      const pct = (sub.filter(d => d <= (cond.digitBarrier ?? 4)).length / period) * 100;
+      return compare(pct, cond.comparator, cond.value);
+    }
     default:
       return false;
   }
@@ -641,13 +688,15 @@ export const useBotStore = create<BotStoreState>()(
         eng.activeVirtual = remaining;
 
         for (const rt of resolved) {
-          const { requestId: vtId, stratId, symbol: vtSym, stake: vtStake, isWin, exitDigit, exitPrice } = rt;
-          const ss = eng.strategyState[stratId];
+          const { requestId: vtId, stratId, symbol: vtSym, stake: vtStake, isWin, exitDigit } = rt;
+          // Use the global state bucket (same key used throughout the engine)
+          const ss = eng.strategyState['__global__'];
+          // If engine hasn't started yet (no real trades fired), ss may be undefined — skip gracefully
           if (!ss) continue;
 
           const resultProfit = isWin ? vtStake * 0.95 : -vtStake;
 
-          // Update virtual log with result — NOT counted in real globalStats
+          // Update virtual log with exit digit and final result
           get().updateLog(vtId, {
             result:   isWin ? 'VIRT WON' : 'VIRT LOST',
             profit:   resultProfit,
@@ -655,13 +704,13 @@ export const useBotStore = create<BotStoreState>()(
           });
 
           // ── Virtual-only stats (do NOT touch globalStats / real P/L) ────
-          // NOTE: Virtual results do NOT affect martingale stake or lossCount.
-          // Martingale only tracks real trade results so virtual testing
-          // cannot distort the real betting progression.
+          // Virtual results deliberately do NOT affect martingale stake or lossCount.
+          // The real martingale ladder is strictly controlled by real trade outcomes only.
           if (isWin) {
             ss.won++; ss.totalProfit += resultProfit;
             // Do NOT reset lossCount or currentStake — those belong to real martingale
-            eng.patternPos[stratId] = 0;            // reset pipeline on virtual win
+            // Reset pattern positions for all strategies on virtual win
+            get().strategies.forEach((strat: Strategy) => { eng.patternPos[strat.id] = 0; });
           } else {
             ss.lost++; ss.totalProfit += resultProfit;
             // Do NOT increment lossCount or double currentStake — virtual loss
