@@ -343,7 +343,7 @@ export default function AutoTradePage() {
             // For continuous mode: start 60s warmup to block the watchdog from
             // restarting. The bail-out already stopped the engine; the watcher handles
             // warmup for the cycle-counter path — only trigger here when neither has.
-            if (cycleIntervalRef.current === 'continuous' && !warmupTriggeredRef.current) {
+            if (cycleIntervalRef.current === 'continuous' && !warmupTriggeredRef.current && isRunningRef.current) {
                 warmupTriggeredRef.current = true;
                 const runWarmup = () => {
                     if (scannerWarmupRef.current) clearTimeout(scannerWarmupRef.current);
@@ -910,7 +910,13 @@ export default function AutoTradePage() {
                             if (preset === 'differ_2') {
                                 const digits = r.digits || [];
                                 const last100 = digits.slice(-100);
-                                if (last100.length === 0) return { symbol: m.value, label: m.label, score: 0 };
+                                if (last100.length === 0) return { symbol: m.value, label: m.label, score: -1 };
+                                let consecEvens = 0;
+                                for (let i = last100.length - 1; i >= 0; i--) {
+                                    if (last100[i] % 2 === 0) consecEvens++;
+                                    else break;
+                                }
+                                if (consecEvens < 5) return { symbol: m.value, label: m.label, score: consecEvens - 100 };
                                 const oddCount = last100.filter(d => d % 2 !== 0).length;
                                 const pct = (oddCount / last100.length) * 100;
                                 return { symbol: m.value, label: m.label, score: pct };
@@ -1183,11 +1189,18 @@ export default function AutoTradePage() {
                             if (preset === 'differ_2') {
                                 const digits = r.digits || [];
                                 const last100 = digits.slice(-100);
-                                if (last100.length === 0) return { symbol: m.value, label: m.label, score: 0 };
+                                if (last100.length === 0) return { symbol: m.value, label: m.label, score: -1 };
+                                let consecEvens = 0;
+                                for (let i = last100.length - 1; i >= 0; i--) {
+                                    if (last100[i] % 2 === 0) consecEvens++;
+                                    else break;
+                                }
+                                if (consecEvens < 5) return { symbol: m.value, label: m.label, score: consecEvens - 100 };
                                 const oddCount = last100.filter(d => d % 2 !== 0).length;
                                 const pct = (oddCount / last100.length) * 100;
                                 return { symbol: m.value, label: m.label, score: pct };
                             }
+
                             const gap = r.details?.gap || 0;
                             return { symbol: m.value, label: m.label, score: Math.round(gap * 200) };
                         })
@@ -2548,7 +2561,7 @@ export default function AutoTradePage() {
                     </div>
 
                     {/* Cycle / warmup countdown */}
-                    {nextExecCd && (
+                    {nextExecCd && isRunningAuto && (
                         <div className={`rounded-2xl p-4 flex items-center justify-between border ${
                             isScannerWarmup
                                 ? 'bg-gradient-to-r from-amber-500/15 to-orange-500/10 border-amber-500/25'
