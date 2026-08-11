@@ -45,21 +45,6 @@ const tickCallbacks = new Set<(symbol: string) => void>();
  * for a "3dp" market, toFixed(3) would give "9456.120" → last digit wrongly 0.
  */
 function extractDigit(symbol: string, quote: number, pipSize?: number): number {
-    // First: try the raw string representation — this preserves the actual
-    // number of decimal places the server sent, with no padding.
-    const rawStr = String(quote);
-    const dotIdx = rawStr.indexOf('.');
-    if (dotIdx !== -1 && rawStr.length > dotIdx + 1) {
-        // Strip any trailing exponent (shouldn't happen for tick prices, but be safe)
-        const decPart = rawStr.substring(dotIdx + 1).replace(/e.*$/i, '');
-        if (decPart.length > 0) {
-            const lastChar = decPart[decPart.length - 1];
-            const d = parseInt(lastChar, 10);
-            if (!isNaN(d)) return d;
-        }
-    }
-
-    // Fallback: use explicit decimal count from pip_size or the constants table
     const decimals = pipSize && pipSize > 0 && pipSize < 1
             ? Math.abs(Math.round(Math.log10(1 / pipSize)))
             : ticksToDecimals(symbol);
@@ -228,20 +213,8 @@ export const useScannerStore = create<ScannerStoreState>((set, get) => ({
 
                     const historyTicks: ScannerTick[] = times.map((time, idx) => {
                         const price  = prices[idx];
-                        // Use raw string first (same logic as extractDigit) to avoid zero-padding
-                        const rawStr = String(price);
-                        const dotIdx = rawStr.indexOf('.');
-                        let digit: number;
-                        if (dotIdx !== -1 && rawStr.length > dotIdx + 1) {
-                            const decPart = rawStr.substring(dotIdx + 1).replace(/e.*$/i, '');
-                            digit = parseInt(decPart[decPart.length - 1], 10);
-                        } else {
-                            // Fallback: use pip_size-based toFixed
-                            const factor = Math.pow(10, decimals);
-                            const rounded = Math.round(price * factor) / factor;
-                            const str    = rounded.toFixed(decimals);
-                            digit = parseInt(str[str.length - 1], 10);
-                        }
+                        const str    = price.toFixed(decimals);
+                        const digit  = parseInt(str[str.length - 1], 10);
                         return { epoch: time, quote: price, digit: isNaN(digit) ? 0 : digit };
                     });
 

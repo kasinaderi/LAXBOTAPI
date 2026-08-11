@@ -90,9 +90,12 @@ interface PerStrategyState {
 
 export const ALL_MARKETS = [
   { value: '1HZ10V',  label: 'V10(1s)'  },
+  { value: '1HZ15V',  label: 'V15(1s)'  },
   { value: '1HZ25V',  label: 'V25(1s)'  },
+  { value: '1HZ30V',  label: 'V30(1s)'  },
   { value: '1HZ50V',  label: 'V50(1s)'  },
   { value: '1HZ75V',  label: 'V75(1s)'  },
+  { value: '1HZ90V',  label: 'V90(1s)'  },
   { value: '1HZ100V', label: 'V100(1s)' },
   { value: 'R_10',    label: 'V10'      },
   { value: 'R_25',    label: 'V25'      },
