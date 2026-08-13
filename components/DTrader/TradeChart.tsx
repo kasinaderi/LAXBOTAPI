@@ -135,7 +135,14 @@ const getDecimals = (pipSize: number | undefined, activeSymbol: string): number 
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function TradeChart({ symbol, displayName, token }: Props) {
-  const { manualContractType: contractType, manualPrediction: prediction, setManualPrediction: setPrediction, setManualMarket: setMarket } = useDerivStore();
+  const {
+    manualContractType: contractType,
+    manualPrediction: prediction,
+    setManualPrediction: setPrediction,
+    setManualMarket: setMarket,
+    manualPositions: positions,
+    setManualPositions: setPositions
+  } = useDerivStore();
   const isDigitMode = contractType?.startsWith('DIGIT');
   const isRiseFallMode = contractType === 'CALL' || contractType === 'PUT' || contractType === 'CALL_HIGHER' || contractType === 'CALL_LOWER';
   const pipSizeRef = useRef<number | null>(null);
@@ -169,7 +176,6 @@ export default function TradeChart({ symbol, displayName, token }: Props) {
   const [crosshairInfo, setCrosshairInfo] = useState<OHLCBar | null>(null);
 
   // Premium state
-  const [positions, setPositions] = useState<any[]>([]);
   const [barrier, setBarrier] = useState('+0.001');
   const [showActiveTrades, setShowActiveTrades] = useState(false);
   const [ticksWindow, setTicksWindow] = useState(1000);
@@ -235,24 +241,13 @@ export default function TradeChart({ symbol, displayName, token }: Props) {
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, []);
 
-  // Sync positions from global event
+  // Auto-show active trades panel when active positions exist
   useEffect(() => {
-    if ((window as any).laxPositions) {
-      setPositions((window as any).laxPositions);
-      if ((window as any).laxPositions.filter((p: any) => !p.isSold).length > 0) {
-        setShowActiveTrades(true);
-      }
+    const active = positions.filter((p: any) => !p.isSold);
+    if (active.length > 0) {
+      setShowActiveTrades(true);
     }
-    const posHandler = (e: any) => {
-      setPositions(e.detail);
-      const active = e.detail.filter((p: any) => !p.isSold);
-      if (active.length > 0) {
-        setShowActiveTrades(true);
-      }
-    };
-    window.addEventListener('laxPositionsUpdated', posHandler);
-    return () => window.removeEventListener('laxPositionsUpdated', posHandler);
-  }, []);
+  }, [positions]);
 
   // Sync barrier from global event
   useEffect(() => {
@@ -270,7 +265,17 @@ export default function TradeChart({ symbol, displayName, token }: Props) {
   // Sync contract overlays from positions
   useEffect(() => {
     const active = positions.filter((p: any) => !p.isSold);
-    setContractOverlays(active.map((p: any) => ({
+    // Deduplicate by contractId to guarantee unique keys in overlay rendering
+    const uniqueActive: any[] = [];
+    const seenIds = new Set<string>();
+    for (const pos of active) {
+      const idStr = String(pos.contractId);
+      if (!seenIds.has(idStr)) {
+        seenIds.add(idStr);
+        uniqueActive.push(pos);
+      }
+    }
+    setContractOverlays(uniqueActive.map((p: any) => ({
       contractId: p.contractId,
       startTime: p.dateStart,
       expiryTime: p.expiryTime ?? null,
@@ -1068,10 +1073,22 @@ export default function TradeChart({ symbol, displayName, token }: Props) {
 
   const handleSell = (contractId: number) => {
     derivWS.send({ sell: contractId, price: 0 });
-    setPositions(prev => prev.map(p => p.contractId === contractId ? { ...p, isSold: true } : p));
+    setPositions(prev => prev.map(p => String(p.contractId) === String(contractId) ? { ...p, isSold: true } : p));
   };
 
-  const activePositions = positions.filter(p => !p.isSold);
+  const activePositions = useMemo(() => {
+    const active = positions.filter((p: any) => !p.isSold);
+    const uniqueActive: any[] = [];
+    const seenIds = new Set<string>();
+    for (const pos of active) {
+      const idStr = String(pos.contractId);
+      if (!seenIds.has(idStr)) {
+        seenIds.add(idStr);
+        uniqueActive.push(pos);
+      }
+    }
+    return uniqueActive;
+  }, [positions]);
   const showRsi = indicators.has('rsi') && !isDigitMode;
 
   const MARKET_GROUPS = [

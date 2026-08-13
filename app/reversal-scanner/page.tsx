@@ -10,6 +10,7 @@ import { Play, Square, ChevronDown, AlertTriangle, Loader2, Layers, ShieldAlert 
 import {
   useBotStore,
   Strategy, Condition, TradeLog, PatternTrigger, PatternBox,
+  AdaptiveSwitch, AdaptiveSwitchStep,
   ALL_MARKETS as BOT_ALL_MARKETS,
   TRADE_OPTIONS as BOT_TRADE_OPTIONS,
   createCondition, createStrategy, needsBarrier,
@@ -39,6 +40,7 @@ const CONDITION_TYPES = [
   { value: 'LAST_DIGITS',   label: 'LAST N DIGITS ARE' },
   { value: 'GREEN_BAR',     label: 'GREEN BAR IS ON DIGIT' },
   { value: 'DIGIT_PATTERN', label: 'DIGIT PATTERN' },
+  { value: 'DIGIT_APPEARS', label: 'IF DIGIT ( ) APPEARS' },
 ];
 
 // Pattern alphabet tokens (LaxSniper XV)
@@ -104,6 +106,10 @@ function conditionText(c: Condition): string {
     }
     case 'GREEN_BAR':     return `GREEN BAR on ${c.barValue} with pct ${c.comparator} ${c.value}% in last ${c.period} ticks`;
     case 'DIGIT_PATTERN': return `PATTERN [${(c.pattern || []).join('→')}]`;
+    case 'DIGIT_APPEARS': {
+      const targetDigits = c.targetDigits && c.targetDigits.length > 0 ? c.targetDigits : [c.digitBarrier ?? 5];
+      return `DIGIT ${targetDigits.join(' AND ')} APPEARS ${c.comparator} ${c.value} times in last ${c.period} ticks`;
+    }
     default:              return '';
   }
 }
@@ -230,26 +236,123 @@ function AdvancedPatternBuilder({ cond, onChange }: {
             }}></div>
           </div>
         </div>
-        <button className="lp-apb-add-btn" onClick={addBox}>+ Add Box</button>
+        {/* Only show +Add Box when OR mode (THEN/THENALL only need 2 boxes) */}
+        {(cond.patternBoxMode ?? 'OR') === 'OR' && (
+          <button className="lp-apb-add-btn" onClick={addBox}>+ Add Box</button>
+        )}
+        {(cond.patternBoxMode === 'THEN' || cond.patternBoxMode === 'THENALL') && boxes.length < 2 && (
+          <button className="lp-apb-add-btn" onClick={addBox}>+ Add Box 2</button>
+        )}
       </div>
-      {/* Orientation hint */}
-      {cond.patternBoxes && cond.patternBoxes.length > 0 && (
-        <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)', marginBottom: 2, paddingLeft: 2 }}>
-          Each trigger = 1 tick &nbsp;·&nbsp; Left = oldest, Right = latest &nbsp;·&nbsp; Multiple boxes = OR alternatives
-        </div>
-      )}
+
+      {/* Dynamic orientation hint based on mode */}
+      {cond.patternBoxes && cond.patternBoxes.length > 0 && (() => {
+        const mode = cond.patternBoxMode ?? 'OR';
+        const hintMap: Record<string, string> = {
+          OR:      'Each trigger = 1 tick · Left = oldest, Right = latest · Multiple boxes = OR alternatives',
+          THEN:    'Box 1 triggers → locks market → Box 2 must fire within timeout ticks',
+          THENALL: 'Box 1 triggers → ALL markets scanned for Box 2 → fires up to max trades',
+        };
+        return (
+          <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)', marginBottom: 2, paddingLeft: 2 }}>
+            {hintMap[mode]}
+          </div>
+        );
+      })()}
 
       {/* Boxes Grid */}
       {cond.patternBoxes && cond.patternBoxes.length > 0 && (
         <div className="lp-apb-grid">
-          {boxes.map((box, bi) => (
-            <React.Fragment key={bi}>
-              {/* OR separator between boxes */}
-              {bi > 0 && (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 2px' }}>
-                  <span style={{ fontSize: 9, fontWeight: 900, color: '#f59e0b', letterSpacing: 1, background: 'rgba(245,158,11,0.1)', borderRadius: 4, padding: '2px 4px' }}>OR</span>
-                </div>
-              )}
+          {boxes.map((box, bi) => {
+            const mode = cond.patternBoxMode ?? 'OR';
+            // In THEN/THENALL mode: hide any boxes beyond the first 2
+            if ((mode === 'THEN' || mode === 'THENALL') && bi >= 2) return null;
+
+            return (
+              <React.Fragment key={bi}>
+                {/* Separator between boxes */}
+                {bi > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '0 4px', gap: '6px' }}>
+
+                    {/* Mode cycle chip — click to cycle OR→THEN→THENALL */}
+                    {bi === 1 && (() => {
+                      const curMode = cond.patternBoxMode ?? 'OR';
+                      const nextMode = curMode === 'OR' ? 'THEN' : curMode === 'THEN' ? 'THENALL' : 'OR';
+                      const modeStyles: Record<string, { bg: string; color: string; glow: string }> = {
+                        OR:      { bg: 'rgba(245,158,11,0.12)', color: '#f59e0b', glow: '0 0 6px rgba(245,158,11,0.3)' },
+                        THEN:    { bg: 'rgba(20,184,166,0.15)', color: '#2dd4bf', glow: '0 0 6px rgba(20,184,166,0.35)' },
+                        THENALL: { bg: 'rgba(139,92,246,0.15)', color: '#a78bfa', glow: '0 0 6px rgba(139,92,246,0.4)' },
+                      };
+                      const st = modeStyles[curMode];
+                      return (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                          <button
+                            onClick={() => onChange({ ...cond, patternBoxMode: nextMode as 'OR' | 'THEN' | 'THENALL' })}
+                            title={`Mode: ${curMode} — click to switch to ${nextMode}`}
+                            style={{
+                              fontSize: 8, fontWeight: 900, letterSpacing: 1,
+                              background: st.bg, color: st.color,
+                              border: `1px solid ${st.color}40`,
+                              borderRadius: 4, padding: '3px 7px',
+                              cursor: 'pointer', boxShadow: st.glow,
+                              transition: 'all 0.2s',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {curMode} ▾
+                          </button>
+
+                          {/* THEN / THENALL config inputs */}
+                          {(curMode === 'THEN' || curMode === 'THENALL') && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', alignItems: 'center', minWidth: '72px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap' }}>⏱ TIMEOUT</span>
+                                <input
+                                  type="number" min={1} max={500}
+                                  value={cond.thenTimeout ?? 20}
+                                  onChange={e => onChange({ ...cond, thenTimeout: Math.max(1, +e.target.value || 20) })}
+                                  style={{
+                                    width: '34px', textAlign: 'center', fontSize: 9,
+                                    background: 'rgba(0,0,0,0.4)', color: '#fff',
+                                    border: `1px solid ${st.color}40`, borderRadius: 3,
+                                    padding: '1px 2px', outline: 'none',
+                                    MozAppearance: 'textfield',
+                                  } as React.CSSProperties}
+                                  title="Max ticks to wait for Box 2 before resetting"
+                                />
+                                <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.3)' }}>t</span>
+                              </div>
+                              {curMode === 'THENALL' && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                  <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap' }}>🔢 MAX</span>
+                                  <input
+                                    type="number" min={1} max={50}
+                                    value={cond.thenMaxTrades ?? 3}
+                                    onChange={e => onChange({ ...cond, thenMaxTrades: Math.max(1, +e.target.value || 3) })}
+                                    style={{
+                                      width: '34px', textAlign: 'center', fontSize: 9,
+                                      background: 'rgba(0,0,0,0.4)', color: '#fff',
+                                      border: `1px solid ${st.color}40`, borderRadius: 3,
+                                      padding: '1px 2px', outline: 'none',
+                                      MozAppearance: 'textfield',
+                                    } as React.CSSProperties}
+                                    title="Max trades Box 2 fires per round before resetting to Box 1"
+                                  />
+                                  <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.3)' }}>×</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Simple separator for boxes beyond the first pair (OR mode only) */}
+                    {bi > 1 && (
+                      <span style={{ fontSize: 9, fontWeight: 900, color: '#f59e0b', letterSpacing: 1, background: 'rgba(245,158,11,0.1)', borderRadius: 4, padding: '2px 4px' }}>OR</span>
+                    )}
+                  </div>
+                )}
               <div className={`lp-apb-card ${bi === 0 ? 'active-step' : ''}`}>
                 <div className="lp-apb-card-hdr">
                   <span className="lp-apb-card-title">Box {bi + 1}</span>
@@ -355,8 +458,10 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                 <button className="lp-apb-add-trig-dashed" onClick={() => addTrigger(bi)}>+</button>
               </div>
               </div>
-            </React.Fragment>
-          ))}
+              </React.Fragment>
+            );
+          })}
+
         </div>
       )}
 
@@ -437,7 +542,31 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
         </select>
       )}
 
-      <select className="lp-sel lp-ctype" value={cond.type} onChange={e => u({ type: e.target.value as Condition['type'] })}>
+      <select
+        className="lp-sel lp-ctype"
+        value={cond.type}
+        onChange={e => {
+          const newType = e.target.value as Condition['type'];
+          const patch: Partial<Condition> = { type: newType };
+          if (newType === 'DIGIT_APPEARS') {
+            patch.period = 10;
+            patch.value = 4;
+            patch.digitBarrier = 5;
+            patch.targetDigits = [5];
+            patch.comparator = '=';
+          } else if (newType === 'EVEN_PCT' || newType === 'ODD_PCT' || newType === 'FALL_PCT' || newType === 'RISE_PCT') {
+            patch.period = 100;
+            patch.value = 60;
+            patch.comparator = '>';
+          } else if (newType === 'OVER_PCT' || newType === 'UNDER_PCT') {
+            patch.period = 100;
+            patch.value = 60;
+            patch.digitBarrier = 4;
+            patch.comparator = '>';
+          }
+          u(patch);
+        }}
+      >
         {CONDITION_TYPES.map(ct => <option key={ct.value} value={ct.value}>{ct.label}</option>)}
       </select>
 
@@ -522,6 +651,144 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
         </>
       )}
 
+      {cond.type === 'DIGIT_APPEARS' && (
+        <>
+          <span className="lp-unit">IF DIGIT </span>
+          {(() => {
+            const digitsList = cond.targetDigits && cond.targetDigits.length > 0
+              ? cond.targetDigits
+              : [cond.digitBarrier ?? 5];
+
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', margin: '0 4px' }}>
+                {digitsList.map((digit, index) => (
+                  <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '2px', position: 'relative' }}>
+                    {index > 0 && <span className="lp-unit" style={{ fontSize: '9px', fontWeight: 'bold', color: 'rgba(255,255,255,0.4)', marginRight: '2px' }}>AND</span>}
+                    <input
+                      className="lp-num lp-sm"
+                      type="number"
+                      min={0}
+                      max={9}
+                      value={digit}
+                      onChange={e => {
+                        const newDigits = [...digitsList];
+                        newDigits[index] = Math.min(9, Math.max(0, +e.target.value || 0));
+                        u({
+                          targetDigits: newDigits,
+                          digitBarrier: newDigits[0],
+                        });
+                      }}
+                      title={`Target Digit ${index + 1}`}
+                      style={{ width: '32px', paddingLeft: 0, paddingRight: 0 }}
+                    />
+                    {digitsList.length > 1 && (
+                      <button
+                        onClick={() => {
+                          const newDigits = digitsList.filter((_, idx) => idx !== index);
+                          u({
+                            targetDigits: newDigits,
+                            digitBarrier: newDigits[0] ?? 5,
+                          });
+                        }}
+                        style={{
+                          background: 'rgba(239, 68, 68, 0.2)',
+                          color: '#ef4444',
+                          border: 'none',
+                          borderRadius: '4px',
+                          width: '14px',
+                          height: '14px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '8px',
+                          cursor: 'pointer',
+                          position: 'absolute',
+                          top: '-4px',
+                          right: '-4px',
+                          zIndex: 10
+                        }}
+                        title="Remove digit"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                ))}
+                
+                {digitsList.length < 5 && (
+                  <button
+                    onClick={() => {
+                      const newDigits = [...digitsList, 4];
+                      u({
+                        targetDigits: newDigits,
+                        digitBarrier: newDigits[0],
+                      });
+                    }}
+                    style={{
+                      background: 'rgba(99, 102, 241, 0.2)',
+                      color: '#a5b4fc',
+                      border: '1px dashed rgba(99, 102, 241, 0.5)',
+                      borderRadius: '4px',
+                      width: '24px',
+                      height: '24px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '14px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      marginLeft: '2px',
+                    }}
+                    title="Add another digit"
+                  >
+                    +
+                  </button>
+                )}
+              </div>
+            );
+          })()}
+          <span className="lp-unit">APPEAR</span>
+          
+          <div style={{ display: 'flex', gap: '2px', background: 'rgba(255,255,255,0.05)', padding: '2px', borderRadius: '6px', border: '1px solid var(--glass-border)', marginLeft: '4px', marginRight: '4px', alignItems: 'center' }}>
+            {[
+              { op: '>', label: '>', title: 'Over (More Than)' },
+              { op: '=', label: '=', title: 'Equal To' },
+              { op: '<', label: '<', title: 'Under (Less Than)' }
+            ].map(item => (
+              <button
+                key={item.op}
+                onClick={() => u({ comparator: item.op })}
+                title={item.title}
+                style={{
+                  background: cond.comparator === item.op ? '#6366f1' : 'transparent',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '4px',
+                  width: '24px',
+                  height: '24px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+          <input className="lp-num lp-sm" type="number" min={0} max={100} value={cond.value}
+            onChange={e => u({ value: +e.target.value })} />
+          <span className="lp-unit">times in last</span>
+          <input className="lp-num lp-sm" type="number" min={1} max={1000} value={cond.period}
+            onChange={e => u({ period: +e.target.value })} />
+          <span className="lp-unit">ticks</span>
+        </>
+      )}
+
       {cond.type === 'DIGIT_PATTERN' && (
         <div style={{ width: '100%', marginTop: 4 }}>
           <AdvancedPatternBuilder cond={cond} onChange={onChange} />
@@ -577,11 +844,12 @@ function TradePatternBuilder({ pattern, onChange }: {
 // STRATEGY BLOCK COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 
-function StrategyBlock({ strategy, index, onChange, onRemove }: {
+function StrategyBlock({ strategy, index, onChange, onRemove, adaptiveSwitchEnabled }: {
   strategy: Strategy;
   index: number;
   onChange: (s: Strategy) => void;
   onRemove: () => void;
+  adaptiveSwitchEnabled?: boolean;
 }) {
   const [showPattern, setShowPattern] = useState(false);
   const u = (p: Partial<Strategy>) => onChange({ ...strategy, ...p });
@@ -617,52 +885,68 @@ function StrategyBlock({ strategy, index, onChange, onRemove }: {
           onRemove={() => removeCond(c.id)} />
       ))}
 
-      {/* THEN TRADE row */}
-      <div className="lp-then-row">
-        <span className="lp-then-lbl">THEN TRADE</span>
-        <select className="lp-sel lp-trade-sel" value={strategy.tradeType} onChange={e => u({ tradeType: e.target.value })}>
-          {TRADE_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-        </select>
-        {hasBarrier && (
-          <>
-            <span className="lp-then-lbl" style={{ color: '#f59e0b', fontWeight: 900 }}>BARRIER</span>
-            <input className="lp-num lp-sm" type="number" min={0} max={9} value={strategy.prediction}
-              onChange={e => u({ prediction: +e.target.value })} />
-          </>
-        )}
-        {/* Ticks input hidden when Trade Pattern is active (pattern manages duration) */}
-        {!strategy.useTradePattern && (
-          <>
-            <span className="lp-then-lbl">FOR</span>
-            <input className="lp-num lp-sm" type="number" min={1} max={100} value={strategy.ticks}
-              onChange={e => u({ ticks: +e.target.value })} />
-            <span className="lp-unit">TICKS</span>
-          </>
-        )}
-      </div>
+      {/* THEN TRADE row - hidden when Adaptive Switch is active */}
+      {!adaptiveSwitchEnabled && (
+        <div className="lp-then-row">
+          <span className="lp-then-lbl">THEN TRADE</span>
+          <select className="lp-sel lp-trade-sel" value={strategy.tradeType} onChange={e => u({ tradeType: e.target.value })}>
+            {TRADE_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+          {hasBarrier && (
+            <>
+              <span className="lp-then-lbl" style={{ color: '#f59e0b', fontWeight: 900 }}>BARRIER</span>
+              <input className="lp-num lp-sm" type="number" min={0} max={9} value={strategy.prediction}
+                onChange={e => u({ prediction: +e.target.value })} />
+            </>
+          )}
+          {/* Ticks input hidden when Trade Pattern is active (pattern manages duration) */}
+          {!strategy.useTradePattern && (
+            <>
+              <span className="lp-then-lbl">FOR</span>
+              <input className="lp-num lp-sm" type="number" min={1} max={100} value={strategy.ticks}
+                onChange={e => u({ ticks: +e.target.value })} />
+              <span className="lp-unit">TICKS</span>
+            </>
+          )}
+        </div>
+      )}
 
-      {/* Trade Pattern toggle */}
-      <div className="lp-tpb-row">
-        <label className="lp-tpb-lbl-check">
-          <input type="checkbox" checked={!!strategy.useTradePattern}
-            onChange={e => u({ useTradePattern: e.target.checked })} />
-          <Layers size={11} style={{ marginLeft: 3, marginRight: 3, color: '#6366f1' }} />
-          <span style={{ fontSize: 11, fontWeight: 700, color: '#4f46e5' }}>TRADE PATTERN</span>
-        </label>
-        {strategy.useTradePattern && (
-          <button className="lp-tpb-expand" onClick={() => setShowPattern(v => !v)}>
-            {showPattern ? '▲ Hide' : '▼ Edit'}
-          </button>
-        )}
-        {strategy.useTradePattern && (
-          <div className="lp-tpb-inline-preview">
-            {(strategy.tradePattern || []).map((t, i) => (
-              <span key={i} className={`lp-tpb-mini ${t ? 'trade' : 'skip'}`}>{t ? 'T' : 'S'}</span>
-            ))}
-          </div>
-        )}
-      </div>
-      {strategy.useTradePattern && showPattern && (
+      {/* When Adaptive Switch is active: only show FOR ticks */}
+      {adaptiveSwitchEnabled && (
+        <div className="lp-then-row">
+          <span className="lp-then-lbl" style={{ color: '#a78bfa' }}>SWITCHER ACTIVE</span>
+          <span style={{ fontSize: 10, color: '#6366f1', fontWeight: 700, marginLeft: 4 }}>→ contract determined by SWITCHER</span>
+          <span className="lp-then-lbl" style={{ marginLeft: 8 }}>FOR</span>
+          <input className="lp-num lp-sm" type="number" min={1} max={100} value={strategy.ticks}
+            onChange={e => u({ ticks: +e.target.value })} />
+          <span className="lp-unit">TICKS</span>
+        </div>
+      )}
+
+      {/* Trade Pattern toggle - hidden when adaptive switch is active */}
+      {!adaptiveSwitchEnabled && (
+        <div className="lp-tpb-row">
+          <label className="lp-tpb-lbl-check">
+            <input type="checkbox" checked={!!strategy.useTradePattern}
+              onChange={e => u({ useTradePattern: e.target.checked })} />
+            <Layers size={11} style={{ marginLeft: 3, marginRight: 3, color: '#6366f1' }} />
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#4f46e5' }}>TRADE PATTERN</span>
+          </label>
+          {strategy.useTradePattern && (
+            <button className="lp-tpb-expand" onClick={() => setShowPattern(v => !v)}>
+              {showPattern ? '▲ Hide' : '▼ Edit'}
+            </button>
+          )}
+          {strategy.useTradePattern && (
+            <div className="lp-tpb-inline-preview">
+              {(strategy.tradePattern || []).map((t, i) => (
+                <span key={i} className={`lp-tpb-mini ${t ? 'trade' : 'skip'}`}>{t ? 'T' : 'S'}</span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {!adaptiveSwitchEnabled && strategy.useTradePattern && showPattern && (
         <TradePatternBuilder
           pattern={strategy.tradePattern || [true]}
           onChange={p => u({ tradePattern: p })}
@@ -1002,9 +1286,12 @@ export default function LaxPrimePage() {
     startBot, stopBot, resetAll,
     theme, setTheme,
     crossMarketDelay, setCrossMarketDelay,
+    adaptiveSwitch, setAdaptiveSwitch,
+    adaptiveLiveStatus,
   } = useBotStore();
 
-  const [showVirtualPanel, setShowVirtualPanel] = useState(false);
+  const [showVirtualPanel,   setShowVirtualPanel]   = useState(false);
+  const [showSwitcherPanel,  setShowSwitcherPanel]  = useState(false);
   const [isModeDropdownOpen, setIsModeDropdownOpen] = useState(false);
   const modeDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -1297,7 +1584,13 @@ export default function LaxPrimePage() {
                 ⚗ VIRTUAL SYSTEM {showVirtualPanel ? '▲' : '▼'}
                 {virtualSettings.isVirtualMode && <span className="lp-virt-active-dot" />}
               </button>
-              <button className="lp-circles-btn">Circles</button>
+              <button
+                className={`lp-switcher-btn ${adaptiveSwitch.enabled ? 'active' : ''}`}
+                onClick={() => setShowSwitcherPanel(v => !v)}
+                title="Toggle Switcher panel">
+                ⚡ SWITCHER {showSwitcherPanel ? '▲' : '▼'}
+                {adaptiveSwitch.enabled && <span className="lp-sw-active-dot" />}
+              </button>
               <button className="lp-add-strat-btn"
                 onClick={() => {
                   if (strategies.length >= 5) return;
@@ -1396,6 +1689,101 @@ export default function LaxPrimePage() {
               </div>
             )}
 
+            {/* ── SWITCHER PANEL ─────────────────────────────────────────── */}
+            {showSwitcherPanel && (
+              <div className="lp-sw-panel">
+                <div className="lp-sw-hdr">
+                  <span className="lp-sw-title">⚡ SWITCHER</span>
+                  <span className={`lp-vp-badge ${adaptiveSwitch.enabled ? 'lp-vp-badge--virtual' : 'lp-vp-badge--real'}`}>
+                    {adaptiveSwitch.enabled ? '● ADAPTIVE ACTIVE' : '● INACTIVE'}
+                  </span>
+                  <button
+                    className={`lp-vp-force-btn ${adaptiveSwitch.enabled ? 'lp-vp-force-btn--toreal' : 'lp-vp-force-btn--tovirt'}`}
+                    onClick={() => setAdaptiveSwitch({ ...adaptiveSwitch, enabled: !adaptiveSwitch.enabled })}>
+                    {adaptiveSwitch.enabled ? 'Turn OFF' : 'Turn ON'}
+                  </button>
+                </div>
+
+                {/* Description */}
+                <p className="lp-sw-desc">
+                  Automatically switches contract type on each step. The sequence repeats after all steps complete.
+                  On <strong>loss</strong>: retries the same contract side. On <strong>win</strong>: advances to next rep.
+                </p>
+
+                {/* Live status when running */}
+                {adaptiveSwitch.enabled && isRunning && adaptiveLiveStatus && (
+                  <div className="lp-sw-live">
+                    <span className="lp-sw-live-dot" />
+                    <span className="lp-sw-live-label">LIVE:</span>
+                    <span className="lp-sw-live-val">{adaptiveLiveStatus}</span>
+                  </div>
+                )}
+
+                {/* Adaptive Contracts / Sequence steps */}
+                <div className="lp-sw-steps-hdr">
+                  <span className="lp-sw-steps-title">ADAPTIVE CONTRACTS — Sequence Steps</span>
+                  <button
+                    className="lp-sw-add-step"
+                    onClick={() => setAdaptiveSwitch({
+                      ...adaptiveSwitch,
+                      steps: [...adaptiveSwitch.steps, { contractType: 'DIGITEVEN', reps: 1 }],
+                    })}>
+                    + Add Step
+                  </button>
+                </div>
+
+                <div className="lp-sw-steps">
+                  {adaptiveSwitch.steps.map((step, si) => (
+                    <div key={si} className="lp-sw-step">
+                      <span className="lp-sw-step-num">Step {si + 1}</span>
+                      <select
+                        className="lp-sel lp-sw-sel"
+                        value={step.contractType}
+                        onChange={e => {
+                          const next = [...adaptiveSwitch.steps];
+                          next[si] = { ...next[si], contractType: e.target.value };
+                          setAdaptiveSwitch({ ...adaptiveSwitch, steps: next });
+                        }}>
+                        {TRADE_OPTIONS.map(t => (
+                          <option key={t.value} value={t.value}>{t.label}</option>
+                        ))}
+                      </select>
+                      <span className="lp-sw-step-lbl">Reps</span>
+                      <input
+                        className="lp-num lp-sm"
+                        type="number" min={1} max={50}
+                        value={step.reps}
+                        onChange={e => {
+                          const next = [...adaptiveSwitch.steps];
+                          next[si] = { ...next[si], reps: Math.max(1, +e.target.value || 1) };
+                          setAdaptiveSwitch({ ...adaptiveSwitch, steps: next });
+                        }} />
+                      <button
+                        className="lp-sw-rm-step"
+                        disabled={adaptiveSwitch.steps.length <= 1}
+                        onClick={() => {
+                          const next = adaptiveSwitch.steps.filter((_, idx) => idx !== si);
+                          setAdaptiveSwitch({ ...adaptiveSwitch, steps: next });
+                        }}>- Remove</button>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Preview sequence */}
+                <div className="lp-sw-preview">
+                  {adaptiveSwitch.steps.map((step, si) => {
+                    const label = TRADE_OPTIONS.find(t => t.value === step.contractType)?.label || step.contractType;
+                    return (
+                      <span key={si} className="lp-sw-preview-chip">
+                        {label} ×{step.reps}
+                        {si < adaptiveSwitch.steps.length - 1 && <span className="lp-sw-arrow">→</span>}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="lp-strats-list">
               {strategies.map((s, i) => (
                 <StrategyBlock
@@ -1404,6 +1792,7 @@ export default function LaxPrimePage() {
                   index={i}
                   onChange={updated => setStrategies(p => p.map(x => x.id === updated.id ? updated : x))}
                   onRemove={() => setStrategies(p => p.filter(x => x.id !== s.id))}
+                  adaptiveSwitchEnabled={adaptiveSwitch.enabled}
                 />
               ))}
             </div>

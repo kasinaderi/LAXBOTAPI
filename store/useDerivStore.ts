@@ -518,9 +518,23 @@ export const useDerivStore = create<DerivState>()(
                 if (typeof window !== 'undefined') localStorage.setItem('lax_manual_duration_value', String(manualDurationValue));
                 set({ manualDurationValue });
             },
-            setManualPositions: (update: any[] | ((prev: any[]) => any[])) => set((state: DerivState) => ({
-                manualPositions: typeof update === 'function' ? update(state.manualPositions) : update
-            })),
+            setManualPositions: (update: any[] | ((prev: any[]) => any[])) => set((state: DerivState) => {
+                const next = typeof update === 'function' ? update(state.manualPositions) : update;
+                // Deduplicate by contractId (last write wins for updates, first entry wins for adds)
+                const seen = new Map<string, any>();
+                for (const p of next) {
+                    const id = String(p.contractId);
+                    if (!seen.has(id)) {
+                        seen.set(id, p);
+                    } else {
+                        // Prefer the more up-to-date entry (isSold=true, or higher currentProfit granularity)
+                        const existing = seen.get(id);
+                        if (p.isSold && !existing.isSold) seen.set(id, p);
+                        else if (p.currentProfit !== undefined && existing.currentProfit === undefined) seen.set(id, p);
+                    }
+                }
+                return { manualPositions: Array.from(seen.values()) };
+            }),
             setSidebarView: (sidebarView: 'markets' | 'logs') => set({ sidebarView }),
             setTradingApp: (tradingApp: 'laxsniper' | 'dtrader') => {
                 set({ tradingApp });

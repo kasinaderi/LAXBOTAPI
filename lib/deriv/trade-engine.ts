@@ -270,7 +270,11 @@ class TradeEngine {
             if (beforeCount > 0 && this.virtualTrades.length === 0) {
                 virtualJustSettled = true;
             }
-        }        this.refreshProposal(state);
+            if (this.getState) {
+                state = this.getState();
+            }
+        }
+        this.refreshProposal(state);
 
         // Track price history and derived Rise/Fall signal
         if (this.priceHistory.length > 0) {

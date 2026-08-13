@@ -387,6 +387,9 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
   const [hasLoaded, setHasLoaded] = useState(false);
   const socket = useTradeSocket();
   const proposalTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // Track the global proposal_open_contract subscription ID so we can cancel
+  // the previous one before starting a new one (prevents duplicate POC streams).
+  const pocSubIdRef = useRef<string | null>(null);
 
   // Derived duration object
   const duration = { value: durationValue, unit: durationUnit };
@@ -714,7 +717,7 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
 
         setPositions(prev => {
           // Avoid duplicate entries for the same contract_id
-          if (prev.some(p => p.contractId === contract_id)) return prev;
+          if (prev.some(p => String(p.contractId) === String(contract_id))) return prev;
 
           return [...prev, {
             contractId: contract_id,
@@ -738,8 +741,12 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
       if (msg.msg_type === 'proposal_open_contract' && msg.proposal_open_contract) {
         const poc = msg.proposal_open_contract;
         if (!poc.contract_id) return;
+        // Capture the subscription ID for future cancellation
+        if (msg.subscription?.id && !pocSubIdRef.current) {
+          pocSubIdRef.current = msg.subscription.id;
+        }
         setPositions(prev => prev.map(p => {
-          if (p.contractId !== poc.contract_id) return p;
+          if (String(p.contractId) !== String(poc.contract_id)) return p;
           const profit = parseFloat(poc.profit || '0');
           const isSold = poc.is_sold === 1 || poc.status === 'sold';
           const absBarrier = poc.barrier ?? poc.high_barrier ?? p.barrier;
@@ -798,6 +805,12 @@ export default function TradeForm({ symbol, displayName, token: tokenProp }: Tra
     socket.send(payload);
 
     setTimeout(() => {
+      // Cancel the previous global POC subscription before creating a new one.
+      // This prevents duplicate streams delivering the same contract updates twice.
+      if (pocSubIdRef.current) {
+        socket.send({ forget: pocSubIdRef.current });
+        pocSubIdRef.current = null;
+      }
       socket.send({ proposal_open_contract: 1, subscribe: 1 });
     }, 500);
   };

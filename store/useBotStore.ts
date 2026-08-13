@@ -31,7 +31,7 @@ export interface PatternBox {
 
 export interface Condition {
   id: string;
-  type: 'EVEN_PCT' | 'ODD_PCT' | 'LAST_DIGITS' | 'GREEN_BAR' | 'DIGIT_PATTERN' | 'FALL_PCT' | 'RISE_PCT' | 'OVER_PCT' | 'UNDER_PCT';
+  type: 'EVEN_PCT' | 'ODD_PCT' | 'LAST_DIGITS' | 'GREEN_BAR' | 'DIGIT_PATTERN' | 'FALL_PCT' | 'RISE_PCT' | 'OVER_PCT' | 'UNDER_PCT' | 'DIGIT_APPEARS';
   comparator: string;
   value: number;
   lastN: number;
@@ -43,7 +43,11 @@ export interface Condition {
   pattern: string[];
   patternRetrigger: string;
   digitBarrier?: number;
+  targetDigits?: number[];
   patternBoxes?: PatternBox[];         // Multi-Entry Sequence (OR across boxes, AND within)
+  patternBoxMode?: 'OR' | 'THEN' | 'THENALL'; // How boxes relate: OR=any fires, THEN=Box1→lock→Box2, THENALL=Box1→all markets Box2
+  thenTimeout?: number;               // THEN/THENALL: ticks to wait for Box2 before resetting (default 20)
+  thenMaxTrades?: number;             // THENALL: max trades Box2 fires per round (default 3)
   useCustomContracts?: boolean;        // DIGIT_PATTERN only: override trade contracts per loss step
   customContracts?: { type: string; barrier: number }[]; // Trade contract per loss step
 }
@@ -58,6 +62,16 @@ export interface Strategy {
   tradePattern: boolean[];
   useTradePattern: boolean;
   noContradiction: boolean;
+}
+
+export interface AdaptiveSwitchStep {
+  contractType: string; // e.g. 'DIGITEVEN' | 'DIGITODD'
+  reps: number;         // how many trades to execute at this step
+}
+
+export interface AdaptiveSwitch {
+  enabled: boolean;
+  steps: AdaptiveSwitchStep[];
 }
 
 export interface TradeLog {
@@ -346,6 +360,45 @@ function evaluateDigitPattern(cond: Condition, digits: number[], quotes: number[
   return true;
 }
 
+/**
+ * Evaluate a single box by index from a condition's patternBoxes array.
+ * Returns false if index is out of bounds or box has no triggers.
+ */
+function evaluateOneBox(cond: Condition, boxIndex: number, digits: number[], quotes: number[]): boolean {
+  const boxes = cond.patternBoxes;
+  if (!boxes || boxIndex >= boxes.length) return false;
+  const box = boxes[boxIndex];
+  if (!box || !box.triggers || box.triggers.length === 0) return false;
+
+  const N = box.triggers.length;
+  if (digits.length < N + 1) return false;
+
+  let capturedSE: number | null = null;
+  let capturedSO: number | null = null;
+
+  for (let ti = 0; ti < N; ti++) {
+    const trig = box.triggers[ti];
+    const digitIdx = digits.length - N + ti;
+    if (digitIdx < 0 || digitIdx >= digits.length) return false;
+    const d = digits[digitIdx];
+
+    if (trig.token === 'SE') {
+      if (d % 2 !== 0) return false;
+      if (capturedSE === null) { capturedSE = d; }
+      else if (d !== capturedSE) return false;
+      continue;
+    }
+    if (trig.token === 'SO') {
+      if (d % 2 === 0) return false;
+      if (capturedSO === null) { capturedSO = d; }
+      else if (d !== capturedSO) return false;
+      continue;
+    }
+    if (!matchTrigger(trig, digits, quotes, digitIdx)) return false;
+  }
+  return true;
+}
+
 
 function evaluateCondition(cond: Condition, digits: number[], quotes: number[]): boolean {
   const period = Math.max(1, cond.period || 100);
@@ -420,6 +473,18 @@ function evaluateCondition(cond: Condition, digits: number[], quotes: number[]):
       const pct = (sub.filter(d => d <= (cond.digitBarrier ?? 4)).length / period) * 100;
       return compare(pct, cond.comparator, cond.value);
     }
+    case 'DIGIT_APPEARS': {
+      const targetDigits = cond.targetDigits && cond.targetDigits.length > 0
+        ? cond.targetDigits
+        : [cond.digitBarrier ?? 5];
+      const targetCount = cond.value ?? 4;
+      const tickPeriod = cond.period ?? 10;
+      const sub = digits.slice(-tickPeriod);
+      if (sub.length < tickPeriod) return false;
+      if (!targetDigits.includes(sub[0])) return false;
+      const count = sub.filter(d => targetDigits.includes(d)).length;
+      return compare(count, cond.comparator || '>', targetCount);
+    }
     default:
       return false;
   }
@@ -442,6 +507,14 @@ function evalStrategy(s: Strategy, digits: number[], quotes: number[]): boolean 
 // These live outside React/Zustand so they survive page navigation.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Per-strategy THEN/THENALL state (lives outside React so it persists across ticks)
+interface ThenState {
+  phase: 'scanning_box1' | 'locked_box2';
+  lockedSymbol: string | null; // THEN: market where Box1 was found
+  ticksWaited: number;         // ticks elapsed since phase switched to locked_box2
+  tradesThisRound: number;     // THENALL: trades fired this round
+}
+
 const eng = {
   strategyState: {} as Record<string, PerStrategyState>,
   cooldown:      {} as Record<string, number>,
@@ -452,6 +525,10 @@ const eng = {
   waitingForOpposite: {} as Record<string, any>,
   // Cross-market 1.5s gap: prevents 2 different markets firing at exactly the same time
   lastTradeTime: 0,
+  // Adaptive switch live position tracker
+  adaptivePos: { stepIndex: 0, repCount: 0 },
+  // THEN / THENALL state per strategy
+  thenState: {} as Record<string, ThenState>,
 };
 
 // Single onTick subscription handle — registered once, lives forever
@@ -477,6 +554,8 @@ interface BotStoreState {
   selectedMarkets: string[];
   theme:          'dark' | 'light';
   crossMarketDelay: string;
+  adaptiveSwitch: AdaptiveSwitch;
+  adaptiveLiveStatus: string; // e.g. 'Even [Step 1, 1/2]'
 
   // ── Session state (NOT persisted) ─────────────────────────────────────────
   isRunning:    boolean;
@@ -498,6 +577,7 @@ interface BotStoreState {
   setSelectedMarkets: (m: string[] | ((p: string[]) => string[])) => void;
   setTheme:           (theme: 'dark' | 'light') => void;
   setCrossMarketDelay: (v: string) => void;
+  setAdaptiveSwitch:  (v: AdaptiveSwitch) => void;
 
   // ── Bot controls ───────────────────────────────────────────────────────────
   startBot:   () => void;
@@ -535,6 +615,14 @@ export const useBotStore = create<BotStoreState>()(
       selectedMarkets: ['1HZ10V', 'R_10', '1HZ25V', 'R_25', '1HZ50V', '1HZ75V'],
       theme:           'dark',
       crossMarketDelay: '1.5',
+      adaptiveSwitch:  {
+        enabled: false,
+        steps: [
+          { contractType: 'DIGITEVEN', reps: 2 },
+          { contractType: 'DIGITODD',  reps: 2 },
+        ],
+      },
+      adaptiveLiveStatus: '',
 
       isRunning:    false,
       botStatusMsg: 'Ready.',
@@ -559,6 +647,7 @@ export const useBotStore = create<BotStoreState>()(
       })),
       setTheme:           (theme) => set({ theme }),
       setCrossMarketDelay: (v) => set({ crossMarketDelay: v }),
+      setAdaptiveSwitch:  (v) => set({ adaptiveSwitch: v }),
 
       addLog: (log) => set(state => ({
         tradeLogs: [log, ...state.tradeLogs].slice(0, 50),
@@ -584,7 +673,10 @@ export const useBotStore = create<BotStoreState>()(
         eng.patternPos    = {};
         eng.retrigger     = {};
         eng.waitingForOpposite = {};
+        eng.adaptivePos   = { stepIndex: 0, repCount: 0 };
+        eng.thenState     = {};
         botTradeIds.clear();
+        set({ adaptiveLiveStatus: '' });
 
         // Proactively connect/ensure the trade socket is open
         if (typeof window !== 'undefined') {
@@ -805,7 +897,6 @@ export const useBotStore = create<BotStoreState>()(
             const isOpposite = checkIsOpposite(lType, lPred, currentDigit, currentQuote, prevQuote);
             if (isOpposite) {
               eng.waitingForOpposite[ck] = null;
-              console.log(`[BotEngine] 🔄 Contradiction Cleared: Opposite digit/state detected (${currentDigit}) on ${symbol}. Resuming scanning.`);
             } else {
               continue;
             }
@@ -854,13 +945,101 @@ export const useBotStore = create<BotStoreState>()(
             }
           }
 
-          if (!evalStrategy(s, digits, quotes)) {
-            // Reset no_contra edge when pattern clears
-            if (dpCond && dpCond.patternRetrigger === 'no_contra') {
-              const rtKey = `${stratId}_${symbol}`;
-              if (eng.retrigger[rtKey]) eng.retrigger[rtKey].lastWasTrue = false;
+          // ── THEN / THENALL sequential box gate ────────────────────────────
+          // Only applies when a DIGIT_PATTERN condition has patternBoxMode set to
+          // THEN or THENALL. In these modes we bypass normal OR-box evaluation
+          // and instead run a two-phase state machine per strategy.
+          const dpCondForMode = s.conditions.find(c => c.type === 'DIGIT_PATTERN');
+          const boxMode = dpCondForMode?.patternBoxMode ?? 'OR';
+
+          if (dpCondForMode && (boxMode === 'THEN' || boxMode === 'THENALL')) {
+            const timeout   = dpCondForMode.thenTimeout   ?? 20;
+            const maxTrades = dpCondForMode.thenMaxTrades ?? 3;
+
+            // Initialise thenState for this strategy if needed
+            if (!eng.thenState[stratId]) {
+              eng.thenState[stratId] = {
+                phase: 'scanning_box1', lockedSymbol: null,
+                ticksWaited: 0, tradesThisRound: 0,
+              };
             }
-            continue;
+            const ts = eng.thenState[stratId];
+
+            if (ts.phase === 'scanning_box1') {
+              // ── Phase 1: scan all markets for Box 1 ──────────────────────
+              // Only evaluate other (non-DIGIT_PATTERN) conditions AND Box 1
+              const otherCondsPass = s.conditions
+                .filter(c => c.type !== 'DIGIT_PATTERN')
+                .every(c => evaluateCondition(c, digits, quotes));
+
+              const box1Pass = otherCondsPass && evaluateOneBox(dpCondForMode, 0, digits, quotes);
+
+              if (box1Pass) {
+                // Box 1 matched — lock and switch to phase 2
+                ts.phase = 'locked_box2';
+                ts.lockedSymbol = symbol;
+                ts.ticksWaited = 0;
+                ts.tradesThisRound = 0;
+                const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
+                set({ botStatusMsg: `⏳ THEN: Box 1 matched on ${mLabel} — waiting for Box 2` });
+              }
+              // Either way: no trade fires in phase 1
+              continue;
+
+            } else {
+              // ── Phase 2: locked_box2 — wait for Box 2 ────────────────────
+              ts.ticksWaited++;
+
+              // Check timeout
+              if (ts.ticksWaited > timeout) {
+                // Reset without firing
+                ts.phase = 'scanning_box1';
+                ts.lockedSymbol = null;
+                set({ botStatusMsg: `⌛ THEN: Box 2 timeout — rescanning Box 1` });
+                continue;
+              }
+
+              if (boxMode === 'THEN') {
+                // Only evaluate on the locked market
+                if (symbol !== ts.lockedSymbol) continue;
+
+                const box2Pass = evaluateOneBox(dpCondForMode, 1, digits, quotes);
+                if (!box2Pass) continue;
+
+                // Box 2 matched on locked market — fire trade, reset
+                ts.phase = 'scanning_box1';
+                ts.lockedSymbol = null;
+                // Fall through to the trade-firing code below
+
+              } else {
+                // THENALL — evaluate Box 2 on ALL markets, fire per market
+                const box2Pass = evaluateOneBox(dpCondForMode, 1, digits, quotes);
+                if (!box2Pass) continue;
+
+                // Fire trade on this market, increment counter
+                ts.tradesThisRound++;
+
+                if (ts.tradesThisRound >= maxTrades) {
+                  // Max trades reached — reset after this trade
+                  ts.phase = 'scanning_box1';
+                  ts.lockedSymbol = null;
+                }
+                // Fall through to trade-firing code below
+              }
+              // Shared: if we get here, a trade will fire
+              // (code continues below the regular evalStrategy block)
+            }
+
+          } else {
+            // ── Normal OR mode ─────────────────────────────────────────────
+            if (!evalStrategy(s, digits, quotes)) {
+              // Reset no_contra edge when pattern clears
+              if (dpCond && dpCond.patternRetrigger === 'no_contra') {
+                const rtKey = `${stratId}_${symbol}`;
+                if (eng.retrigger[rtKey]) eng.retrigger[rtKey].lastWasTrue = false;
+              }
+              continue;
+            }
           }
 
           // Trade pattern pipeline check
@@ -880,6 +1059,8 @@ export const useBotStore = create<BotStoreState>()(
           // ── TRIGGER FIRED ─────────────────────────────────────────────────
           get()._flashSignal(symbol);
 
+
+
           // Enforce 2 decimal places strictly on the stake
           const rawStake = Math.max(0.35, ss.currentStake);
           const tradeStake = Math.round(rawStake * 100) / 100;
@@ -889,10 +1070,27 @@ export const useBotStore = create<BotStoreState>()(
           let contractType = s.tradeType;
           let barrier      = needsBarrier(contractType) ? s.prediction : undefined;
 
+          // ── Adaptive Switch override ──────────────────────────────────────
+          const aSwitch = get().adaptiveSwitch;
+          if (aSwitch.enabled && aSwitch.steps.length > 0) {
+            const pos = eng.adaptivePos;
+            // Clamp stepIndex in case steps were removed while running
+            if (pos.stepIndex >= aSwitch.steps.length) {
+              pos.stepIndex = 0; pos.repCount = 0;
+            }
+            const curStep = aSwitch.steps[pos.stepIndex];
+            contractType = curStep.contractType;
+            barrier = needsBarrier(contractType) ? (s.prediction ?? 4) : undefined;
+            // Build live status string
+            const stepLabel = TRADE_OPTIONS.find(t => t.value === contractType)?.label || contractType;
+            const liveStatus = `${stepLabel} [Step ${pos.stepIndex + 1}, ${pos.repCount + 1}/${curStep.reps}]`;
+            set({ adaptiveLiveStatus: liveStatus });
+          }
+
           // Use custom contracts from the DIGIT_PATTERN condition (if any)
           // dpCond is already declared above for retrigger logic
           const dpCondCC = s.conditions.find(c => c.type === 'DIGIT_PATTERN');
-          if (dpCondCC?.useCustomContracts && dpCondCC.customContracts && dpCondCC.customContracts.length > 0) {
+          if (!aSwitch.enabled && dpCondCC?.useCustomContracts && dpCondCC.customContracts && dpCondCC.customContracts.length > 0) {
             const stepIndex = Math.min(ss.lossCount, dpCondCC.customContracts.length - 1);
             const box = dpCondCC.customContracts[stepIndex];
             if (box) {
@@ -1075,6 +1273,27 @@ export const useBotStore = create<BotStoreState>()(
         };
         set({ globalStats: newStats });
 
+        // ── Adaptive Switch position advancement ─────────────────────────────
+        const aSwState = get().adaptiveSwitch;
+        if (aSwState.enabled && aSwState.steps.length > 0) {
+          const pos = eng.adaptivePos;
+          if (pos.stepIndex >= aSwState.steps.length) { pos.stepIndex = 0; pos.repCount = 0; }
+          const curStepCfg = aSwState.steps[pos.stepIndex];
+          if (isWin) {
+            // On win: advance rep counter; if exhausted move to next step
+            pos.repCount++;
+            if (pos.repCount >= curStepCfg.reps) {
+              pos.repCount  = 0;
+              pos.stepIndex = (pos.stepIndex + 1) % aSwState.steps.length;
+            }
+          }
+          // On loss: stay at same step/rep so bot retries the same contract side
+          // Update live status for next trade
+          const nextStep  = aSwState.steps[pos.stepIndex] ?? aSwState.steps[0];
+          const nextLabel = TRADE_OPTIONS.find(t => t.value === nextStep.contractType)?.label || nextStep.contractType;
+          set({ adaptiveLiveStatus: `${nextLabel} [Step ${pos.stepIndex + 1}, ${pos.repCount + 1}/${nextStep.reps}]` });
+        }
+
         if (ss) {
           const prevStake = ss.currentStake;
           const prevLoss  = ss.lossCount;
@@ -1165,6 +1384,7 @@ export const useBotStore = create<BotStoreState>()(
         selectedMarkets: state.selectedMarkets,
         theme:           state.theme,
         crossMarketDelay: state.crossMarketDelay,
+        adaptiveSwitch:  state.adaptiveSwitch,
       }),
     },
   ),
@@ -1184,7 +1404,5 @@ if (typeof window !== 'undefined') {
     // Remove any previously registered copies (defensive for HMR edge cases)
     tradeWS.offEvent(onTradeWSEvent);
     tradeWS.onEvent(onTradeWSEvent);
-
-    console.log('[BotStore] tradeWS event listener registered (singleton).');
   }
 }
