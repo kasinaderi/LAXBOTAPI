@@ -511,8 +511,9 @@ function evalStrategy(s: Strategy, digits: number[], quotes: number[]): boolean 
 interface ThenState {
   phase: 'scanning_box1' | 'locked_box2';
   lockedSymbol: string | null; // THEN: market where Box1 was found
-  ticksWaited: number;         // ticks elapsed since phase switched to locked_box2
+  ticksWaited: number;         // ticks elapsed (real ticks, not per-market iterations)
   tradesThisRound: number;     // THENALL: trades fired this round
+  lastTickEpoch: number;       // epoch of last tick where we incremented ticksWaited
 }
 
 const eng = {
@@ -960,7 +961,7 @@ export const useBotStore = create<BotStoreState>()(
             if (!eng.thenState[stratId]) {
               eng.thenState[stratId] = {
                 phase: 'scanning_box1', lockedSymbol: null,
-                ticksWaited: 0, tradesThisRound: 0,
+                ticksWaited: 0, tradesThisRound: 0, lastTickEpoch: 0,
               };
             }
             const ts = eng.thenState[stratId];
@@ -980,6 +981,7 @@ export const useBotStore = create<BotStoreState>()(
                 ts.lockedSymbol = symbol;
                 ts.ticksWaited = 0;
                 ts.tradesThisRound = 0;
+                ts.lastTickEpoch = 0;
                 const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
                 set({ botStatusMsg: `⏳ THEN: Box 1 matched on ${mLabel} — waiting for Box 2` });
               }
@@ -987,47 +989,73 @@ export const useBotStore = create<BotStoreState>()(
               continue;
 
             } else {
-              // ── Phase 2: locked_box2 — wait for Box 2 ────────────────────
-              ts.ticksWaited++;
-
-              // Check timeout
-              if (ts.ticksWaited > timeout) {
-                // Reset without firing
-                ts.phase = 'scanning_box1';
-                ts.lockedSymbol = null;
-                set({ botStatusMsg: `⌛ THEN: Box 2 timeout — rescanning Box 1` });
-                continue;
-              }
+              // ── Phase 2: locked_box2 ──────────────────────────────────────
 
               if (boxMode === 'THEN') {
-                // Only evaluate on the locked market
+                // ── THEN: only operate on the locked market ─────────────────
+                // Skip all other markets entirely — no tick counting, no evaluation
                 if (symbol !== ts.lockedSymbol) continue;
 
-                const box2Pass = evaluateOneBox(dpCondForMode, 1, digits, quotes);
-                if (!box2Pass) continue;
+                // Count one real tick on the locked market only.
+                // Use the market's latest epoch to deduplicate in case the scan
+                // loop calls this symbol more than once in the same tick.
+                const thisEpoch = regime?.lastEpoch ?? now;
+                if (thisEpoch !== ts.lastTickEpoch) {
+                  ts.ticksWaited++;
+                  ts.lastTickEpoch = thisEpoch;
+                }
 
-                // Box 2 matched on locked market — fire trade, reset
+                // Check timeout on the locked market's ticks
+                if (ts.ticksWaited > timeout) {
+                  ts.phase = 'scanning_box1';
+                  ts.lockedSymbol = null;
+                  set({ botStatusMsg: `⌛ THEN timeout after ${timeout} ticks — rescanning Box 1` });
+                  continue;
+                }
+
+                // Evaluate Box 2 on the locked market
+                const box2Pass = evaluateOneBox(dpCondForMode, 1, digits, quotes);
+                if (!box2Pass) {
+                  const rem = timeout - ts.ticksWaited;
+                  set({ botStatusMsg: `⏳ THEN: waiting for Box 2 on ${ts.lockedSymbol} (${rem} ticks left)` });
+                  continue;
+                }
+
+                // ✅ Box 2 matched — fire trade, reset state
                 ts.phase = 'scanning_box1';
                 ts.lockedSymbol = null;
-                // Fall through to the trade-firing code below
+                // Fall through to trade-firing code below
 
               } else {
-                // THENALL — evaluate Box 2 on ALL markets, fire per market
+                // ── THENALL: watch ALL markets for Box 2 ────────────────────
+                // Increment the shared tick counter once per unique tick epoch
+                // across all markets (first market in the scan that sees a new epoch wins)
+                const thisEpoch = regime?.lastEpoch ?? now;
+                if (thisEpoch !== ts.lastTickEpoch) {
+                  ts.ticksWaited++;
+                  ts.lastTickEpoch = thisEpoch;
+                }
+
+                // Timeout check
+                if (ts.ticksWaited > timeout) {
+                  ts.phase = 'scanning_box1';
+                  ts.lockedSymbol = null;
+                  set({ botStatusMsg: `⌛ THENALL timeout after ${timeout} ticks — rescanning Box 1` });
+                  continue;
+                }
+
+                // Evaluate Box 2 on this market
                 const box2Pass = evaluateOneBox(dpCondForMode, 1, digits, quotes);
                 if (!box2Pass) continue;
 
-                // Fire trade on this market, increment counter
+                // ✅ Box 2 matched on this market — fire trade
                 ts.tradesThisRound++;
-
                 if (ts.tradesThisRound >= maxTrades) {
-                  // Max trades reached — reset after this trade
                   ts.phase = 'scanning_box1';
                   ts.lockedSymbol = null;
                 }
                 // Fall through to trade-firing code below
               }
-              // Shared: if we get here, a trade will fire
-              // (code continues below the regular evalStrategy block)
             }
 
           } else {
