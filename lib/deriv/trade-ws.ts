@@ -656,6 +656,10 @@ class TradeWS {
                 pendingTrade.entrySpot = poc.entry_spot.toString();
             }
 
+            if (poc.contract_id !== undefined && poc.contract_id !== null) {
+                pendingTrade.contractId = poc.contract_id;
+            }
+
             const isRiseFall = pendingTrade.contractType === 'CALL' || pendingTrade.contractType === 'PUT';
 
             // For Rise/Fall: NEVER use current_spot as exit fallback during open state.
@@ -819,6 +823,86 @@ class TradeWS {
             });
         }
         return requestId;
+    }
+
+    public executeBatchTrades(payloads: any[]): string[] {
+        if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.isAuthorized) {
+            return [];
+        }
+        if (this.tradePool.size + payloads.length > 25) {
+            return [];
+        }
+
+        const requestIds: string[] = [];
+        const buyReqs: any[] = [];
+        const now = Date.now();
+
+        payloads.forEach((payload, idx) => {
+            // Ensure unique requestIds within the same millisecond by appending index
+            const requestId = `${now}${idx}${Math.floor(Math.random() * 100).toString().padStart(2, '0')}`;
+            requestIds.push(requestId);
+
+            const buyReq: any = {
+                buy: 1,
+                price: Number(payload.stake),
+                parameters: {
+                    amount: Number(payload.stake),
+                    basis: 'stake',
+                    contract_type: payload.contract_type,
+                    currency: payload.currency || 'USD',
+                    duration: payload.duration || 1,
+                    duration_unit: payload.duration_unit || 't',
+                    underlying_symbol: payload.symbol || payload.underlying || payload.underlying_symbol,
+                },
+                subscribe: 1,
+                passthrough: { requestId },
+                req_id: Number(requestId)
+            };
+
+            if (payload.barrier !== undefined && payload.barrier !== null) {
+                buyReq.parameters.barrier = String(payload.barrier);
+            }
+            buyReqs.push(buyReq);
+        });
+
+        // Send all buy requests back-to-back immediately with no delay
+        buyReqs.forEach((buyReq) => {
+            this.socket?.send(JSON.stringify(buyReq));
+        });
+
+        // Add to logs and tradePool after sending is done to minimize latency
+        const store = this.getState ? this.getState() : null;
+        payloads.forEach((payload, idx) => {
+            const requestId = requestIds[idx];
+            const isRiseFall = payload.contract_type === 'CALL' || payload.contract_type === 'PUT';
+
+            const pendingTrade: any = {
+                requestId,
+                startTime: now,
+                proposalSentTime: now,
+                contractType: payload.contract_type,
+                params: payload
+            };
+            this.tradePool.set(requestId, pendingTrade);
+
+            if (store) {
+                store.addTradeLog({
+                    requestId,
+                    time: now,
+                    contract: payload.contract_type,
+                    result: '',
+                    symbol: payload.symbol,
+                    stake: payload.stake.toString(),
+                    profit: null,
+                    digit: (!isRiseFall && payload.barrier !== undefined && payload.barrier !== null) ? payload.barrier : '-',
+                    exit: '-',
+                    entrySpot: '-',
+                    currency: payload.currency || 'USD'
+                });
+            }
+        });
+
+        return requestIds;
     }
 
     public forgetProposalByStake(stake: number, contractType?: string) {

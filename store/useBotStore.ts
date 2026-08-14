@@ -64,13 +64,21 @@ export interface Strategy {
   noContradiction: boolean;
 }
 
+export interface SwitcherTradeConfig {
+  contractType: string; // e.g. 'DIGITOVER', 'DIGITUNDER', 'DIGITEVEN', 'DIGITODD', etc.
+  barrier: number;       // default prediction / barrier
+  count: number;         // count of trades to send
+}
+
 export interface AdaptiveSwitchStep {
-  contractType: string; // e.g. 'DIGITEVEN' | 'DIGITODD'
+  contractType?: string; // legacy fallback
   reps: number;         // how many trades to execute at this step
+  trades?: SwitcherTradeConfig[]; // new config for bulk / different contract types
 }
 
 export interface AdaptiveSwitch {
   enabled: boolean;
+  dualMode: boolean;  // Fire exactly 2 contracts per entry; martingale only on both-loss
   steps: AdaptiveSwitchStep[];
 }
 
@@ -519,7 +527,7 @@ interface ThenState {
 const eng = {
   strategyState: {} as Record<string, PerStrategyState>,
   cooldown:      {} as Record<string, number>,
-  activeTrades:  new Map<string, { stratId: string; symbol: string; stake: number; startTime: number }>(),
+  activeTrades:  new Map<string, { stratId: string; symbol: string; stake: number; startTime: number; roundId?: string }>(),
   activeVirtual: [] as any[],
   patternPos:    {} as Record<string, number>,
   retrigger:     {} as Record<string, { lastWasTrue: boolean; waitingForOpposite: boolean }>,
@@ -530,10 +538,108 @@ const eng = {
   adaptivePos: { stepIndex: 0, repCount: 0 },
   // THEN / THENALL state per strategy
   thenState: {} as Record<string, ThenState>,
+  // Round tracker for bulk / multi-contract execution rounds
+  roundState: {} as Record<string, {
+    totalCount: number;
+    finishedCount: number;
+    wonCount: number;
+    lostCount: number;
+    netProfit: number;
+    baseStake: number;
+    isVirtual: boolean;
+    symbol: string;
+    dualMode: boolean; // special split-martingale: only both-loss triggers martingale
+  }>,
 };
 
 // Single onTick subscription handle — registered once, lives forever
 let _onTickUnsub: (() => void) | null = null;
+
+function resolveRound(roundId: string, stratId: string, get: () => any, set: (state: any) => void) {
+  const rs = eng.roundState[roundId];
+  if (!rs) return;
+
+  const { wonCount, lostCount, netProfit, baseStake, isVirtual, symbol, dualMode } = rs;
+  const isRoundWin = netProfit >= 0;
+
+  // ── Dual-mode split result ────────────────────────────────────────────────
+  // In dual mode (2 contracts, same entry), only count as a loss when BOTH lose.
+  // If exactly one wins and one loses it's a push — no martingale, no win/loss stat.
+  const isDualPush = dualMode && wonCount > 0 && lostCount > 0;
+
+  // 1. Martingale update (only once per round!)
+  const ss = eng.strategyState['__global__'];
+  if (ss) {
+    if (isDualPush) {
+      // Push: return to base stake (net could be small +/-), count neither win nor loss.
+      ss.totalProfit += netProfit;
+      // Keep currentStake unchanged — do NOT reset and do NOT multiply.
+    } else if (isRoundWin) {
+      if (!isVirtual) {
+        ss.won++; ss.totalProfit += netProfit; ss.lossCount = 0;
+        ss.currentStake = Math.round(baseStake * 100) / 100;
+        get().strategies.forEach((strat: Strategy) => { eng.patternPos[strat.id] = 0; });
+      } else {
+        ss.won++; ss.totalProfit += netProfit;
+        get().strategies.forEach((strat: Strategy) => { eng.patternPos[strat.id] = 0; });
+      }
+    } else {
+      if (!isVirtual) {
+        ss.lost++; ss.totalProfit += netProfit; ss.lossCount++;
+        if (get().tradingMode === 'continuous') {
+          const rawNextStake = ss.currentStake * parseFloat(get().martingale || '2.1');
+          ss.currentStake = Math.round(Math.min(
+            rawNextStake,
+            baseStake * Math.pow(parseFloat(get().martingale || '2.1'), 10)
+          ) * 100) / 100;
+        }
+      } else {
+        ss.lost++; ss.totalProfit += netProfit;
+      }
+    }
+  }
+
+  // 2. Switcher position advancement (only once per round!)
+  const aSwState = get().adaptiveSwitch;
+  if (aSwState.enabled && aSwState.steps.length > 0) {
+    const pos = eng.adaptivePos;
+    // Clamp index (fix: compare number to number, not to boolean)
+    if (pos.stepIndex >= aSwState.steps.length) { pos.stepIndex = 0; pos.repCount = 0; }
+    const curStepCfg = aSwState.steps[pos.stepIndex];
+    if (curStepCfg) {
+      // Advance on a clean win (not a dual-push — push retries same step)
+      if (isRoundWin && !isDualPush) {
+        pos.repCount++;
+        if (pos.repCount >= curStepCfg.reps) {
+          pos.repCount  = 0;
+          pos.stepIndex = (pos.stepIndex + 1) % aSwState.steps.length;
+        }
+      }
+      // On loss or dual-push: retry same step/rep
+
+      const nextStep  = aSwState.steps[pos.stepIndex] ?? aSwState.steps[0];
+      const tradesList = nextStep.trades && nextStep.trades.length > 0 ? nextStep.trades : [{ contractType: nextStep.contractType || 'DIGITEVEN', count: 1 }];
+      const nextLabel = tradesList.map((t: any) => {
+        const lbl = TRADE_OPTIONS.find(o => o.value === t.contractType)?.label || t.contractType;
+        return t.count > 1 ? `${lbl} (x${t.count})` : lbl;
+      }).join(' + ');
+      const pushTag = isDualPush ? ' ⇌ PUSH' : '';
+      set({ adaptiveLiveStatus: `${nextLabel}${pushTag} [Step ${pos.stepIndex + 1}, ${pos.repCount + 1}/${nextStep.reps}]` });
+    }
+  }
+
+  // 3. Clear roundState
+  delete eng.roundState[roundId];
+
+  // If this was real mode, update the status message
+  if (!isVirtual) {
+    const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
+    const resultLabel = isDualPush ? '⇌ PUSH (1W+1L)' : isRoundWin ? '✓ WON' : '✗ LOST';
+    set({
+      botStatusMsg: `Round done on ${mLabel}. ${resultLabel} (${netProfit >= 0 ? '+' : ''}${netProfit.toFixed(2)} USD)`,
+    });
+  }
+}
 
 // Exported set of requestIds placed by the bot — lets the UI read from Deriv store directly (instant)
 export const botTradeIds = new Set<string>();
@@ -618,6 +724,7 @@ export const useBotStore = create<BotStoreState>()(
       crossMarketDelay: '1.5',
       adaptiveSwitch:  {
         enabled: false,
+        dualMode: false,
         steps: [
           { contractType: 'DIGITEVEN', reps: 2 },
           { contractType: 'DIGITODD',  reps: 2 },
@@ -676,6 +783,7 @@ export const useBotStore = create<BotStoreState>()(
         eng.waitingForOpposite = {};
         eng.adaptivePos   = { stepIndex: 0, repCount: 0 };
         eng.thenState     = {};
+        eng.roundState    = {};
         botTradeIds.clear();
         set({ adaptiveLiveStatus: '' });
 
@@ -784,12 +892,7 @@ export const useBotStore = create<BotStoreState>()(
         eng.activeVirtual = remaining;
 
         for (const rt of resolved) {
-          const { requestId: vtId, stratId, symbol: vtSym, stake: vtStake, isWin, exitDigit } = rt;
-          // Use the global state bucket (same key used throughout the engine)
-          const ss = eng.strategyState['__global__'];
-          // If engine hasn't started yet (no real trades fired), ss may be undefined — skip gracefully
-          if (!ss) continue;
-
+          const { requestId: vtId, stratId, symbol: vtSym, stake: vtStake, isWin, exitDigit, roundId } = rt;
           const resultProfit = isWin ? vtStake * 0.95 : -vtStake;
 
           // Update virtual log with exit digit and final result
@@ -799,29 +902,60 @@ export const useBotStore = create<BotStoreState>()(
             exitSpot: String(exitDigit),
           });
 
-          // ── Virtual-only stats (do NOT touch globalStats / real P/L) ────
-          // Virtual results deliberately do NOT affect martingale stake or lossCount.
-          // The real martingale ladder is strictly controlled by real trade outcomes only.
-          if (isWin) {
-            ss.won++; ss.totalProfit += resultProfit;
-            // Do NOT reset lossCount or currentStake — those belong to real martingale
-            // Reset pattern positions for all strategies on virtual win
-            get().strategies.forEach((strat: Strategy) => { eng.patternPos[strat.id] = 0; });
+          if (roundId && eng.roundState[roundId]) {
+            const rs = eng.roundState[roundId];
+            rs.finishedCount++;
+            rs.netProfit += resultProfit;
+            if (isWin) rs.wonCount++; else rs.lostCount++;
+
+            if (rs.finishedCount === rs.totalCount) {
+              resolveRound(roundId, stratId, get, set);
+            }
           } else {
-            ss.lost++; ss.totalProfit += resultProfit;
-            // Do NOT increment lossCount or double currentStake — virtual loss
-            // must not affect real trade martingale progression
+            // Legacy / fallback if no roundId
+            const ss = eng.strategyState['__global__'];
+            if (ss) {
+              if (isWin) {
+                ss.won++; ss.totalProfit += resultProfit;
+                get().strategies.forEach((strat: Strategy) => { eng.patternPos[strat.id] = 0; });
+              } else {
+                ss.lost++; ss.totalProfit += resultProfit;
+              }
+            }
           }
 
+          eng.cooldown[`${stratId}_${vtSym}`] = now;
+        }
 
-          // Virtual streak tracking → auto-switch to real
+        // ── Virtual streak tracking & stop-limit checks (once per round) ────────
+        // Run AFTER all contracts in each round settle so that dual-mode pushes
+        // (1 win + 1 loss in the same round) don't corrupt the streak counters.
+        const settledRoundIds = new Set<string>();
+        for (const rt of resolved) {
+          // A round is fully settled when resolveRound deleted it from eng.roundState
+          if (rt.roundId && !eng.roundState[rt.roundId]) {
+            settledRoundIds.add(rt.roundId);
+          }
+        }
+
+        for (const roundId of settledRoundIds) {
+          const roundContracts = resolved.filter((r: any) => r.roundId === roundId);
+          const roundWon  = roundContracts.filter((r: any) =>  r.isWin).length;
+          const roundLost = roundContracts.filter((r: any) => !r.isWin).length;
+          // Dual push (one win + one loss): treat as neutral — no streak change
+          const isDualRoundPush = roundContracts.length >= 2 && roundWon > 0 && roundLost > 0;
+
           const vsV = derivState.virtualSettings;
           let { vConsecWins, vConsecLosses, virtualWins, virtualLosses } = vsV;
-          if (isWin) { vConsecWins++; vConsecLosses = 0; virtualWins++; }
-          else        { vConsecWins = 0; vConsecLosses++; virtualLosses++; }
+
+          if (!isDualRoundPush) {
+            const roundIsWin = roundWon >= roundLost;
+            if (roundIsWin) { vConsecWins++; vConsecLosses = 0; virtualWins += roundWon; }
+            else            { vConsecWins = 0; vConsecLosses++; virtualLosses += roundLost; }
+          }
 
           let newVirtMode = vsV.isVirtualMode;
-          if (vsV.startVirtualToReal) {
+          if (!isDualRoundPush && vsV.startVirtualToReal) {
             const streak = vsV.vTriggerType === 'losses' ? vConsecLosses : vConsecWins;
             if (streak >= vsV.vThreshold) {
               newVirtMode = false;
@@ -831,25 +965,44 @@ export const useBotStore = create<BotStoreState>()(
           useDerivStore.getState().setVirtualSettings({
             isVirtualMode: newVirtMode, vConsecWins, vConsecLosses, virtualWins, virtualLosses,
           });
+        }
 
-          // Stop if limits hit
+        // Legacy (no roundId) streak tracking — one per unsettled contract
+        for (const rt of resolved) {
+          if (!rt.roundId) {
+            const vsV = derivState.virtualSettings;
+            let { vConsecWins, vConsecLosses, virtualWins, virtualLosses } = vsV;
+            if (rt.isWin) { vConsecWins++; vConsecLosses = 0; virtualWins++; }
+            else          { vConsecWins = 0; vConsecLosses++; virtualLosses++; }
+            let newVirtMode = vsV.isVirtualMode;
+            if (vsV.startVirtualToReal) {
+              const streak = vsV.vTriggerType === 'losses' ? vConsecLosses : vConsecWins;
+              if (streak >= vsV.vThreshold) {
+                newVirtMode = false;
+                set({ botStatusMsg: `Virtual threshold [${vsV.vThreshold}] hit! Switching to REAL.` });
+              }
+            }
+            useDerivStore.getState().setVirtualSettings({
+              isVirtualMode: newVirtMode, vConsecWins, vConsecLosses, virtualWins, virtualLosses,
+            });
+          }
+        }
+
+        // Stop-limit check — done once after all this tick's virtual settlements
+        if (resolved.length > 0) {
           const live = get().globalStats;
           const tpMode = state.targetProfitMode || 'profit';
           const slMode = state.stopLossMode || 'loss';
-
           if (tpMode === 'wins') {
             if (live.won >= parseInt(targetProfit)) { get().stopBot('Target wins reached!'); return; }
           } else {
             if (live.totalProfit >= parseFloat(targetProfit)) { get().stopBot('Target profit reached!'); return; }
           }
-
           if (slMode === 'losses') {
             if (live.lost >= parseInt(stopLoss)) { get().stopBot('Stop losses reached!'); return; }
           } else {
             if (live.totalProfit <= -parseFloat(stopLoss)) { get().stopBot('Stop loss reached!'); return; }
           }
-
-          eng.cooldown[`${stratId}_${vtSym}`] = now;
         }
 
         // ── Evaluate new triggers ─────────────────────────────────────────────
@@ -1095,113 +1248,190 @@ export const useBotStore = create<BotStoreState>()(
 
 
 
-          let contractType = s.tradeType;
-          let barrier      = needsBarrier(contractType) ? s.prediction : undefined;
+          const aSwitch = state.adaptiveSwitch;
+          let tradesToPlace: { contractType: string; barrier?: number; count: number }[] = [];
 
-          // ── Adaptive Switch override ──────────────────────────────────────
-          const aSwitch = get().adaptiveSwitch;
           if (aSwitch.enabled && aSwitch.steps.length > 0) {
             const pos = eng.adaptivePos;
-            // Clamp stepIndex in case steps were removed while running
             if (pos.stepIndex >= aSwitch.steps.length) {
               pos.stepIndex = 0; pos.repCount = 0;
             }
             const curStep = aSwitch.steps[pos.stepIndex];
-            contractType = curStep.contractType;
-            barrier = needsBarrier(contractType) ? (s.prediction ?? 4) : undefined;
-            // Build live status string
-            const stepLabel = TRADE_OPTIONS.find(t => t.value === contractType)?.label || contractType;
+            if (curStep.trades && curStep.trades.length > 0) {
+              tradesToPlace = curStep.trades.map((t: any) => ({
+                contractType: t.contractType,
+                barrier: needsBarrier(t.contractType) ? (t.barrier ?? s.prediction ?? 4) : undefined,
+                count: t.count || 1
+              }));
+            } else {
+              tradesToPlace = [{
+                contractType: curStep.contractType || 'DIGITEVEN',
+                barrier: needsBarrier(curStep.contractType || 'DIGITEVEN') ? (s.prediction ?? 4) : undefined,
+                count: 1
+              }];
+            }
+
+            const stepLabel = tradesToPlace.map(t => {
+              const lbl = TRADE_OPTIONS.find(o => o.value === t.contractType)?.label || t.contractType;
+              return t.count > 1 ? `${lbl} (x${t.count})` : lbl;
+            }).join(' + ');
             const liveStatus = `${stepLabel} [Step ${pos.stepIndex + 1}, ${pos.repCount + 1}/${curStep.reps}]`;
             set({ adaptiveLiveStatus: liveStatus });
+          } else {
+            tradesToPlace = [{
+              contractType: s.tradeType,
+              barrier: needsBarrier(s.tradeType) ? s.prediction : undefined,
+              count: 1
+            }];
           }
 
-          // Use custom contracts from the DIGIT_PATTERN condition (if any)
-          // dpCond is already declared above for retrigger logic
           const dpCondCC = s.conditions.find(c => c.type === 'DIGIT_PATTERN');
           if (!aSwitch.enabled && dpCondCC?.useCustomContracts && dpCondCC.customContracts && dpCondCC.customContracts.length > 0) {
             const stepIndex = Math.min(ss.lossCount, dpCondCC.customContracts.length - 1);
             const box = dpCondCC.customContracts[stepIndex];
             if (box) {
-              contractType = box.type;
-              barrier      = needsBarrier(contractType) ? box.barrier : undefined;
+              tradesToPlace = [{
+                contractType: box.type,
+                barrier: needsBarrier(box.type) ? box.barrier : undefined,
+                count: 1
+              }];
             }
+          }
+
+          // ── Dual-mode override: exactly 2 trades, count = 1 each ─────────────
+          const isDualMode = aSwitch.enabled && aSwitch.dualMode;
+          if (isDualMode) {
+            const slotA = tradesToPlace[0] ?? { contractType: 'DIGITEVEN', count: 1 };
+            const slotB = tradesToPlace[1] ?? slotA;
+            tradesToPlace = [
+              { contractType: slotA.contractType, barrier: slotA.barrier, count: 1 },
+              { contractType: slotB.contractType, barrier: slotB.barrier, count: 1 },
+            ];
           }
 
           if (s.noContradiction) {
-            eng.waitingForOpposite[ck] = { contractType, prediction: barrier ?? 0 };
+            const firstT = tradesToPlace[0] || { contractType: s.tradeType, barrier: s.prediction };
+            eng.waitingForOpposite[ck] = { contractType: firstT.contractType, prediction: firstT.barrier ?? 0 };
           }
 
-          const label        = TRADE_OPTIONS.find(t => t.value === contractType)?.label || contractType;
-          const mLabel       = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
-          const currency     = account?.currency || 'USD';
+          const mLabel   = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
+          const currency = account?.currency || 'USD';
+
+          // Flatten list of orders to send
+          const orders: { contractType: string; barrier?: number }[] = [];
+          for (const item of tradesToPlace) {
+            const cnt = Math.max(1, Math.min(20, item.count || 1));
+            for (let i = 0; i < cnt; i++) {
+              orders.push({ contractType: item.contractType, barrier: item.barrier });
+            }
+          }
+
+          const roundId = `round_${stratId}_${now}_${Math.floor(Math.random() * 9999)}`;
+          eng.roundState[roundId] = {
+            totalCount: orders.length,
+            finishedCount: 0,
+            wonCount: 0,
+            lostCount: 0,
+            netProfit: 0,
+            baseStake: baseStake,
+            isVirtual: isVirtual,
+            symbol: symbol,
+            dualMode: isDualMode,
+          };
 
           if (isVirtual) {
-            // ── VIRTUAL ───────────────────────────────────────────────────
-            const fakeId     = `VIRT_${now}_${si}_${Math.floor(Math.random() * 9999)}`;
-            const entryPrice = quotes[quotes.length - 1] || 0;
-            const entryDigit = digits[digits.length - 1] ?? 0;
+            orders.forEach((order, idx) => {
+              const fakeId = `VIRT_${now}_${si}_${idx}_${Math.floor(Math.random() * 9999)}`;
+              const entryPrice = quotes[quotes.length - 1] || 0;
+              const entryDigit = digits[digits.length - 1] ?? 0;
 
-            eng.activeVirtual.push({
-              requestId: fakeId, stratId, symbol,
-              stake: tradeStake, contractType, barrier,
-              entryPrice, duration: s.ticks, ticksCount: 0,
-              lastEpoch: regime.lastEpoch || 0,
-            });
-
-            get().addLog({
-              id: fakeId, time: now, symbol, strategyIndex: si,
-              contract: contractType, stake: tradeStake,
-              result: 'VIRTUAL', profit: 0,
-              entrySpot: String(entryDigit),   // show entry digit
-              exitSpot:  '-',
-              step: ss.lossCount + 1,
-            });
-
-            eng.cooldown[ck] = now;
-            set({
-              lastSignal:   `[VIRTUAL] Strategy ${si + 1} on ${mLabel} → ${label}`,
-              botStatusMsg: `[VIRTUAL] ${label} on ${mLabel}`,
-            });
-
-          } else {
-            // ── REAL ──────────────────────────────────────────────────────
-
-            // Customizable cross-market gap: prevent two different markets firing simultaneously
-            const delayMs = parseFloat(state.crossMarketDelay || '1.5') * 1000;
-            if (now - eng.lastTradeTime < delayMs) {
-              continue;
-            }
-
-            const entryDigit = digits[digits.length - 1] ?? 0;
-            const tradeParams = {
-              contract_type: contractType,
-              stake: tradeStake, symbol, currency,
-              duration: s.ticks, duration_unit: 't',
-              barrier: barrier !== undefined ? barrier : undefined,
-            };
-
-            const requestId = tradeWS.executeDirectTrade(tradeParams);
-
-            if (!requestId) {
-              continue;
-            } else {
-              eng.cooldown[ck] = now;
-              eng.lastTradeTime = now;
-              botTradeIds.add(requestId);
-              eng.activeTrades.set(requestId, { stratId, symbol, stake: tradeStake, startTime: now });
+              eng.activeVirtual.push({
+                requestId: fakeId, stratId, symbol,
+                stake: tradeStake, contractType: order.contractType, barrier: order.barrier,
+                entryPrice, duration: s.ticks, ticksCount: 0,
+                lastEpoch: regime.lastEpoch || 0,
+                roundId,
+              });
 
               get().addLog({
-                id: requestId, time: now, symbol, strategyIndex: si,
-                contract: contractType, stake: tradeStake,
-                result: 'SENT', profit: 0,
+                id: fakeId, time: now, symbol, strategyIndex: si,
+                contract: order.contractType, stake: tradeStake,
+                result: 'VIRTUAL', profit: 0,
                 entrySpot: String(entryDigit),
                 exitSpot:  '-',
                 step: ss.lossCount + 1,
               });
+            });
+
+            eng.cooldown[ck] = now;
+            const labels = tradesToPlace.map(t => {
+              const l = TRADE_OPTIONS.find(o => o.value === t.contractType)?.label || t.contractType;
+              return t.count > 1 ? `${l} (x${t.count})` : l;
+            }).join(' + ');
+            set({
+              lastSignal:   `[VIRTUAL] Strategy ${si + 1} on ${mLabel} → ${labels}`,
+              botStatusMsg: `[VIRTUAL] ${labels} on ${mLabel}`,
+            });
+
+          } else {
+            const delayMs = parseFloat(state.crossMarketDelay || '1.5') * 1000;
+            if (now - eng.lastTradeTime < delayMs) {
+              delete eng.roundState[roundId];
+              continue;
+            }
+
+            const entryDigit = digits[digits.length - 1] ?? 0;
+            let firstRequestSuccess = false;
+
+            const batchPayloads = orders.map(order => ({
+              contract_type: order.contractType,
+              stake: tradeStake,
+              symbol,
+              currency,
+              duration: s.ticks,
+              duration_unit: 't',
+              barrier: order.barrier !== undefined ? order.barrier : undefined,
+            }));
+
+            const requestIds = tradeWS.executeBatchTrades(batchPayloads);
+
+            requestIds.forEach((requestId, idx) => {
+              const order = orders[idx];
+              if (requestId) {
+                firstRequestSuccess = true;
+                botTradeIds.add(requestId);
+                eng.activeTrades.set(requestId, {
+                  stratId, symbol, stake: tradeStake, startTime: now, roundId
+                });
+
+                get().addLog({
+                  id: requestId, time: now, symbol, strategyIndex: si,
+                  contract: order.contractType, stake: tradeStake,
+                  result: 'SENT', profit: 0,
+                  entrySpot: String(entryDigit),
+                  exitSpot:  '-',
+                  step: ss.lossCount + 1,
+                });
+              } else {
+                const rs = eng.roundState[roundId];
+                if (rs) rs.finishedCount++;
+              }
+            });
+
+            if (firstRequestSuccess) {
+              eng.cooldown[ck] = now;
+              eng.lastTradeTime = now;
+              const labels = tradesToPlace.map(t => {
+                const l = TRADE_OPTIONS.find(o => o.value === t.contractType)?.label || t.contractType;
+                return t.count > 1 ? `${l} (x${t.count})` : l;
+              }).join(' + ');
               set({
-                lastSignal:   `Strategy ${si + 1} on ${mLabel} → ${label}`,
-                botStatusMsg: `✓ Sent: ${label} on ${mLabel} — waiting for result`,
+                lastSignal:   `Strategy ${si + 1} on ${mLabel} → ${labels}`,
+                botStatusMsg: `✓ Sent: ${labels} on ${mLabel} — waiting for result`,
               });
+            } else {
+              delete eng.roundState[roundId];
+              continue;
             }
           }
         }
@@ -1230,6 +1460,14 @@ export const useBotStore = create<BotStoreState>()(
             const ck = `${errTrade.stratId}_${errTrade.symbol}`;
             delete eng.cooldown[ck];
             eng.lastTradeTime = 0;
+
+            if (errTrade.roundId && eng.roundState[errTrade.roundId]) {
+              const rs = eng.roundState[errTrade.roundId];
+              rs.finishedCount++;
+              if (rs.finishedCount === rs.totalCount) {
+                resolveRound(errTrade.roundId, errTrade.stratId, get, set);
+              }
+            }
           }
           // Force tradeWS to reconnect immediately (resets backoff to 0ms) so re-auth happens ASAP
           if (typeof window !== 'undefined') tradeWS.forceReconnect();
@@ -1243,7 +1481,7 @@ export const useBotStore = create<BotStoreState>()(
         const trade = eng.activeTrades.get(requestId);
         if (!trade) return;
 
-        const { stratId, symbol, stake: tradeStake } = trade;
+        const { stratId, symbol, stake: tradeStake, roundId } = trade;
         // Global martingale state — one ladder shared by ALL strategies and markets
         const ss = eng.strategyState['__global__'];
         const state      = get();
@@ -1301,72 +1539,89 @@ export const useBotStore = create<BotStoreState>()(
         };
         set({ globalStats: newStats });
 
-        // ── Adaptive Switch position advancement ─────────────────────────────
-        const aSwState = get().adaptiveSwitch;
-        if (aSwState.enabled && aSwState.steps.length > 0) {
-          const pos = eng.adaptivePos;
-          if (pos.stepIndex >= aSwState.steps.length) { pos.stepIndex = 0; pos.repCount = 0; }
-          const curStepCfg = aSwState.steps[pos.stepIndex];
-          if (isWin) {
-            // On win: advance rep counter; if exhausted move to next step
-            pos.repCount++;
-            if (pos.repCount >= curStepCfg.reps) {
-              pos.repCount  = 0;
-              pos.stepIndex = (pos.stepIndex + 1) % aSwState.steps.length;
+        // Update roundState if it exists, otherwise use fallback legacy single-trade logic
+        // Capture round outcome BEFORE resolveRound deletes it (needed for streak tracking)
+        let roundFinalWon  = -1;  // -1 = not a round trade
+        let roundFinalLost = -1;
+        if (roundId && eng.roundState[roundId]) {
+          const rs = eng.roundState[roundId];
+          rs.finishedCount++;
+          rs.netProfit += resultProfit;
+          if (isWin) rs.wonCount++; else rs.lostCount++;
+
+          if (rs.finishedCount === rs.totalCount) {
+            // Capture before deletion
+            roundFinalWon  = rs.wonCount;
+            roundFinalLost = rs.lostCount;
+            resolveRound(roundId, stratId, get, set);
+          }
+        } else if (!roundId) {
+          // Fallback legacy resolution logic (runs if no roundId is present)
+          // ── Adaptive Switch position advancement ───────────────────────────
+          const aSwState = get().adaptiveSwitch;
+          if (aSwState.enabled && aSwState.steps.length > 0) {
+            const pos = eng.adaptivePos;
+            if (pos.stepIndex >= aSwState.steps.length) { pos.stepIndex = 0; pos.repCount = 0; }
+            const curStepCfg = aSwState.steps[pos.stepIndex];
+            if (isWin) {
+              pos.repCount++;
+              if (pos.repCount >= curStepCfg.reps) {
+                pos.repCount  = 0;
+                pos.stepIndex = (pos.stepIndex + 1) % aSwState.steps.length;
+              }
+            }
+            const nextStep  = aSwState.steps[pos.stepIndex] ?? aSwState.steps[0];
+            const nextLabel = TRADE_OPTIONS.find(t => t.value === nextStep.contractType)?.label || nextStep.contractType;
+            set({ adaptiveLiveStatus: `${nextLabel} [Step ${pos.stepIndex + 1}, ${pos.repCount + 1}/${nextStep.reps}]` });
+          }
+
+          if (ss) {
+            if (isWin) {
+              ss.won++; ss.totalProfit += resultProfit; ss.lossCount = 0;
+              ss.currentStake = Math.round(baseStake * 100) / 100;
+              state.strategies.forEach(strat => { eng.patternPos[strat.id] = 0; });
+            } else {
+              ss.lost++; ss.totalProfit += resultProfit; ss.lossCount++;
+              if (state.tradingMode === 'continuous') {
+                const rawNextStake = ss.currentStake * parseFloat(state.martingale || '2.1');
+                ss.currentStake = Math.round(Math.min(
+                  rawNextStake,
+                  baseStake * Math.pow(parseFloat(state.martingale || '2.1'), 10)
+                ) * 100) / 100;
+              }
             }
           }
-          // On loss: stay at same step/rep so bot retries the same contract side
-          // Update live status for next trade
-          const nextStep  = aSwState.steps[pos.stepIndex] ?? aSwState.steps[0];
-          const nextLabel = TRADE_OPTIONS.find(t => t.value === nextStep.contractType)?.label || nextStep.contractType;
-          set({ adaptiveLiveStatus: `${nextLabel} [Step ${pos.stepIndex + 1}, ${pos.repCount + 1}/${nextStep.reps}]` });
-        }
-
-        if (ss) {
-          const prevStake = ss.currentStake;
-          const prevLoss  = ss.lossCount;
-          if (isWin) {
-            ss.won++; ss.totalProfit += resultProfit; ss.lossCount = 0;
-            ss.currentStake = Math.round(baseStake * 100) / 100;
-            // Reset pattern position for ALL strategies on a global win
-            state.strategies.forEach(strat => { eng.patternPos[strat.id] = 0; });
-
-          } else {
-            ss.lost++; ss.totalProfit += resultProfit; ss.lossCount++;
-            if (state.tradingMode === 'continuous') {
-              const rawNextStake = ss.currentStake * parseFloat(state.martingale || '2.1');
-              ss.currentStake = Math.round(Math.min(
-                rawNextStake,
-                baseStake * Math.pow(parseFloat(state.martingale || '2.1'), 10)
-              ) * 100) / 100;
-            }
-
-          }
-        } else {
-
-          eng.strategyState['__global__'] = {
-            currentStake: baseStake, lossCount: 0, totalProfit: 0,
-            won: 0, lost: 0, lastTriggerMarket: '', cooldown: false,
-          };
         }
 
         // Real streak tracking → auto-switch to virtual
-        const vsState = derivState.virtualSettings;
-        let { rConsecWins, rConsecLosses, realWins, realLosses } = vsState;
-        if (isWin) { rConsecWins++; rConsecLosses = 0; realWins++; }
-        else        { rConsecWins = 0; rConsecLosses++; realLosses++; }
+        // Only runs when a round fully settles (roundFinalWon >= 0) or for
+        // legacy single-trade cases (no roundId). Dual pushes (1W+1L) skip
+        // streak updates so they don't corrupt rConsecWins/rConsecLosses.
+        const roundJustSettled = roundFinalWon >= 0; // true only when resolveRound just fired
+        const isRoundPush = roundJustSettled && roundFinalWon > 0 && roundFinalLost > 0;
+        const shouldUpdateStreak = !isRoundPush && (roundJustSettled || !roundId);
 
-        let newIsVirtual = vsState.isVirtualMode;
-        if (vsState.startRealToVirtual) {
-          const streak = vsState.rTriggerType === 'losses' ? rConsecLosses : rConsecWins;
-          if (streak >= vsState.rThreshold) {
-            newIsVirtual = true;
-            set({ botStatusMsg: `Real threshold [${vsState.rThreshold}] hit! Switching to VIRTUAL.` });
+        if (shouldUpdateStreak) {
+          const vsState = derivState.virtualSettings;
+          let { rConsecWins, rConsecLosses, realWins, realLosses } = vsState;
+
+          // Determine round outcome: for round trades use final tally, for single use isWin
+          const roundIsWin = roundJustSettled ? roundFinalWon > roundFinalLost : isWin;
+          if (roundIsWin) { rConsecWins++; rConsecLosses = 0; realWins++; }
+          else            { rConsecWins = 0; rConsecLosses++; realLosses++; }
+
+          let newIsVirtual = vsState.isVirtualMode;
+          if (vsState.startRealToVirtual) {
+            const streak = vsState.rTriggerType === 'losses' ? rConsecLosses : rConsecWins;
+            if (streak >= vsState.rThreshold) {
+              newIsVirtual = true;
+              set({ botStatusMsg: `Real threshold [${vsState.rThreshold}] hit! Switching to VIRTUAL.` });
+            }
           }
+          derivState.setVirtualSettings({
+            isVirtualMode: newIsVirtual, rConsecWins, rConsecLosses, realWins, realLosses,
+          });
         }
-        derivState.setVirtualSettings({
-          isVirtualMode: newIsVirtual, rConsecWins, rConsecLosses, realWins, realLosses,
-        });
 
         // Stop if limits hit
         const liveStats = get().globalStats;

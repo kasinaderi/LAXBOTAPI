@@ -903,7 +903,7 @@ function StrategyBlock({ strategy, index, onChange, onRemove, adaptiveSwitchEnab
           {!strategy.useTradePattern && (
             <>
               <span className="lp-then-lbl">FOR</span>
-              <input className="lp-num lp-sm" type="number" min={1} max={100} value={strategy.ticks}
+              <input className="lp-num lp-sm" type="number" min={0} max={100} value={strategy.ticks}
                 onChange={e => u({ ticks: +e.target.value })} />
               <span className="lp-unit">TICKS</span>
             </>
@@ -917,7 +917,7 @@ function StrategyBlock({ strategy, index, onChange, onRemove, adaptiveSwitchEnab
           <span className="lp-then-lbl" style={{ color: '#a78bfa' }}>SWITCHER ACTIVE</span>
           <span style={{ fontSize: 10, color: '#6366f1', fontWeight: 700, marginLeft: 4 }}>→ contract determined by SWITCHER</span>
           <span className="lp-then-lbl" style={{ marginLeft: 8 }}>FOR</span>
-          <input className="lp-num lp-sm" type="number" min={1} max={100} value={strategy.ticks}
+          <input className="lp-num lp-sm" type="number" min={0} max={100} value={strategy.ticks}
             onChange={e => u({ ticks: +e.target.value })} />
           <span className="lp-unit">TICKS</span>
         </div>
@@ -1689,90 +1689,321 @@ export default function LaxPrimePage() {
               </div>
             )}
 
-            {/* ── SWITCHER PANEL ─────────────────────────────────────────── */}
             {showSwitcherPanel && (
               <div className="lp-sw-panel">
-                <div className="lp-sw-hdr">
-                  <span className="lp-sw-title">⚡ SWITCHER</span>
-                  <span className={`lp-vp-badge ${adaptiveSwitch.enabled ? 'lp-vp-badge--virtual' : 'lp-vp-badge--real'}`}>
-                    {adaptiveSwitch.enabled ? '● ADAPTIVE ACTIVE' : '● INACTIVE'}
-                  </span>
-                  <button
-                    className={`lp-vp-force-btn ${adaptiveSwitch.enabled ? 'lp-vp-force-btn--toreal' : 'lp-vp-force-btn--tovirt'}`}
-                    onClick={() => setAdaptiveSwitch({ ...adaptiveSwitch, enabled: !adaptiveSwitch.enabled })}>
-                    {adaptiveSwitch.enabled ? 'Turn OFF' : 'Turn ON'}
-                  </button>
-                </div>
-
-                {/* Description */}
-                <p className="lp-sw-desc">
-                  Automatically switches contract type on each step. The sequence repeats after all steps complete.
-                  On <strong>loss</strong>: retries the same contract side. On <strong>win</strong>: advances to next rep.
-                </p>
-
-                {/* Live status when running */}
-                {adaptiveSwitch.enabled && isRunning && adaptiveLiveStatus && (
-                  <div className="lp-sw-live">
-                    <span className="lp-sw-live-dot" />
-                    <span className="lp-sw-live-label">LIVE:</span>
-                    <span className="lp-sw-live-val">{adaptiveLiveStatus}</span>
+                <div className="lp-sw-hdr" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span className="lp-sw-title" style={{ fontSize: '15px', fontWeight: 'bold' }}>⚡ SWITCHER (Adaptive Contracts)</span>
+                    <label className="lp-vp-sw">
+                      <input type="checkbox" checked={adaptiveSwitch.enabled}
+                        onChange={e => setAdaptiveSwitch({ ...adaptiveSwitch, enabled: e.target.checked })} />
+                      <span className="lp-vp-sw-track" />
+                    </label>
                   </div>
-                )}
-
-                {/* Adaptive Contracts / Sequence steps */}
-                <div className="lp-sw-steps-hdr">
-                  <span className="lp-sw-steps-title">ADAPTIVE CONTRACTS — Sequence Steps</span>
                   <button
                     className="lp-sw-add-step"
                     onClick={() => setAdaptiveSwitch({
                       ...adaptiveSwitch,
-                      steps: [...adaptiveSwitch.steps, { contractType: 'DIGITEVEN', reps: 1 }],
-                    })}>
+                      steps: [...adaptiveSwitch.steps, { contractType: 'DIGITEVEN', reps: 2 }],
+                    })}
+                  >
                     + Add Step
                   </button>
                 </div>
 
+                <div className="lp-sw-desc" style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)', marginTop: '4px', marginBottom: '10px' }}>
+                  Adaptive Switch mode overrides strategy trade types using a step-by-step cycle. On <strong>win</strong>, it advances reps or moves to the next step.
+                </div>
+
+                {/* Dual Mode Switcher Toggle */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  background: 'rgba(124, 58, 237, 0.06)',
+                  border: '1px solid rgba(124, 58, 237, 0.18)',
+                  gap: '12px',
+                  marginBottom: '12px'
+                }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#c4b5fd', letterSpacing: '0.5px' }}>⚡ DUAL CONTRACTS SYSTEM</span>
+                    <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.45)' }}>Fires exactly 2 contracts on the same tick. Martingale only acts on both-loss.</span>
+                  </div>
+                  <label className="lp-vp-sw" style={{ marginLeft: 'auto' }}>
+                    <input type="checkbox" checked={!!adaptiveSwitch.dualMode}
+                      onChange={e => setAdaptiveSwitch({ ...adaptiveSwitch, dualMode: e.target.checked })} />
+                    <span className="lp-vp-sw-track" style={{ background: adaptiveSwitch.dualMode ? '#7c3aed' : '' }} />
+                  </label>
+                </div>
+
+                {/* Steps List */}
                 <div className="lp-sw-steps">
-                  {adaptiveSwitch.steps.map((step, si) => (
-                    <div key={si} className="lp-sw-step">
-                      <span className="lp-sw-step-num">Step {si + 1}</span>
-                      <select
-                        className="lp-sel lp-sw-sel"
-                        value={step.contractType}
-                        onChange={e => {
-                          const next = [...adaptiveSwitch.steps];
-                          next[si] = { ...next[si], contractType: e.target.value };
-                          setAdaptiveSwitch({ ...adaptiveSwitch, steps: next });
-                        }}>
-                        {TRADE_OPTIONS.map(t => (
-                          <option key={t.value} value={t.value}>{t.label}</option>
-                        ))}
-                      </select>
-                      <span className="lp-sw-step-lbl">Reps</span>
-                      <input
-                        className="lp-num lp-sm"
-                        type="number" min={1} max={50}
-                        value={step.reps}
-                        onChange={e => {
-                          const next = [...adaptiveSwitch.steps];
-                          next[si] = { ...next[si], reps: Math.max(1, +e.target.value || 1) };
-                          setAdaptiveSwitch({ ...adaptiveSwitch, steps: next });
-                        }} />
-                      <button
-                        className="lp-sw-rm-step"
-                        disabled={adaptiveSwitch.steps.length <= 1}
-                        onClick={() => {
-                          const next = adaptiveSwitch.steps.filter((_, idx) => idx !== si);
-                          setAdaptiveSwitch({ ...adaptiveSwitch, steps: next });
-                        }}>- Remove</button>
-                    </div>
-                  ))}
+                  {adaptiveSwitch.steps.map((step, si) => {
+                    const stepTrades = step.trades && step.trades.length > 0
+                      ? step.trades
+                      : [{ contractType: step.contractType || 'DIGITEVEN', barrier: 4, count: 1 }];
+
+                    const updateStepTrades = (newTrades: typeof stepTrades) => {
+                      const next = [...adaptiveSwitch.steps];
+                      next[si] = { ...next[si], trades: newTrades };
+                      setAdaptiveSwitch({ ...adaptiveSwitch, steps: next });
+                    };
+
+                    return (
+                      <div key={si} className="lp-sw-step" style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px',
+                        padding: '12px',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: '8px',
+                        background: 'rgba(255,255,255,0.02)',
+                        marginBottom: '8px'
+                      }}>
+                        {/* Step Header */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
+                          <span style={{ fontSize: '12px', fontWeight: 'bold', color: adaptiveSwitch.dualMode ? '#c4b5fd' : '#22d3ee' }}>
+                            Step {si + 1}
+                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.5)' }}>Reps</span>
+                              <input
+                                className="lp-num"
+                                type="number" min={1} max={50}
+                                value={step.reps}
+                                style={{ width: '36px', height: '22px', fontSize: '11px', padding: '0 4px', textAlign: 'center' }}
+                                onChange={e => {
+                                  const next = [...adaptiveSwitch.steps];
+                                  next[si] = { ...next[si], reps: Math.max(1, +e.target.value || 1) };
+                                  setAdaptiveSwitch({ ...adaptiveSwitch, steps: next });
+                                }}
+                              />
+                            </div>
+                            <button
+                              onClick={() => {
+                                const next = adaptiveSwitch.steps.filter((_, idx) => idx !== si);
+                                setAdaptiveSwitch({ ...adaptiveSwitch, steps: next });
+                              }}
+                              disabled={adaptiveSwitch.steps.length <= 1}
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: 'rgba(239, 68, 68, 0.7)',
+                                fontSize: '11px',
+                                fontWeight: 'bold',
+                                cursor: 'pointer',
+                                opacity: adaptiveSwitch.steps.length <= 1 ? 0.4 : 1
+                              }}
+                            >
+                              ✕ Remove Step
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Step Trades Config */}
+                        {adaptiveSwitch.dualMode ? (
+                          /* DUAL CONTRACT SELECTORS */
+                          <div style={{ display: 'flex', gap: '10px', width: '100%' }}>
+                            {/* Contract A */}
+                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', fontWeight: 'bold' }}>CONTRACT A</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <select
+                                  className="lp-sel"
+                                  style={{ height: '24px', fontSize: '11px', padding: '0 4px', width: '100%' }}
+                                  value={stepTrades[0]?.contractType || 'DIGITEVEN'}
+                                  onChange={e => {
+                                    const nextT = [...stepTrades];
+                                    if (!nextT[0]) nextT[0] = { contractType: 'DIGITEVEN', barrier: 4, count: 1 };
+                                    nextT[0] = { ...nextT[0], contractType: e.target.value };
+                                    updateStepTrades(nextT);
+                                  }}
+                                >
+                                  {TRADE_OPTIONS.map(opt => (
+                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                  ))}
+                                </select>
+                                {needsBarrier(stepTrades[0]?.contractType || 'DIGITEVEN') && (
+                                  <input
+                                    className="lp-num"
+                                    type="number" min={0} max={9}
+                                    value={stepTrades[0]?.barrier ?? 4}
+                                    style={{ width: '28px', height: '24px', fontSize: '11px', padding: 0, textAlign: 'center' }}
+                                    onChange={e => {
+                                      const nextT = [...stepTrades];
+                                      if (!nextT[0]) nextT[0] = { contractType: 'DIGITEVEN', barrier: 4, count: 1 };
+                                      nextT[0] = { ...nextT[0], barrier: Math.min(9, Math.max(0, +e.target.value || 0)) };
+                                      updateStepTrades(nextT);
+                                    }}
+                                  />
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Contract B */}
+                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', fontWeight: 'bold' }}>CONTRACT B</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <select
+                                  className="lp-sel"
+                                  style={{ height: '24px', fontSize: '11px', padding: '0 4px', width: '100%' }}
+                                  value={stepTrades[1]?.contractType || 'DIGITODD'}
+                                  onChange={e => {
+                                    const nextT = [...stepTrades];
+                                    if (!nextT[0]) nextT[0] = { contractType: 'DIGITEVEN', barrier: 4, count: 1 };
+                                    if (!nextT[1]) nextT[1] = { contractType: 'DIGITODD', barrier: 4, count: 1 };
+                                    nextT[1] = { ...nextT[1], contractType: e.target.value };
+                                    updateStepTrades(nextT);
+                                  }}
+                                >
+                                  {TRADE_OPTIONS.map(opt => (
+                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                  ))}
+                                </select>
+                                {needsBarrier(stepTrades[1]?.contractType || 'DIGITODD') && (
+                                  <input
+                                    className="lp-num"
+                                    type="number" min={0} max={9}
+                                    value={stepTrades[1]?.barrier ?? 4}
+                                    style={{ width: '28px', height: '24px', fontSize: '11px', padding: 0, textAlign: 'center' }}
+                                    onChange={e => {
+                                      const nextT = [...stepTrades];
+                                      if (!nextT[0]) nextT[0] = { contractType: 'DIGITEVEN', barrier: 4, count: 1 };
+                                      if (!nextT[1]) nextT[1] = { contractType: 'DIGITODD', barrier: 4, count: 1 };
+                                      nextT[1] = { ...nextT[1], barrier: Math.min(9, Math.max(0, +e.target.value || 0)) };
+                                      updateStepTrades(nextT);
+                                    }}
+                                  />
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          /* STANDARD/BULK MULTIPLE CONTRACTS BUILDER */
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            {stepTrades.map((t, ti) => {
+                              const bNeedsBarrier = needsBarrier(t.contractType);
+                              return (
+                                <div key={ti} style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                  <select
+                                    className="lp-sel"
+                                    style={{ height: '24px', fontSize: '11px', padding: '0 4px', minWidth: '110px' }}
+                                    value={t.contractType}
+                                    onChange={e => {
+                                      const nextT = [...stepTrades];
+                                      nextT[ti] = { ...nextT[ti], contractType: e.target.value };
+                                      updateStepTrades(nextT);
+                                    }}
+                                  >
+                                    {TRADE_OPTIONS.map(opt => (
+                                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                    ))}
+                                  </select>
+
+                                  {bNeedsBarrier ? (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                                      <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)' }}>Bar</span>
+                                      <input
+                                        className="lp-num"
+                                        type="number" min={0} max={9}
+                                        value={t.barrier ?? 4}
+                                        style={{ width: '28px', height: '24px', fontSize: '11px', padding: 0, textAlign: 'center' }}
+                                        onChange={e => {
+                                          const nextT = [...stepTrades];
+                                          nextT[ti] = { ...nextT[ti], barrier: Math.min(9, Math.max(0, +e.target.value || 0)) };
+                                          updateStepTrades(nextT);
+                                        }}
+                                      />
+                                    </div>
+                                  ) : (
+                                    <div style={{ width: '48px' }} />
+                                  )}
+
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                                    <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)' }}>Bulk</span>
+                                    <input
+                                      className="lp-num"
+                                      type="number" min={1} max={20}
+                                      value={t.count}
+                                      style={{ width: '32px', height: '24px', fontSize: '11px', padding: 0, textAlign: 'center' }}
+                                      onChange={e => {
+                                        const nextT = [...stepTrades];
+                                        nextT[ti] = { ...nextT[ti], count: Math.max(1, Math.min(20, +e.target.value || 1)) };
+                                        updateStepTrades(nextT);
+                                      }}
+                                    />
+                                    <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)' }}>tx</span>
+                                  </div>
+
+                                  {stepTrades.length > 1 && (
+                                    <button
+                                      onClick={() => {
+                                        const nextT = stepTrades.filter((_, idx) => idx !== ti);
+                                        updateStepTrades(nextT);
+                                      }}
+                                      style={{
+                                        background: 'rgba(239, 68, 68, 0.1)',
+                                        color: '#f87171',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        width: '18px',
+                                        height: '18px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        fontSize: '11px',
+                                        cursor: 'pointer'
+                                      }}
+                                      title="Delete trade"
+                                    >
+                                      ✕
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
+
+                            <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: '2px' }}>
+                              <button
+                                onClick={() => {
+                                  updateStepTrades([...stepTrades, { contractType: 'DIGITEVEN', barrier: 4, count: 1 }]);
+                                }}
+                                style={{
+                                  background: 'rgba(99, 102, 241, 0.15)',
+                                  color: '#a5b4fc',
+                                  border: '1px dashed rgba(99, 102, 241, 0.3)',
+                                  borderRadius: '4px',
+                                  padding: '2px 8px',
+                                  fontSize: '9px',
+                                  fontWeight: 'bold',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                + Add Trade
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
 
                 {/* Preview sequence */}
-                <div className="lp-sw-preview">
+                <div className="lp-sw-preview" style={{ marginTop: '10px' }}>
                   {adaptiveSwitch.steps.map((step, si) => {
-                    const label = TRADE_OPTIONS.find(t => t.value === step.contractType)?.label || step.contractType;
+                    const stepTrades = step.trades && step.trades.length > 0
+                      ? step.trades
+                      : [{ contractType: step.contractType || 'DIGITEVEN', count: 1 }];
+
+                    const label = stepTrades.map(t => {
+                      const lbl = TRADE_OPTIONS.find(o => o.value === t.contractType)?.label || t.contractType;
+                      return t.count > 1 ? `${lbl} (x${t.count})` : lbl;
+                    }).join(' + ');
+
                     return (
                       <span key={si} className="lp-sw-preview-chip">
                         {label} ×{step.reps}
@@ -1781,6 +2012,15 @@ export default function LaxPrimePage() {
                     );
                   })}
                 </div>
+
+                {/* Live status when running */}
+                {adaptiveSwitch.enabled && isRunning && adaptiveLiveStatus && (
+                  <div className="lp-sw-live" style={{ marginTop: '10px' }}>
+                    <span className="lp-sw-live-dot" />
+                    <span className="lp-sw-live-label">LIVE:</span>
+                    <span className="lp-sw-live-val">{adaptiveLiveStatus}</span>
+                  </div>
+                )}
               </div>
             )}
 
