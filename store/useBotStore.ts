@@ -571,9 +571,13 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
   const ss = eng.strategyState['__global__'];
   if (ss) {
     if (isDualPush) {
-      // Push: return to base stake (net could be small +/-), count neither win nor loss.
+      // Push (1W+1L): one contract offset the other — treat as a win for martingale.
+      // Reset stake to base and clear loss counter, same as a clean win.
       ss.totalProfit += netProfit;
-      // Keep currentStake unchanged — do NOT reset and do NOT multiply.
+      if (!isVirtual) {
+        ss.lossCount = 0;
+        ss.currentStake = Math.round(baseStake * 100) / 100;
+      }
     } else if (isRoundWin) {
       if (!isVirtual) {
         ss.won++; ss.totalProfit += netProfit; ss.lossCount = 0;
@@ -607,15 +611,21 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
     if (pos.stepIndex >= aSwState.steps.length) { pos.stepIndex = 0; pos.repCount = 0; }
     const curStepCfg = aSwState.steps[pos.stepIndex];
     if (curStepCfg) {
-      // Advance on a clean win (not a dual-push — push retries same step)
-      if (isRoundWin && !isDualPush) {
-        pos.repCount++;
-        if (pos.repCount >= curStepCfg.reps) {
+      // Advance on a clean win OR a dual-push (push resets to Step 1 like a win)
+      if (isRoundWin || isDualPush) {
+        if (isDualPush) {
+          // Push: reset switcher back to Step 1 (stake already reset to base above)
+          pos.stepIndex = 0;
           pos.repCount  = 0;
-          pos.stepIndex = (pos.stepIndex + 1) % aSwState.steps.length;
+        } else {
+          pos.repCount++;
+          if (pos.repCount >= curStepCfg.reps) {
+            pos.repCount  = 0;
+            pos.stepIndex = (pos.stepIndex + 1) % aSwState.steps.length;
+          }
         }
       }
-      // On loss or dual-push: retry same step/rep
+      // On loss: retry same step/rep
 
       const nextStep  = aSwState.steps[pos.stepIndex] ?? aSwState.steps[0];
       const tradesList = nextStep.trades && nextStep.trades.length > 0 ? nextStep.trades : [{ contractType: nextStep.contractType || 'DIGITEVEN', count: 1 }];
