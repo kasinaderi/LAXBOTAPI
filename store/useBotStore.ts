@@ -952,20 +952,28 @@ export const useBotStore = create<BotStoreState>()(
           const roundContracts = resolved.filter((r: any) => r.roundId === roundId);
           const roundWon  = roundContracts.filter((r: any) =>  r.isWin).length;
           const roundLost = roundContracts.filter((r: any) => !r.isWin).length;
-          // Dual push (one win + one loss): treat as neutral — no streak change
+          // Dual push (1W+1L): treat as a WIN — reset loss streak (mirrors real mode)
           const isDualRoundPush = roundContracts.length >= 2 && roundWon > 0 && roundLost > 0;
+          // Dual both-loss: counts as exactly 1 loss, not 2
+          const isDualBothLoss  = roundContracts.length >= 2 && roundLost === roundContracts.length;
 
           const vsV = derivState.virtualSettings;
           let { vConsecWins, vConsecLosses, virtualWins, virtualLosses } = vsV;
 
-          if (!isDualRoundPush) {
-            const roundIsWin = roundWon >= roundLost;
-            if (roundIsWin) { vConsecWins++; vConsecLosses = 0; virtualWins += roundWon; }
-            else            { vConsecWins = 0; vConsecLosses++; virtualLosses += roundLost; }
+          if (isDualRoundPush) {
+            // Push = win: reset loss streak, increment win streak
+            vConsecWins++; vConsecLosses = 0; virtualWins++;
+          } else if (isDualBothLoss) {
+            // Both lost = one loss (not two)
+            vConsecWins = 0; vConsecLosses++; virtualLosses++;
+          } else if (roundWon >= roundLost) {
+            vConsecWins++; vConsecLosses = 0; virtualWins += roundWon;
+          } else {
+            vConsecWins = 0; vConsecLosses++; virtualLosses += roundLost;
           }
 
           let newVirtMode = vsV.isVirtualMode;
-          if (!isDualRoundPush && vsV.startVirtualToReal) {
+          if (vsV.startVirtualToReal) {
             const streak = vsV.vTriggerType === 'losses' ? vConsecLosses : vConsecWins;
             if (streak >= vsV.vThreshold) {
               newVirtMode = false;
@@ -1633,21 +1641,27 @@ export const useBotStore = create<BotStoreState>()(
           });
         }
 
-        // Stop if limits hit
-        const liveStats = get().globalStats;
-        const tpMode = state.targetProfitMode || 'profit';
-        const slMode = state.stopLossMode || 'loss';
+        // Stop if limits hit — only check once the full round has settled,
+        // or for legacy single-contract trades (no roundId).
+        // Running this per-contract causes premature stops in dual mode when
+        // one winning leg tips the profit target before the second contract resolves.
+        const shouldCheckLimits = roundJustSettled || !roundId;
+        if (shouldCheckLimits) {
+          const liveStats = get().globalStats;
+          const tpMode = state.targetProfitMode || 'profit';
+          const slMode = state.stopLossMode || 'loss';
 
-        if (tpMode === 'wins') {
-          if (liveStats.won >= parseInt(state.targetProfit)) { get().stopBot('Target wins reached!'); }
-        } else {
-          if (liveStats.totalProfit >= parseFloat(state.targetProfit)) { get().stopBot('Target profit reached!'); }
-        }
+          if (tpMode === 'wins') {
+            if (liveStats.won >= parseInt(state.targetProfit)) { get().stopBot('Target wins reached!'); }
+          } else {
+            if (liveStats.totalProfit >= parseFloat(state.targetProfit)) { get().stopBot('Target profit reached!'); }
+          }
 
-        if (slMode === 'losses') {
-          if (liveStats.lost >= parseInt(state.stopLoss)) { get().stopBot('Stop losses reached!'); }
-        } else {
-          if (liveStats.totalProfit <= -parseFloat(state.stopLoss)) { get().stopBot('Stop loss reached!'); }
+          if (slMode === 'losses') {
+            if (liveStats.lost >= parseInt(state.stopLoss)) { get().stopBot('Stop losses reached!'); }
+          } else {
+            if (liveStats.totalProfit <= -parseFloat(state.stopLoss)) { get().stopBot('Stop loss reached!'); }
+          }
         }
 
         eng.activeTrades.delete(requestId);
