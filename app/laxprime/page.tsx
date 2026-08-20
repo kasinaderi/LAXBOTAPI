@@ -1873,6 +1873,44 @@ export default function LaxPrimePage() {
                             </div>
                           </div>
                         )}
+
+                        {/* Stage B Controls inside Smart Analysis when Double Virtual is active */}
+                        {virtualSettings.isDoubleVirtual && (
+                          <div style={{
+                            display: 'flex', flexDirection: 'column', gap: '6px',
+                            background: 'rgba(124, 58, 237, 0.08)', padding: '8px 10px',
+                            borderRadius: '6px', border: '1px solid rgba(124, 58, 237, 0.25)',
+                            marginTop: '4px'
+                          }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <span style={{ fontSize: '9px', fontWeight: 'bold', color: '#c4b5fd' }}>
+                                ⚡ STAGE B (Gate 2 & Execution Cycle for Smart Pattern):
+                              </span>
+                              <span style={{ fontSize: '9px', fontWeight: 'bold', color: virtualSettings.vDoubleStage === 'B' ? '#4ade80' : '#9ca3af' }}>
+                                {virtualSettings.vDoubleStage === 'B' ? `ACTIVE [Rep ${(virtualSettings.vStageBCompletedReps || 0) + 1}/${virtualSettings.vStageBReps || 1}]` : 'WAITING FOR STAGE A (Smart Pattern)'}
+                              </span>
+                            </div>
+                            <div className="lp-vp-sub" style={{ flexWrap: 'wrap', gap: '4px' }}>
+                              <span className="lp-vp-sub-lbl">Gate B:</span>
+                              <select className="lp-sel" value={virtualSettings.vTriggerTypeB || 'wins'}
+                                onChange={e => setVirtualSettings({ vTriggerTypeB: e.target.value as any })}>
+                                <option value="wins">Wins</option>
+                                <option value="losses">Losses</option>
+                              </select>
+                              <select className="lp-sel" value={virtualSettings.vTriggerModeB || 'consec'}
+                                onChange={e => setVirtualSettings({ vTriggerModeB: e.target.value as any })}>
+                                <option value="consec">Consecutive</option>
+                                <option value="total">Total</option>
+                              </select>
+                              <span className="lp-vp-sub-lbl">Target:</span>
+                              <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.vThresholdB ?? ''}
+                                onChange={e => setVirtualSettings({ vThresholdB: e.target.value === '' ? ('' as any) : (+e.target.value || 1) })} title="Virtual Target in Stage B" />
+                              <span className="lp-vp-sub-lbl">→ Real Reps:</span>
+                              <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.vStageBReps ?? ''}
+                                onChange={e => setVirtualSettings({ vStageBReps: e.target.value === '' ? ('' as any) : (+e.target.value || 1) })} title="Real trades to run in Stage B before recycling back to Stage A" />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

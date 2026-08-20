@@ -617,6 +617,62 @@ export function SettingsTabs() {
                                             </p>
                                         </div>
                                     )}
+
+                                    {/* Stage B Controls for Double Virtual inside Smart Analysis */}
+                                    {virtual.isDoubleVirtual && (
+                                        <div className="p-3 rounded-xl bg-dark/80 border border-indigo-500/30 space-y-2 mt-2">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-[10px] font-bold text-indigo-400 uppercase">⚡ STAGE B (Gate 2 & Execution Cycle)</span>
+                                                <span className="text-[9px] font-bold text-teal-400">
+                                                    {virtual.vDoubleStage === 'B' ? `ACTIVE [Rep ${(virtual.vStageBCompletedReps || 0) + 1}/${virtual.vStageBReps || 1}]` : 'WAITING FOR STAGE A (Smart Pattern)'}
+                                                </span>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <div className="space-y-1">
+                                                    <span className="text-[9px] font-bold text-gray-400">Gate B Trigger</span>
+                                                    <select
+                                                        value={virtual.vTriggerTypeB || 'wins'}
+                                                        onChange={(e) => settings.setVirtualSettings({ vTriggerTypeB: e.target.value as any })}
+                                                        className="w-full bg-dark border border-dark-hover rounded-lg px-2 py-1 text-xs font-bold text-indigo-300 outline-none"
+                                                    >
+                                                        <option value="wins">Wins</option>
+                                                        <option value="losses">Losses</option>
+                                                    </select>
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <span className="text-[9px] font-bold text-gray-400">Mode</span>
+                                                    <select
+                                                        value={virtual.vTriggerModeB || 'consec'}
+                                                        onChange={(e) => settings.setVirtualSettings({ vTriggerModeB: e.target.value as any })}
+                                                        className="w-full bg-dark border border-dark-hover rounded-lg px-2 py-1 text-xs font-bold text-indigo-300 outline-none"
+                                                    >
+                                                        <option value="consec">Consecutive</option>
+                                                        <option value="total">Total</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <div className="space-y-1">
+                                                    <span className="text-[9px] font-bold text-gray-400">Target Value</span>
+                                                    <input
+                                                        type="number" min={1}
+                                                        value={virtual.vThresholdB ?? ''}
+                                                        onChange={(e) => settings.setVirtualSettings({ vThresholdB: e.target.value === '' ? ('' as any) : Math.max(1, parseInt(e.target.value) || 1) })}
+                                                        className="w-full bg-dark border border-dark-hover rounded-lg px-3 py-1.5 text-xs font-bold text-purple-300 outline-none"
+                                                    />
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <span className="text-[9px] font-bold text-gray-400">Real Reps</span>
+                                                    <input
+                                                        type="number" min={1}
+                                                        value={virtual.vStageBReps ?? ''}
+                                                        onChange={(e) => settings.setVirtualSettings({ vStageBReps: e.target.value === '' ? ('' as any) : Math.max(1, parseInt(e.target.value) || 1) })}
+                                                        className="w-full bg-dark border border-dark-hover rounded-lg px-3 py-1.5 text-xs font-bold text-purple-300 outline-none"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
