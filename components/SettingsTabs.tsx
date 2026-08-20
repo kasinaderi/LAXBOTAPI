@@ -325,9 +325,19 @@ export function SettingsTabs() {
 
                             {virtual.startVirtualToReal && (
                                 <div className="space-y-4 pt-2 animate-in zoom-in-95 duration-300">
+                                    <div className="flex items-center justify-between p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
+                                        <div className="space-y-0.5">
+                                            <span className="text-xs font-bold text-indigo-300">⚡ Double Virtual Mode (2-Stage Cascade)</span>
+                                            <p className="text-[9px] text-gray-400">Stage A gate → Stage B virtual/real cycle</p>
+                                        </div>
+                                        <Toggle
+                                            enabled={!!virtual.isDoubleVirtual}
+                                            onChange={(val) => settings.setVirtualSettings({ isDoubleVirtual: val, vDoubleStage: 'A', vStageBCompletedReps: 0 })}
+                                        />
+                                    </div>
                                     <div className="grid grid-cols-2 gap-2">
                                         <div className="space-y-1">
-                                            <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest pl-1">Threshold</span>
+                                            <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest pl-1">{virtual.isDoubleVirtual ? 'Stage A Thresh' : 'Threshold'}</span>
                                             <input
                                                 type="number"
                                                 value={virtual.vThreshold}
@@ -347,6 +357,55 @@ export function SettingsTabs() {
                                             </select>
                                         </div>
                                     </div>
+                                    {virtual.isDoubleVirtual && (
+                                        <div className="p-3 rounded-xl bg-dark/60 border border-indigo-500/20 space-y-2">
+                                            <span className="text-[10px] font-bold text-indigo-400 uppercase">Stage B Gate Settings</span>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <div className="space-y-1">
+                                                    <span className="text-[9px] font-bold text-gray-400">Trigger</span>
+                                                    <select
+                                                        value={virtual.vTriggerTypeB || 'wins'}
+                                                        onChange={(e) => settings.setVirtualSettings({ vTriggerTypeB: e.target.value as any })}
+                                                        className="w-full bg-dark border border-dark-hover rounded-lg px-2 py-1 text-xs font-bold text-indigo-300 outline-none"
+                                                    >
+                                                        <option value="wins">Wins</option>
+                                                        <option value="losses">Losses</option>
+                                                    </select>
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <span className="text-[9px] font-bold text-gray-400">Mode</span>
+                                                    <select
+                                                        value={virtual.vTriggerModeB || 'consec'}
+                                                        onChange={(e) => settings.setVirtualSettings({ vTriggerModeB: e.target.value as any })}
+                                                        className="w-full bg-dark border border-dark-hover rounded-lg px-2 py-1 text-xs font-bold text-indigo-300 outline-none"
+                                                    >
+                                                        <option value="consec">Consecutive</option>
+                                                        <option value="total">Total</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <div className="space-y-1">
+                                                    <span className="text-[9px] font-bold text-gray-400">Target Value</span>
+                                                    <input
+                                                        type="number" min={1}
+                                                        value={virtual.vThresholdB || 1}
+                                                        onChange={(e) => settings.setVirtualSettings({ vThresholdB: Math.max(1, parseInt(e.target.value) || 1) })}
+                                                        className="w-full bg-dark border border-dark-hover rounded-lg px-3 py-1.5 text-xs font-bold text-purple-300 outline-none"
+                                                    />
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <span className="text-[9px] font-bold text-gray-400">Real Reps</span>
+                                                    <input
+                                                        type="number" min={1}
+                                                        value={virtual.vStageBReps || 1}
+                                                        onChange={(e) => settings.setVirtualSettings({ vStageBReps: Math.max(1, parseInt(e.target.value) || 1) })}
+                                                        className="w-full bg-dark border border-dark-hover rounded-lg px-3 py-1.5 text-xs font-bold text-purple-300 outline-none"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
                                     <div className="grid grid-cols-2 gap-2">
                                         <button
                                             onClick={() => settings.setVirtualSettings({ vTriggerType: 'wins' })}

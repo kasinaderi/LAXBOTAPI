@@ -968,10 +968,14 @@ function VirtualSection() {
         <Tog enabled={v.startVirtualToReal} onChange={val => setVirtualSettings({ startVirtualToReal: val })} />
       </Row>
       {v.startVirtualToReal && (
-        <div className="bg-white/3 border border-white/8 rounded-lg p-2 mb-2">
-          <div className="grid grid-cols-2 gap-2 mb-2">
+        <div className="bg-white/3 border border-white/8 rounded-lg p-2 mb-2 space-y-2">
+          <div className="flex items-center justify-between bg-purple-500/10 border border-purple-500/20 p-1.5 rounded">
+            <span className="text-[9px] font-bold text-purple-300">⚡ Double Virtual</span>
+            <Tog enabled={!!v.isDoubleVirtual} onChange={val => setVirtualSettings({ isDoubleVirtual: val, vDoubleStage: 'A', vStageBCompletedReps: 0 })} />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
             <div>
-              <div className="text-[8px] text-gray-500 uppercase mb-1">Threshold</div>
+              <div className="text-[8px] text-gray-500 uppercase mb-1">{v.isDoubleVirtual ? 'Stage A Thresh' : 'Threshold'}</div>
               <input type="number" value={v.vThreshold} onChange={e => setVirtualSettings({ vThreshold: parseInt(e.target.value) || 0 })}
                 className="w-full bg-black/30 border border-white/10 rounded px-1.5 py-1 text-[10px] font-bold text-indigo-400 outline-none text-center" />
             </div>
@@ -992,6 +996,23 @@ function VirtualSection() {
               </button>
             ))}
           </div>
+          {v.isDoubleVirtual && (
+            <div className="bg-black/30 border border-purple-500/20 p-1.5 rounded space-y-1">
+              <div className="text-[8px] font-bold text-purple-400">Stage B Settings</div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <div className="text-[8px] text-gray-500">Virt Wins B</div>
+                  <input type="number" min={1} value={v.vThresholdB || 1} onChange={e => setVirtualSettings({ vThresholdB: Math.max(1, parseInt(e.target.value) || 1) })}
+                    className="w-full bg-black/40 border border-white/10 rounded px-1 py-0.5 text-[9px] font-bold text-purple-300 text-center" />
+                </div>
+                <div>
+                  <div className="text-[8px] text-gray-500">Real Reps</div>
+                  <input type="number" min={1} value={v.vStageBReps || 1} onChange={e => setVirtualSettings({ vStageBReps: Math.max(1, parseInt(e.target.value) || 1) })}
+                    className="w-full bg-black/40 border border-white/10 rounded px-1 py-0.5 text-[9px] font-bold text-purple-300 text-center" />
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
       <Row label="Real → Virtual">

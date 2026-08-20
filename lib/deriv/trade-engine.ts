@@ -1157,22 +1157,69 @@ class TradeEngine {
                     if (isAlternating) shouldSwitch = true;
                 }
             }
-        } else {
-            // Legacy/Standard Threshold Logic
-            if (virtualSettings.startVirtualToReal) {
-                const threshold = virtualSettings.vThreshold;
-                const mode = virtualSettings.vTriggerMode;
-                const type = virtualSettings.vTriggerType;
-
-                if (type === 'wins') {
-                    const val = (mode === 'consec') ? vConsecWins : virtualWins;
-                    if (val >= threshold) shouldSwitch = true;
-                } else {
-                    const val = (mode === 'consec') ? vConsecLosses : virtualLosses;
+        if (virtualSettings.startVirtualToReal) {
+            if (!virtualSettings.isDoubleVirtual) {
+                if (!shouldSwitch) {
+                    const threshold = virtualSettings.vThreshold;
+                    const mode = virtualSettings.vTriggerMode;
+                    const type = virtualSettings.vTriggerType;
+                    const val = (type === 'wins')
+                        ? ((mode === 'consec') ? vConsecWins : virtualWins)
+                        : ((mode === 'consec') ? vConsecLosses : virtualLosses);
                     if (val >= threshold) shouldSwitch = true;
                 }
+            } else {
+                // ── Double Virtual Mode (2-Stage Cascade) ─────────────────────
+                const stage = virtualSettings.vDoubleStage || 'A';
+                if (stage === 'A') {
+                    let stageAPassed = shouldSwitch;
+                    if (!stageAPassed) {
+                        const thresholdA = virtualSettings.vThreshold;
+                        const modeA = virtualSettings.vTriggerMode;
+                        const typeA = virtualSettings.vTriggerType;
+                        const valA = (typeA === 'wins')
+                            ? ((modeA === 'consec') ? vConsecWins : virtualWins)
+                            : ((modeA === 'consec') ? vConsecLosses : virtualLosses);
+                        if (valA >= thresholdA) stageAPassed = true;
+                    }
+                    if (stageAPassed) {
+                        shouldSwitch = false; // Stay virtual for Stage B gate
+                        setVirtualSettings({
+                            vDoubleStage: 'B',
+                            vConsecWinsB: 0,
+                            vConsecLossesB: 0,
+                            vVirtualWinsB: 0,
+                            vVirtualLossesB: 0,
+                            vStageBCompletedReps: 0
+                        });
+                        console.log(`[TradeEngine] ⚡ Double Virt: Stage A Gate Passed! Advanced to Stage B Gate.`);
+                    } else {
+                        shouldSwitch = false;
+                    }
+                } else if (stage === 'B') {
+                    let { vConsecWinsB = 0, vConsecLossesB = 0, vVirtualWinsB = 0, vVirtualLossesB = 0 } = virtualSettings;
+                    if (isWin) {
+                        vConsecWinsB++; vConsecLossesB = 0; vVirtualWinsB++;
+                    } else {
+                        vConsecWinsB = 0; vConsecLossesB++; vVirtualLossesB++;
+                    }
+                    const targetTypeB = virtualSettings.vTriggerTypeB || 'wins';
+                    const targetModeB = virtualSettings.vTriggerModeB || 'consec';
+                    const valB = targetTypeB === 'wins'
+                        ? (targetModeB === 'consec' ? vConsecWinsB : vVirtualWinsB)
+                        : (targetModeB === 'consec' ? vConsecLossesB : vVirtualLossesB);
+                    const targetB = virtualSettings.vThresholdB || 1;
+
+                    setVirtualSettings({ vConsecWinsB, vConsecLossesB, vVirtualWinsB, vVirtualLossesB });
+                    if (valB >= targetB) {
+                        shouldSwitch = true;
+                        console.log(`[TradeEngine] ⚡ Double Virt: Stage B Gate Passed [${valB}/${targetB}]! Switching to REAL.`);
+                    } else {
+                        shouldSwitch = false;
+                    }
+                }
             }
-        }
+        } // end if (virtualSettings.startVirtualToReal)
 
         // Update state including transient matcher progress
         setVirtualSettings({ 
@@ -1227,6 +1274,7 @@ class TradeEngine {
                 // to allow seamless transition between Virtual and Real tracking.
             }
         }
+    } // end handleVirtualResult
 
 
     public handleTradeResult(isWin: boolean, actualProfit: number) {
@@ -1389,6 +1437,30 @@ class TradeEngine {
             }
             setVirtualSettings({ realWins, realLosses, rConsecWins, rConsecLosses });
             
+            if (virtualSettings.startVirtualToReal && virtualSettings.isDoubleVirtual && virtualSettings.vDoubleStage === 'B') {
+                const completedReps = (virtualSettings.vStageBCompletedReps || 0) + 1;
+                const targetReps = virtualSettings.vStageBReps || 1;
+                if (completedReps < targetReps) {
+                    setVirtualSettings({
+                        isVirtualMode: true,
+                        vStageBCompletedReps: completedReps,
+                        vConsecWinsB: 0,
+                    });
+                    console.log(`[TradeEngine] ⚡ Double Virt: Real Trade (${completedReps}/${targetReps}) finished. Returning to Virtual for Stage B.`);
+                } else {
+                    setVirtualSettings({
+                        isVirtualMode: true,
+                        vDoubleStage: 'B', // Perpetual Stage B
+                        vStageBCompletedReps: 0,
+                        vConsecWinsB: 0,
+                        vConsecLossesB: 0,
+                        vVirtualWinsB: 0,
+                        vVirtualLossesB: 0,
+                    });
+                    console.log(`[TradeEngine] ⚡ Double Virt: Stage B Reps (${completedReps}/${targetReps}) finished. Remaining in Stage B execution cycle.`);
+                }
+            }
+
             // Check Switch to Virtual
             if (virtualSettings.startRealToVirtual) {
                 const threshold = virtualSettings.rThreshold;

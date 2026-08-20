@@ -75,14 +75,23 @@ export function TradeLog() {
                             <tbody className="divide-y divide-dark">
                                 {tradeLogs.map((log, i) => {
                                     const isRiseFall = log.contract === 'CALL' || log.contract === 'PUT';
-                                    const isWon = log.result === 'WON' || log.result === 'RISE WIN' || log.result === 'FALL WIN';
-                                    const isLost = log.result === 'LOST' || log.result === 'RISE LOSS' || log.result === 'FALL LOSS';
+                                    const isWon = log.result === 'WON' || log.result === 'RISE WIN' || log.result === 'FALL WIN' || log.result === 'VIRT WON';
+                                    const isLost = log.result === 'LOST' || log.result === 'RISE LOSS' || log.result === 'FALL LOSS' || log.result === 'VIRT LOST';
                                     const isSettled = isWon || isLost;
                                     return (
                                     <tr key={i} className={`group ${log.isVirtual ? 'bg-indigo-500/5' : ''}`}>
                                         <td className="px-4 py-3 text-gray-400 font-mono">
                                             {new Date(log.time).toLocaleTimeString([], { hour12: false })}
-                                            {log.isVirtual && <Badge variant="neutral" className="ml-2 bg-indigo-500/20 text-indigo-400 border-indigo-500/30 text-[8px] py-0 px-1">VIRTUAL</Badge>}
+                                            {log.isVirtual && (
+                                                <span
+                                                    className="ml-2 text-[8px] py-0 px-1 rounded font-bold"
+                                                    style={{
+                                                        background: isWon ? 'rgba(22,163,74,0.25)' : isLost ? 'rgba(220,38,38,0.25)' : 'rgba(99,102,241,0.2)',
+                                                        color: isWon ? '#4ade80' : isLost ? '#f87171' : '#818cf8',
+                                                        border: `1px solid ${isWon ? '#4ade8055' : isLost ? '#f8717155' : '#818cf855'}`,
+                                                    }}
+                                                >VIRTUAL</span>
+                                            )}
                                         </td>
                                         <td className="px-4 py-3">
                                             <div className="flex flex-col">

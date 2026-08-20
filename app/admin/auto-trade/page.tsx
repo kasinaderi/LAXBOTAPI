@@ -2352,7 +2352,18 @@ export default function AutoTradePage() {
                                 </div>
 
                                 {virtualSettings.startVirtualToReal && (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                                    <div className="space-y-3 pt-2">
+                                        <div className="flex items-center justify-between p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
+                                            <div className="space-y-0.5">
+                                                <span className="text-xs font-bold text-indigo-300">⚡ Double Virtual Mode (2-Stage Cascade)</span>
+                                                <p className="text-[9px] text-gray-400">Stage A gate → Stage B virtual/real cycle</p>
+                                            </div>
+                                            <Toggle
+                                                enabled={!!virtualSettings.isDoubleVirtual}
+                                                onChange={(val: boolean) => setVirtualSettings({ isDoubleVirtual: val, vDoubleStage: 'A', vStageBCompletedReps: 0 })}
+                                            />
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         <div className="space-y-2">
                                             <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Switch to Real After</span>
                                             <div className="grid grid-cols-2 gap-2">
@@ -2414,6 +2425,7 @@ export default function AutoTradePage() {
                                             />
                                         </div>
                                     </div>
+                                     </div>
                                 )}
                             </div>
 

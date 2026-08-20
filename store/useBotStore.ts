@@ -205,17 +205,22 @@ export function needsBarrier(contractType: string): boolean {
 
 export function checkIsOpposite(contractType: string, prediction: number, digit: number, quote: number, prevQuote: number): boolean {
   switch (contractType) {
-    case 'DIGITEVEN':  return digit % 2 === 0;
-    case 'DIGITODD':   return digit % 2 !== 0;
-    case 'DIGITOVER':  return digit > prediction;
-    case 'DIGITUNDER': return digit <= prediction;
-    case 'DIGITMATCH': return digit === prediction;
-    case 'DIGITDIFF':  return digit !== prediction;
-    case 'CALL':       return quote > prevQuote;
-    case 'PUT':        return quote < prevQuote;
+    // Digit contracts: wait for the OTHER digit outcome before retriggering
+    case 'DIGITEVEN':  return digit % 2 !== 0;   // after EVEN → wait for ODD
+    case 'DIGITODD':   return digit % 2 === 0;   // after ODD  → wait for EVEN
+    case 'DIGITOVER':  return digit <= prediction; // after OVER → wait for UNDER
+    case 'DIGITUNDER': return digit > prediction;  // after UNDER → wait for OVER
+    case 'DIGITMATCH': return digit !== prediction; // after MATCH → wait for DIFF
+    case 'DIGITDIFF':  return digit === prediction; // after DIFF  → wait for MATCH
+    // Rise/Fall: wait for the OPPOSITE direction tick
+    case 'CALL':
+    case 'RUNHIGH':   return quote < prevQuote;  // after RISE → wait for a FALL tick
+    case 'PUT':
+    case 'RUNLOW':    return quote > prevQuote;  // after FALL → wait for a RISE tick
     default:           return false;
   }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PURE EVALUATORS (private)
@@ -642,7 +647,36 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
     }
   }
 
-  // 3. Clear roundState
+  // 3. Double Virtual Mode: check real trade completion in Stage B
+  const vsV = useDerivStore.getState().virtualSettings;
+  if (!isVirtual && vsV.startVirtualToReal && vsV.isDoubleVirtual && vsV.vDoubleStage === 'B') {
+    const completedReps = (vsV.vStageBCompletedReps || 0) + 1;
+    const targetReps = vsV.vStageBReps || 1;
+    if (completedReps < targetReps) {
+      useDerivStore.getState().setVirtualSettings({
+        isVirtualMode: true,
+        vStageBCompletedReps: completedReps,
+        vConsecWinsB: 0,
+        vConsecLossesB: 0,
+        vVirtualWinsB: 0,
+        vVirtualLossesB: 0,
+      });
+      set({ botStatusMsg: `⚡ Double Virt: Real Trade (${completedReps}/${targetReps}) finished. Returning to Virtual for Stage B Gate.` });
+    } else {
+      useDerivStore.getState().setVirtualSettings({
+        isVirtualMode: true,
+        vDoubleStage: 'B', // Perpetual Stage B!
+        vStageBCompletedReps: 0,
+        vConsecWinsB: 0,
+        vConsecLossesB: 0,
+        vVirtualWinsB: 0,
+        vVirtualLossesB: 0,
+      });
+      set({ botStatusMsg: `⚡ Double Virt: Stage B Reps Completed (${completedReps}/${targetReps})! Remaining in Stage B execution cycle.` });
+    }
+  }
+
+  // 4. Clear roundState
   delete eng.roundState[roundId];
 
   // If this was real mode, update the status message
@@ -801,6 +835,18 @@ export const useBotStore = create<BotStoreState>()(
         botTradeIds.clear();
         set({ adaptiveLiveStatus: '' });
 
+        // Reset Double Virtual stage to A on bot start
+        useDerivStore.getState().setVirtualSettings({
+          vDoubleStage: 'A',
+          vStageBCompletedReps: 0,
+          vConsecWinsB: 0,
+          vConsecLossesB: 0,
+          vVirtualWinsB: 0,
+          vVirtualLossesB: 0,
+          vSmartStage: 1,
+          vSmartCount: 0,
+        });
+
         // Proactively connect/ensure the trade socket is open
         if (typeof window !== 'undefined') {
           tradeWS.connect();
@@ -821,8 +867,6 @@ export const useBotStore = create<BotStoreState>()(
 
       stopBot: (reason?: string) => {
         set({ isRunning: false, botStatusMsg: reason ? `Stopped: ${reason}` : 'Bot stopped.' });
-        // NOTE: _onTickUnsub stays registered — _runScan's first guard checks isRunning.
-        // This means the listener is cheap to keep alive: it just returns immediately.
       },
 
       resetAll: () => {
@@ -834,6 +878,18 @@ export const useBotStore = create<BotStoreState>()(
         eng.patternPos    = {};
         eng.retrigger     = {};
         eng.waitingForOpposite = {};
+        eng.lastTradeTime = 0;
+        botTradeIds.clear();
+        useDerivStore.getState().setVirtualSettings({
+          vDoubleStage: 'A',
+          vStageBCompletedReps: 0,
+          vConsecWinsB: 0,
+          vConsecLossesB: 0,
+          vVirtualWinsB: 0,
+          vVirtualLossesB: 0,
+          vSmartStage: 1,
+          vSmartCount: 0,
+        });
         eng.lastTradeTime = 0;
         botTradeIds.clear();
         // Only clear session data — stake, targetProfit, stopLoss, martingale
@@ -996,13 +1052,11 @@ export const useBotStore = create<BotStoreState>()(
           const isDualBothLoss  = roundContracts.length >= 2 && roundLost === roundContracts.length;
 
           const vsV = derivState.virtualSettings;
-          let { vConsecWins, vConsecLosses, virtualWins, virtualLosses } = vsV;
+          let { vConsecWins, vConsecLosses, virtualWins, virtualLosses, vConsecWinsB = 0, vConsecLossesB = 0, vVirtualWinsB = 0, vVirtualLossesB = 0 } = vsV;
 
           if (isDualRoundPush) {
-            // Push = win: reset loss streak, increment win streak
             vConsecWins++; vConsecLosses = 0; virtualWins++;
           } else if (isDualBothLoss) {
-            // Both lost = one loss (not two)
             vConsecWins = 0; vConsecLosses++; virtualLosses++;
           } else if (roundWon >= roundLost) {
             vConsecWins++; vConsecLosses = 0; virtualWins += roundWon;
@@ -1010,16 +1064,108 @@ export const useBotStore = create<BotStoreState>()(
             vConsecWins = 0; vConsecLosses++; virtualLosses += roundLost;
           }
 
+          // Evaluate Smart Analysis Pattern
+          let smartMatched = false;
+          const smart = vsV.smartSettings;
+          const isRoundWinB = isDualRoundPush || roundWon >= roundLost;
+          const currentRes: 'W' | 'L' = isRoundWinB ? 'W' : 'L';
+          const newHistory: ('W' | 'L')[] = [...(vsV.vResultHistory || []), currentRes].slice(-20);
+
+          if (smart?.enabled) {
+            if (smart.type === 'sequence' && smart.sequence) {
+              const seq = smart.sequence;
+              const step1Req = seq.step1Type === 'Wins' ? 'W' : 'L';
+              const step2Req = seq.step2Type === 'Wins' ? 'W' : 'L';
+              let vSmartStage = vsV.vSmartStage || 1;
+              let vSmartCount = vsV.vSmartCount || 0;
+
+              if (vSmartStage === 1) {
+                let step1Met = false;
+                if (seq.step1Mode === 'consecutive') {
+                  const streak = step1Req === 'W' ? vConsecWins : vConsecLosses;
+                  if (streak >= seq.step1Qty) step1Met = true;
+                } else {
+                  if (currentRes === step1Req) vSmartCount++;
+                  if (vSmartCount >= seq.step1Qty) step1Met = true;
+                }
+                if (step1Met) { vSmartStage = 2; vSmartCount = 0; }
+              } else {
+                let step2Met = false; let step2Failed = false;
+                if (seq.step2Mode === 'consecutive') {
+                  if (currentRes === step2Req) {
+                    vSmartCount++;
+                    if (vSmartCount >= seq.step2Qty) step2Met = true;
+                  } else { step2Failed = true; }
+                } else {
+                  if (currentRes === step2Req) vSmartCount++;
+                  if (vSmartCount >= seq.step2Qty) step2Met = true;
+                }
+                if (step2Met) { smartMatched = true; vSmartStage = 1; vSmartCount = 0; }
+                else if (step2Failed) { vSmartStage = 1; vSmartCount = 0; }
+              }
+              useDerivStore.getState().setVirtualSettings({ vSmartStage, vSmartCount });
+            } else if (smart.type === 'alternating' && smart.alternating) {
+              const count = smart.alternating.count || 2;
+              const reqLength = count * 2;
+              if (newHistory.length >= reqLength) {
+                const pattern = newHistory.slice(-reqLength);
+                let isAlt = true;
+                for (let i = 0; i < pattern.length - 1; i++) {
+                  if (pattern[i] === pattern[i + 1]) { isAlt = false; break; }
+                }
+                if (isAlt) smartMatched = true;
+              }
+            }
+          }
+
           let newVirtMode = vsV.isVirtualMode;
+          let vDoubleStage = vsV.vDoubleStage || 'A';
+          let vStageBCompletedReps = vsV.vStageBCompletedReps || 0;
+
           if (vsV.startVirtualToReal) {
-            const streak = vsV.vTriggerType === 'losses' ? vConsecLosses : vConsecWins;
-            if (streak >= vsV.vThreshold) {
-              newVirtMode = false;
-              set({ botStatusMsg: `Virtual threshold [${vsV.vThreshold}] hit! Switching to REAL.` });
+            if (!vsV.isDoubleVirtual) {
+              const streak = vsV.vTriggerType === 'losses' ? vConsecLosses : vConsecWins;
+              const val = vsV.vTriggerMode === 'total' ? (vsV.vTriggerType === 'losses' ? virtualLosses : virtualWins) : streak;
+              if (smartMatched || val >= vsV.vThreshold) {
+                newVirtMode = false;
+                set({ botStatusMsg: `Virtual threshold [${vsV.vThreshold}] or Smart Pattern hit! Switching to REAL.` });
+              }
+            } else {
+              // ── Double Virtual Mode (2-Stage Cascade) ─────────────────────
+              if (vDoubleStage === 'A') {
+                const streak = vsV.vTriggerType === 'losses' ? vConsecLosses : vConsecWins;
+                const valA = vsV.vTriggerMode === 'total' ? (vsV.vTriggerType === 'losses' ? virtualLosses : virtualWins) : streak;
+                if (smartMatched || valA >= vsV.vThreshold) {
+                  vDoubleStage = 'B';
+                  vConsecWinsB = 0; vConsecLossesB = 0; vVirtualWinsB = 0; vVirtualLossesB = 0;
+                  vStageBCompletedReps = 0;
+                  newVirtMode = true; // Stay in virtual for Stage B gate
+                  set({ botStatusMsg: `⚡ Double Virt: Stage A Gate Passed [${valA}/${vsV.vThreshold}]! Advanced to Stage B.` });
+                }
+              } else if (vDoubleStage === 'B') {
+                if (isRoundWinB) {
+                  vConsecWinsB++; vConsecLossesB = 0; vVirtualWinsB++;
+                } else {
+                  vConsecWinsB = 0; vConsecLossesB++; vVirtualLossesB++;
+                }
+                const targetTypeB = vsV.vTriggerTypeB || 'wins';
+                const targetModeB = vsV.vTriggerModeB || 'consec';
+                const valB = targetTypeB === 'wins'
+                  ? (targetModeB === 'consec' ? vConsecWinsB : vVirtualWinsB)
+                  : (targetModeB === 'consec' ? vConsecLossesB : vVirtualLossesB);
+
+                const targetB = vsV.vThresholdB || 1;
+                if (smartMatched || valB >= targetB) {
+                  newVirtMode = false; // Trigger REAL trade for Stage B
+                  set({ botStatusMsg: `⚡ Double Virt: Stage B Gate Passed [${valB}/${targetB} ${targetTypeB.toUpperCase()} (${targetModeB})]! Switching to REAL.` });
+                }
+              }
             }
           }
           useDerivStore.getState().setVirtualSettings({
             isVirtualMode: newVirtMode, vConsecWins, vConsecLosses, virtualWins, virtualLosses,
+            vDoubleStage, vConsecWinsB, vConsecLossesB, vVirtualWinsB, vVirtualLossesB, vStageBCompletedReps,
+            vResultHistory: newHistory,
           });
         }
 

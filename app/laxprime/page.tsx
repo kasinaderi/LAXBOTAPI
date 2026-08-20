@@ -1261,7 +1261,11 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
                           S{log.strategyIndex + 1}
                         </span>
                       )}
-                      {isVirt && <span className="lp-virt-badge">VIRT</span>}
+                      {isVirt && (
+                        <span className="lp-virt-badge" style={{
+                          background: virtWon ? '#16a34a' : virtLost ? '#dc2626' : undefined
+                        }}>VIRT</span>
+                      )}
                       {log.step > 1 && <span style={{ fontSize: 8, color: '#f59e0b', fontWeight: 'bold' }}>Step {log.step}</span>}
                     </div>
 
@@ -1699,21 +1703,65 @@ export default function LaxPrimePage() {
                       </label>
                     </div>
                     {virtualSettings.startVirtualToReal && (
-                      <div className="lp-vp-sub">
-                        <span className="lp-vp-sub-lbl">Trigger on:</span>
-                        <select className="lp-sel" value={virtualSettings.vTriggerType}
-                          onChange={e => setVirtualSettings({ vTriggerType: e.target.value as any })}>
-                          <option value="wins">Wins</option>
-                          <option value="losses">Losses</option>
-                        </select>
-                        <select className="lp-sel" value={virtualSettings.vTriggerMode}
-                          onChange={e => setVirtualSettings({ vTriggerMode: e.target.value as any })}>
-                          <option value="consec">Consecutive</option>
-                          <option value="total">Total</option>
-                        </select>
-                        <span className="lp-vp-sub-lbl">Threshold:</span>
-                        <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.vThreshold}
-                          onChange={e => setVirtualSettings({ vThreshold: +e.target.value || 0 })} />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%', marginTop: '6px' }}>
+                        {/* Double Virtual Toggle */}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(124, 58, 237, 0.08)', padding: '4px 8px', borderRadius: '6px', border: '1px solid rgba(124, 58, 237, 0.2)' }}>
+                          <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#c4b5fd' }}>⚡ Double Virtual (2-Stage Cascade)</span>
+                          <label className="lp-vp-sw">
+                            <input type="checkbox" checked={!!virtualSettings.isDoubleVirtual}
+                              onChange={e => setVirtualSettings({ isDoubleVirtual: e.target.checked, vDoubleStage: 'A', vStageBCompletedReps: 0 })} />
+                            <span className="lp-vp-sw-track" style={{ background: virtualSettings.isDoubleVirtual ? '#7c3aed' : '' }} />
+                          </label>
+                        </div>
+
+                        {/* Stage A Controls */}
+                        <div className="lp-vp-sub">
+                          <span className="lp-vp-sub-lbl">{virtualSettings.isDoubleVirtual ? 'Stage A Gate:' : 'Trigger on:'}</span>
+                          <select className="lp-sel" value={virtualSettings.vTriggerType}
+                            onChange={e => setVirtualSettings({ vTriggerType: e.target.value as any })}>
+                            <option value="wins">Wins</option>
+                            <option value="losses">Losses</option>
+                          </select>
+                          <select className="lp-sel" value={virtualSettings.vTriggerMode}
+                            onChange={e => setVirtualSettings({ vTriggerMode: e.target.value as any })}>
+                            <option value="consec">Consecutive</option>
+                            <option value="total">Total</option>
+                          </select>
+                          <span className="lp-vp-sub-lbl">Threshold:</span>
+                          <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.vThreshold}
+                            onChange={e => setVirtualSettings({ vThreshold: +e.target.value || 0 })} />
+                        </div>
+
+                        {/* Stage B Controls (Double Virtual) */}
+                        {virtualSettings.isDoubleVirtual && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', background: 'rgba(124, 58, 237, 0.06)', padding: '6px 8px', borderRadius: '6px', border: '1px solid rgba(124, 58, 237, 0.2)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <span style={{ fontSize: '9px', fontWeight: 'bold', color: '#a78bfa' }}>STAGE B (Gate 2 & Execution Cycle):</span>
+                              <span style={{ fontSize: '9px', fontWeight: 'bold', color: virtualSettings.vDoubleStage === 'B' ? '#4ade80' : '#9ca3af' }}>
+                                {virtualSettings.vDoubleStage === 'B' ? `ACTIVE [Rep ${(virtualSettings.vStageBCompletedReps || 0) + 1}/${virtualSettings.vStageBReps || 1}]` : 'WAITING FOR STAGE A'}
+                              </span>
+                            </div>
+                            <div className="lp-vp-sub" style={{ flexWrap: 'wrap', gap: '4px' }}>
+                              <span className="lp-vp-sub-lbl">Gate B:</span>
+                              <select className="lp-sel" value={virtualSettings.vTriggerTypeB || 'wins'}
+                                onChange={e => setVirtualSettings({ vTriggerTypeB: e.target.value as any })}>
+                                <option value="wins">Wins</option>
+                                <option value="losses">Losses</option>
+                              </select>
+                              <select className="lp-sel" value={virtualSettings.vTriggerModeB || 'consec'}
+                                onChange={e => setVirtualSettings({ vTriggerModeB: e.target.value as any })}>
+                                <option value="consec">Consecutive</option>
+                                <option value="total">Total</option>
+                              </select>
+                              <span className="lp-vp-sub-lbl">Target:</span>
+                              <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.vThresholdB || 1}
+                                onChange={e => setVirtualSettings({ vThresholdB: Math.max(1, +e.target.value || 1) })} title="Virtual Target in Stage B" />
+                              <span className="lp-vp-sub-lbl">→ Real Reps:</span>
+                              <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.vStageBReps || 1}
+                                onChange={e => setVirtualSettings({ vStageBReps: Math.max(1, +e.target.value || 1) })} title="Real trades to run in Stage B before recycling back to Stage A" />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                     <div className="lp-vp-streak">
@@ -1722,6 +1770,113 @@ export default function LaxPrimePage() {
                       <span className="lp-vp-streak-sep">|</span>
                       <span style={{ color: '#86efac' }}>Streak {virtualSettings.vConsecWins}W / {virtualSettings.vConsecLosses}L</span>
                     </div>
+                  </div>
+
+                  {/* Smart Analysis Switch Card */}
+                  <div className="lp-vp-card" style={{ border: '1px solid rgba(99, 102, 241, 0.25)', background: 'rgba(99, 102, 241, 0.04)' }}>
+                    <div className="lp-vp-card-hdr">
+                      <div>
+                        <span className="lp-vp-card-lbl" style={{ color: '#818cf8' }}>🧠 Smart Analysis Switch</span>
+                        <p style={{ fontSize: '9px', color: '#9ca3af', margin: 0 }}>Switch to Real on strict result patterns</p>
+                      </div>
+                      <label className="lp-vp-sw">
+                        <input type="checkbox" checked={virtualSettings.smartSettings?.enabled || false}
+                          onChange={e => setVirtualSettings({
+                            smartSettings: {
+                              ...(virtualSettings.smartSettings || {
+                                enabled: false,
+                                type: 'sequence' as const,
+                                sequence: { step1Type: 'Wins', step1Qty: 2, step1Mode: 'consecutive', step2Type: 'Losses', step2Qty: 2, step2Mode: 'consecutive' },
+                                alternating: { count: 2 }
+                              }),
+                              enabled: e.target.checked
+                            }
+                          })} />
+                        <span className="lp-vp-sw-track" style={{ background: virtualSettings.smartSettings?.enabled ? '#6366f1' : '' }} />
+                      </label>
+                    </div>
+
+                    {virtualSettings.smartSettings?.enabled && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%', marginTop: '6px' }}>
+                        {/* Mode Selector */}
+                        <div style={{ display: 'flex', background: 'rgba(0,0,0,0.3)', borderRadius: '6px', padding: '2px', border: '1px solid rgba(255,255,255,0.08)' }}>
+                          <button
+                            onClick={() => setVirtualSettings({ smartSettings: { ...virtualSettings.smartSettings!, type: 'sequence' } })}
+                            style={{ flex: 1, padding: '3px 6px', borderRadius: '4px', fontSize: '9px', fontWeight: 'bold', background: virtualSettings.smartSettings?.type === 'sequence' ? '#6366f1' : 'transparent', color: virtualSettings.smartSettings?.type === 'sequence' ? '#fff' : '#9ca3af', border: 'none', cursor: 'pointer' }}>
+                            STRICT SEQUENCE
+                          </button>
+                          <button
+                            onClick={() => setVirtualSettings({ smartSettings: { ...virtualSettings.smartSettings!, type: 'alternating' } })}
+                            style={{ flex: 1, padding: '3px 6px', borderRadius: '4px', fontSize: '9px', fontWeight: 'bold', background: virtualSettings.smartSettings?.type === 'alternating' ? '#6366f1' : 'transparent', color: virtualSettings.smartSettings?.type === 'alternating' ? '#fff' : '#9ca3af', border: 'none', cursor: 'pointer' }}>
+                            ALTERNATING
+                          </button>
+                        </div>
+
+                        {virtualSettings.smartSettings?.type === 'sequence' ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                              {/* Stage 1 */}
+                              <div style={{ background: 'rgba(255,255,255,0.03)', padding: '6px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                                <span style={{ fontSize: '8px', fontWeight: 'bold', color: '#9ca3af', textTransform: 'uppercase' }}>Step 1 Gate</span>
+                                <div style={{ display: 'flex', gap: '4px', marginTop: '3px' }}>
+                                  <select className="lp-sel" style={{ fontSize: '9px', padding: '2px 4px' }}
+                                    value={virtualSettings.smartSettings?.sequence?.step1Type || 'Wins'}
+                                    onChange={e => setVirtualSettings({ smartSettings: { ...virtualSettings.smartSettings!, sequence: { ...virtualSettings.smartSettings!.sequence, step1Type: e.target.value as any } } })}>
+                                    <option value="Wins">Wins</option>
+                                    <option value="Losses">Losses</option>
+                                  </select>
+                                  <input className="lp-num lp-sm" type="number" min={1} style={{ width: '40px', fontSize: '9px' }}
+                                    value={virtualSettings.smartSettings?.sequence?.step1Qty || 2}
+                                    onChange={e => setVirtualSettings({ smartSettings: { ...virtualSettings.smartSettings!, sequence: { ...virtualSettings.smartSettings!.sequence, step1Qty: +e.target.value || 1 } } })} />
+                                </div>
+                                <div style={{ display: 'flex', gap: '2px', marginTop: '4px' }}>
+                                  <button onClick={() => setVirtualSettings({ smartSettings: { ...virtualSettings.smartSettings!, sequence: { ...virtualSettings.smartSettings!.sequence, step1Mode: 'consecutive' } } })}
+                                    style={{ flex: 1, fontSize: '8px', padding: '2px', borderRadius: '3px', border: 'none', background: (virtualSettings.smartSettings?.sequence?.step1Mode || 'consecutive') === 'consecutive' ? '#6366f1' : 'rgba(255,255,255,0.05)', color: '#fff', cursor: 'pointer' }}>Consec</button>
+                                  <button onClick={() => setVirtualSettings({ smartSettings: { ...virtualSettings.smartSettings!, sequence: { ...virtualSettings.smartSettings!.sequence, step1Mode: 'total' } } })}
+                                    style={{ flex: 1, fontSize: '8px', padding: '2px', borderRadius: '3px', border: 'none', background: (virtualSettings.smartSettings?.sequence?.step1Mode || 'consecutive') === 'total' ? '#6366f1' : 'rgba(255,255,255,0.05)', color: '#fff', cursor: 'pointer' }}>Total</button>
+                                </div>
+                              </div>
+                              {/* Stage 2 */}
+                              <div style={{ background: 'rgba(255,255,255,0.03)', padding: '6px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                                <span style={{ fontSize: '8px', fontWeight: 'bold', color: '#9ca3af', textTransform: 'uppercase' }}>Step 2 Gate</span>
+                                <div style={{ display: 'flex', gap: '4px', marginTop: '3px' }}>
+                                  <select className="lp-sel" style={{ fontSize: '9px', padding: '2px 4px' }}
+                                    value={virtualSettings.smartSettings?.sequence?.step2Type || 'Losses'}
+                                    onChange={e => setVirtualSettings({ smartSettings: { ...virtualSettings.smartSettings!, sequence: { ...virtualSettings.smartSettings!.sequence, step2Type: e.target.value as any } } })}>
+                                    <option value="Wins">Wins</option>
+                                    <option value="Losses">Losses</option>
+                                  </select>
+                                  <input className="lp-num lp-sm" type="number" min={1} style={{ width: '40px', fontSize: '9px' }}
+                                    value={virtualSettings.smartSettings?.sequence?.step2Qty || 2}
+                                    onChange={e => setVirtualSettings({ smartSettings: { ...virtualSettings.smartSettings!, sequence: { ...virtualSettings.smartSettings!.sequence, step2Qty: +e.target.value || 1 } } })} />
+                                </div>
+                                <div style={{ display: 'flex', gap: '2px', marginTop: '4px' }}>
+                                  <button onClick={() => setVirtualSettings({ smartSettings: { ...virtualSettings.smartSettings!, sequence: { ...virtualSettings.smartSettings!.sequence, step2Mode: 'consecutive' } } })}
+                                    style={{ flex: 1, fontSize: '8px', padding: '2px', borderRadius: '3px', border: 'none', background: (virtualSettings.smartSettings?.sequence?.step2Mode || 'consecutive') === 'consecutive' ? '#6366f1' : 'rgba(255,255,255,0.05)', color: '#fff', cursor: 'pointer' }}>Consec</button>
+                                  <button onClick={() => setVirtualSettings({ smartSettings: { ...virtualSettings.smartSettings!, sequence: { ...virtualSettings.smartSettings!.sequence, step2Mode: 'total' } } })}
+                                    style={{ flex: 1, fontSize: '8px', padding: '2px', borderRadius: '3px', border: 'none', background: (virtualSettings.smartSettings?.sequence?.step2Mode || 'consecutive') === 'total' ? '#6366f1' : 'rgba(255,255,255,0.05)', color: '#fff', cursor: 'pointer' }}>Total</button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ background: 'rgba(255,255,255,0.03)', padding: '6px 8px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                              <span style={{ fontSize: '8px', fontWeight: 'bold', color: '#9ca3af', textTransform: 'uppercase' }}>Required Alternating Patterns</span>
+                              <span style={{ fontSize: '9px', fontWeight: 'bold', color: '#818cf8' }}>{virtualSettings.smartSettings?.alternating?.count || 2} CYCLES</span>
+                            </div>
+                            <input type="range" min="1" max="5" value={virtualSettings.smartSettings?.alternating?.count || 2}
+                              onChange={e => setVirtualSettings({ smartSettings: { ...virtualSettings.smartSettings!, alternating: { count: +e.target.value } } })}
+                              style={{ width: '100%', accentColor: '#6366f1' }} />
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '8px', color: '#6b7280', fontWeight: 'bold', marginTop: '2px' }}>
+                              <span>W-L</span>
+                              <span>W-L-W-L</span>
+                              <span>W-L-W-L-W-L</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div className="lp-vp-card">
@@ -2251,6 +2406,18 @@ export default function LaxPrimePage() {
               <div className="lp-status-text">
                 {isRunning && <span className="lp-pulse-dot" />}
                 {botStatusMsg}
+                {virtualSettings.startVirtualToReal && virtualSettings.isDoubleVirtual && isRunning && (
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 3,
+                    marginLeft: 8, padding: '1px 6px', borderRadius: 4, fontSize: 9,
+                    fontWeight: 900, letterSpacing: '.5px',
+                    background: virtualSettings.vDoubleStage === 'B' ? 'rgba(74,222,128,0.18)' : 'rgba(129,140,248,0.18)',
+                    color: virtualSettings.vDoubleStage === 'B' ? '#4ade80' : '#818cf8',
+                    border: `1px solid ${virtualSettings.vDoubleStage === 'B' ? '#4ade8055' : '#818cf855'}`,
+                  }}>
+                    {virtualSettings.vDoubleStage === 'B' ? '⚡ GATE B EXEC' : '🔵 GATE A VIRT'}
+                  </span>
+                )}
               </div>
             </div>
             <div className="lp-status-box lp-signal-box">

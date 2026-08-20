@@ -68,7 +68,9 @@ export function VirtualSettings() {
                     </div>
 
                     <div className="space-y-1.5 px-4 py-3 bg-dark-secondary rounded-xl border border-dark shadow-inner">
-                        <span className="text-[10px] font-black text-indigo-400 uppercase tracking-tighter">Consecutive Wins Threshold</span>
+                        <span className="text-[10px] font-black text-indigo-400 uppercase tracking-tighter">
+                            {virtualSettings.isDoubleVirtual ? 'Stage A Gate Threshold' : 'Consecutive Wins Threshold'}
+                        </span>
                         <div className="flex items-center gap-2">
                             <Input
                                 type="number"
@@ -78,6 +80,73 @@ export function VirtualSettings() {
                             />
                         </div>
                     </div>
+
+                    {/* Double Virtual Mode Toggle & Config */}
+                    {virtualSettings.startVirtualToReal && (
+                        <div className="p-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 space-y-3">
+                            <div className="flex items-center justify-between">
+                                <div className="space-y-0.5">
+                                    <span className="text-xs font-bold text-indigo-300">⚡ Double Virtual System</span>
+                                    <p className="text-[9px] text-gray-400">2-Stage cascade: Stage A gate → Stage B virtual/real cycle</p>
+                                </div>
+                                <Toggle
+                                    enabled={!!virtualSettings.isDoubleVirtual}
+                                    onChange={(val: boolean) => setVirtualSettings({ isDoubleVirtual: val, vDoubleStage: 'A', vStageBCompletedReps: 0 })}
+                                />
+                            </div>
+
+                            {virtualSettings.isDoubleVirtual && (
+                                <div className="pt-2 border-t border-indigo-500/10 space-y-2">
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div className="space-y-1">
+                                            <span className="text-[9px] font-bold text-gray-400">Stage B Trigger</span>
+                                            <select
+                                                value={virtualSettings.vTriggerTypeB || 'wins'}
+                                                onChange={(e) => setVirtualSettings({ vTriggerTypeB: e.target.value as any })}
+                                                className="w-full bg-dark/60 border border-dark/60 h-8 rounded-lg px-2 text-xs font-bold text-indigo-300 outline-none"
+                                            >
+                                                <option value="wins">Wins</option>
+                                                <option value="losses">Losses</option>
+                                            </select>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <span className="text-[9px] font-bold text-gray-400">Stage B Mode</span>
+                                            <select
+                                                value={virtualSettings.vTriggerModeB || 'consec'}
+                                                onChange={(e) => setVirtualSettings({ vTriggerModeB: e.target.value as any })}
+                                                className="w-full bg-dark/60 border border-dark/60 h-8 rounded-lg px-2 text-xs font-bold text-indigo-300 outline-none"
+                                            >
+                                                <option value="consec">Consecutive</option>
+                                                <option value="total">Total</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div className="space-y-1">
+                                            <span className="text-[9px] font-bold text-gray-400">Target Value</span>
+                                            <Input
+                                                type="number"
+                                                min={1}
+                                                value={virtualSettings.vThresholdB?.toString() || '1'}
+                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVirtualSettings({ vThresholdB: Math.max(1, parseInt(e.target.value) || 1) })}
+                                                className="bg-dark/60 border-dark/60 h-8 text-xs font-bold"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <span className="text-[9px] font-bold text-gray-400">Real Reps</span>
+                                            <Input
+                                                type="number"
+                                                min={1}
+                                                value={virtualSettings.vStageBReps?.toString() || '1'}
+                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVirtualSettings({ vStageBReps: Math.max(1, parseInt(e.target.value) || 1) })}
+                                                className="bg-dark/60 border-dark/60 h-8 text-xs font-bold"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 <div className="relative">
