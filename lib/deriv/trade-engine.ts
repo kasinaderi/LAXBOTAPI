@@ -1157,7 +1157,8 @@ class TradeEngine {
                     if (isAlternating) shouldSwitch = true;
                 }
             }
-        if (virtualSettings.startVirtualToReal) {
+        const isVirtActive = virtualSettings.startVirtualToReal || virtualSettings.isDoubleVirtual || virtualSettings.smartSettings?.enabled;
+        if (isVirtActive) {
             if (!virtualSettings.isDoubleVirtual) {
                 if (!shouldSwitch) {
                     const threshold = virtualSettings.vThreshold;

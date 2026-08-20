@@ -2645,7 +2645,7 @@ export default function LaxPrimePage() {
               <div className="lp-status-text">
                 {isRunning && <span className="lp-pulse-dot" />}
                 {botStatusMsg}
-                {virtualSettings.startVirtualToReal && virtualSettings.isDoubleVirtual && isRunning && (
+                {(virtualSettings.startVirtualToReal || virtualSettings.isDoubleVirtual || virtualSettings.smartSettings?.enabled) && virtualSettings.isDoubleVirtual && isRunning && (
                   <span style={{
                     display: 'inline-flex', alignItems: 'center', gap: 3,
                     marginLeft: 8, padding: '1px 6px', borderRadius: 4, fontSize: 9,

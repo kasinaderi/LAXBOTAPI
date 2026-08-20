@@ -874,8 +874,11 @@ export const useBotStore = create<BotStoreState>()(
         botTradeIds.clear();
         set({ adaptiveLiveStatus: '' });
 
-        // Reset Double Virtual stage to A on bot start
+        // Reset Double Virtual stage to A on bot start and initialize virtual mode if any virtual feature is active
+        const vsCurrent = useDerivStore.getState().virtualSettings;
+        const isVirtActive = vsCurrent.startVirtualToReal || vsCurrent.isDoubleVirtual || vsCurrent.smartSettings?.enabled;
         useDerivStore.getState().setVirtualSettings({
+          isVirtualMode: isVirtActive ? true : vsCurrent.isVirtualMode,
           vDoubleStage: 'A',
           vStageBCompletedReps: 0,
           vConsecWinsB: 0,
@@ -1161,7 +1164,8 @@ export const useBotStore = create<BotStoreState>()(
           let vDoubleStage = vsV.vDoubleStage || 'A';
           let vStageBCompletedReps = vsV.vStageBCompletedReps || 0;
 
-          if (vsV.startVirtualToReal) {
+          const isVirtSystemActive = vsV.startVirtualToReal || vsV.isDoubleVirtual || vsV.smartSettings?.enabled;
+          if (isVirtSystemActive) {
             if (!vsV.isDoubleVirtual) {
               const streak = vsV.vTriggerType === 'losses' ? vConsecLosses : vConsecWins;
               const val = vsV.vTriggerMode === 'total' ? (vsV.vTriggerType === 'losses' ? virtualLosses : virtualWins) : streak;
@@ -1179,7 +1183,7 @@ export const useBotStore = create<BotStoreState>()(
                   vConsecWinsB = 0; vConsecLossesB = 0; vVirtualWinsB = 0; vVirtualLossesB = 0;
                   vStageBCompletedReps = 0;
                   newVirtMode = true; // Stay in virtual for Stage B gate
-                  set({ botStatusMsg: `⚡ Double Virt: Stage A Gate Passed [${valA}/${vsV.vThreshold}]! Advanced to Stage B.` });
+                  set({ botStatusMsg: `⚡ Double Virt: Stage A Gate Passed ${smartMatched ? '(Smart Pattern)' : `[${valA}/${vsV.vThreshold}]`}! Advanced to Stage B.` });
                 }
               } else if (vDoubleStage === 'B') {
                 if (isRoundWinB) {
@@ -1194,7 +1198,7 @@ export const useBotStore = create<BotStoreState>()(
                   : (targetModeB === 'consec' ? vConsecLossesB : vVirtualLossesB);
 
                 const targetB = vsV.vThresholdB || 1;
-                if (smartMatched || valB >= targetB) {
+                if (valB >= targetB) {
                   newVirtMode = false; // Trigger REAL trade for Stage B
                   set({ botStatusMsg: `⚡ Double Virt: Stage B Gate Passed [${valB}/${targetB} ${targetTypeB.toUpperCase()} (${targetModeB})]! Switching to REAL.` });
                 }
