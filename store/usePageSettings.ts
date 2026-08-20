@@ -127,8 +127,19 @@ export function usePageSettings(pageId: string): void {
         useDerivStore.setState(patch as any);
       }
     } else {
-      // First visit to this page — save current store state as the
-      // initial snapshot so future visits restore these values.
+      // First visit to this page in this browser — initialize with empty tradeLogs
+      // and stats so it never inherits leftover trade logs from previously visited pages.
+      useDerivStore.setState({
+        tradeLogs: [],
+        stats: {
+          wins: 0,
+          losses: 0,
+          winRate: 0,
+          totalProfit: 0,
+          maxStake: 0,
+          currentStep: 1,
+        },
+      } as any);
       persistSnapshot(pageId);
     }
 

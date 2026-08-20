@@ -33,7 +33,7 @@ const NAV_ITEMS = [
     { name: 'Dashboard', path: '/', icon: LayoutDashboard },
     { name: 'STATION LX', path: '/dtrader', icon: TrendingUp },
     { name: 'Live Ticks', path: '/live-ticks', icon: Activity },
-    { name: 'LAXPRIME', path: '/reversal-scanner', icon: Zap, highlight: true },
+    { name: 'LAXPRIME', path: '/laxprime', icon: Zap, highlight: true },
     { name: 'LAXSNIPER XV', path: '/laxsniper-xv', icon: Zap },
     { name: 'Auto Trade', path: '/admin/auto-trade', icon: Cpu, admin: true, highlight: true },
     { name: 'Bots', path: '/bots', icon: Settings },

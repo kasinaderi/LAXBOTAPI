@@ -492,13 +492,13 @@ class TradeWS {
             } else if (poc.entry_spot !== undefined && poc.entry_spot !== null) {
                 matchedTrade.entrySpot = poc.entry_spot.toString();
             }
+            // Detect if this is a full-spot display type (Rise/Fall or Only Ups/Downs)
+            const isFullSpotType = matchedTrade.contractType === 'CALL' ||
+                                   matchedTrade.contractType === 'PUT' ||
+                                   matchedTrade.contractType === 'RUNHIGH' ||
+                                   matchedTrade.contractType === 'RUNLOW';
 
-            // Detect Rise/Fall contract type
-            const isRiseFall = matchedTrade.contractType === 'CALL' || matchedTrade.contractType === 'PUT';
-
-            // For Rise/Fall: use the full exit spot price. For Digits: use the last digit.
-            // For Rise/Fall: use exit_tick_display_value or exit_spot ONLY when the contract is settled.
-            // NEVER use current_spot as an exit proxy — during the running phase current_spot == entry spot.
+            // For Rise/Fall and Only Ups/Downs: use the full exit spot price. For Digits: use the last digit.
             const extractExitDisplay = (poc: any, full: boolean): string => {
                 // Prefer explicit exit tick / exit spot from settled contract
                 const exitTick = poc.exit_tick_display_value ?? poc.exit_tick_display;
@@ -511,8 +511,6 @@ class TradeWS {
                     const s = exitSpot.toString().trim();
                     return full ? s : (s.charAt(s.length - 1) || '-');
                 }
-                // Do NOT fall back to current_spot for Rise/Fall — it equals entry during open state.
-                // For digit contracts the caller passes full=false so last digit still works.
                 if (!full) {
                     const cur = poc.current_spot;
                     if (cur !== undefined && cur !== null) {
@@ -523,24 +521,22 @@ class TradeWS {
                 return '-';
             };
 
-            const runningExit = extractExitDisplay(poc, isRiseFall);
+            const runningExit = extractExitDisplay(poc, isFullSpotType);
 
             const rawProfit = parseFloat(poc.profit);
-            // Use stored params stake as authoritative source — Deriv omits buy_price from stream updates
             const stake = parseFloat(matchedTrade.params?.stake) || parseFloat(poc.buy_price) || 0.35;
             const payout = parseFloat(poc.payout);
 
             const isFinalWin = poc.status === 'won';
             const isFinalLoss = poc.status === 'lost';
-            // is_expired fires the instant the exit tick arrives — same moment exit digit appears.
-            // Settle immediately here rather than waiting for the extra status='won'/'lost' round-trip.
             const isResolved = isFinalWin || isFinalLoss || poc.is_sold === 1 || poc.is_expired === 1;
 
-            // Build result label — for Rise/Fall show directional label
-            const buildResultLabel = (isWin: boolean, isRF: boolean, contractType?: string): string => {
-                if (!isRF) return isWin ? 'WON' : 'LOST';
+            const buildResultLabel = (isWin: boolean, isFullSpot: boolean, contractType?: string): string => {
+                if (!isFullSpot) return isWin ? 'WON' : 'LOST';
                 if (contractType === 'CALL') return isWin ? 'RISE WIN' : 'RISE LOSS';
                 if (contractType === 'PUT')  return isWin ? 'FALL WIN' : 'FALL LOSS';
+                if (contractType === 'RUNHIGH') return isWin ? 'ONLY UPS WIN' : 'ONLY UPS LOSS';
+                if (contractType === 'RUNLOW')  return isWin ? 'ONLY DOWNS WIN' : 'ONLY DOWNS LOSS';
                 return isWin ? 'WON' : 'LOST';
             };
 
@@ -554,8 +550,8 @@ class TradeWS {
                 if (isWin) finalProfit = (payout && stake) ? (payout - stake) : rawProfit;
                 else finalProfit = -stake;
 
-                const finalExit = extractExitDisplay(poc, isRiseFall);
-                const resultLabel = buildResultLabel(isWin, isRiseFall, matchedTrade.contractType);
+                const finalExit = extractExitDisplay(poc, isFullSpotType);
+                const resultLabel = buildResultLabel(isWin, isFullSpotType, matchedTrade.contractType);
 
                 // EMIT FINAL RESULT INSTANTLY (martingale / adaptive / compounding fire here)
                 this.emitEvent('TRADE_RESULT', {
@@ -582,14 +578,14 @@ class TradeWS {
                 store.updateTradeLog(matchedTrade.requestId, {
                     result: resultLabel,
                     profit: finalProfit,
-                    exit: isRiseFall ? derivExit : finalExit,
+                    exit: isFullSpotType ? derivExit : finalExit,
                     entrySpot: derivEntry
                 });
 
                 this.tradePool.delete(matchedTrade.requestId);
             } else {
                 // Mid-contract update for digit trades only
-                if (!isRiseFall) {
+                if (!isFullSpotType) {
                     store.updateTradeLog(matchedTrade.requestId, {
                         profit: isNaN(rawProfit) ? null : rawProfit,
                         exit: extractExitDisplay(poc, false),
@@ -660,9 +656,12 @@ class TradeWS {
                 pendingTrade.contractId = poc.contract_id;
             }
 
-            const isRiseFall = pendingTrade.contractType === 'CALL' || pendingTrade.contractType === 'PUT';
+            const isFullSpotType = pendingTrade.contractType === 'CALL' ||
+                                   pendingTrade.contractType === 'PUT' ||
+                                   pendingTrade.contractType === 'RUNHIGH' ||
+                                   pendingTrade.contractType === 'RUNLOW';
 
-            // For Rise/Fall: NEVER use current_spot as exit fallback during open state.
+            // For Rise/Fall and Only Ups/Downs: NEVER use current_spot as exit fallback during open state.
             const extractExitDisplay = (poc: any, full: boolean): string => {
                 const exitTick = poc.exit_tick_display_value ?? poc.exit_tick_display;
                 if (exitTick !== undefined && exitTick !== null) {
@@ -693,10 +692,12 @@ class TradeWS {
             const isFinalLoss = poc.status === 'lost';
             const isResolved = isFinalWin || isFinalLoss || poc.is_sold === 1 || poc.is_expired === 1;
 
-            const buildResultLabel = (isWin: boolean, isRF: boolean, contractType?: string): string => {
-                if (!isRF) return isWin ? 'WON' : 'LOST';
+            const buildResultLabel = (isWin: boolean, isFullSpot: boolean, contractType?: string): string => {
+                if (!isFullSpot) return isWin ? 'WON' : 'LOST';
                 if (contractType === 'CALL') return isWin ? 'RISE WIN' : 'RISE LOSS';
                 if (contractType === 'PUT')  return isWin ? 'FALL WIN' : 'FALL LOSS';
+                if (contractType === 'RUNHIGH') return isWin ? 'ONLY UPS WIN' : 'ONLY UPS LOSS';
+                if (contractType === 'RUNLOW')  return isWin ? 'ONLY DOWNS WIN' : 'ONLY DOWNS LOSS';
                 return isWin ? 'WON' : 'LOST';
             };
 
@@ -710,8 +711,8 @@ class TradeWS {
                 if (isWin) finalProfit = (payout && stake) ? (payout - stake) : rawProfit;
                 else finalProfit = -stake;
 
-                const finalExit = extractExitDisplay(poc, isRiseFall);
-                const resultLabel = buildResultLabel(isWin, isRiseFall, pendingTrade.contractType);
+                const finalExit = extractExitDisplay(poc, isFullSpotType);
+                const resultLabel = buildResultLabel(isWin, isFullSpotType, pendingTrade.contractType);
 
                 // EMIT FINAL RESULT INSTANTLY
                 this.emitEvent('TRADE_RESULT', {
@@ -736,14 +737,14 @@ class TradeWS {
                 store.updateTradeLog(pendingTrade.requestId, {
                     result: resultLabel,
                     profit: finalProfit,
-                    exit: isRiseFall ? derivExit : finalExit,
+                    exit: isFullSpotType ? derivExit : finalExit,
                     entrySpot: derivEntry
                 });
 
                 this.tradePool.delete(pendingTrade.requestId);
             } else {
                 // Mid-contract update for digit trades only
-                if (!isRiseFall) {
+                if (!isFullSpotType) {
                     store.updateTradeLog(pendingTrade.requestId, {
                         profit: isNaN(rawProfit) ? null : rawProfit,
                         exit: extractExitDisplay(poc, false),
@@ -774,7 +775,10 @@ class TradeWS {
     }
 
         const requestId = `${Date.now()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
-        const isRiseFall = payload.contract_type === 'CALL' || payload.contract_type === 'PUT';
+        const isFullSpotType = payload.contract_type === 'CALL' ||
+                               payload.contract_type === 'PUT' ||
+                               payload.contract_type === 'RUNHIGH' ||
+                               payload.contract_type === 'RUNLOW';
         const pendingTrade: any = {
             requestId,
             startTime: Date.now(),
@@ -816,7 +820,7 @@ class TradeWS {
                 symbol: payload.symbol,
                 stake: payload.stake.toString(),
                 profit: null,
-                digit: (!isRiseFall && payload.barrier !== undefined && payload.barrier !== null) ? payload.barrier : '-',
+                digit: (!isFullSpotType && payload.barrier !== undefined && payload.barrier !== null) ? payload.barrier : '-',
                 exit: '-',
                 entrySpot: '-',
                 currency: payload.currency || 'USD'
@@ -874,7 +878,10 @@ class TradeWS {
         const store = this.getState ? this.getState() : null;
         payloads.forEach((payload, idx) => {
             const requestId = requestIds[idx];
-            const isRiseFall = payload.contract_type === 'CALL' || payload.contract_type === 'PUT';
+            const isFullSpotType = payload.contract_type === 'CALL' ||
+                                   payload.contract_type === 'PUT' ||
+                                   payload.contract_type === 'RUNHIGH' ||
+                                   payload.contract_type === 'RUNLOW';
 
             const pendingTrade: any = {
                 requestId,
@@ -894,7 +901,7 @@ class TradeWS {
                     symbol: payload.symbol,
                     stake: payload.stake.toString(),
                     profit: null,
-                    digit: (!isRiseFall && payload.barrier !== undefined && payload.barrier !== null) ? payload.barrier : '-',
+                    digit: (!isFullSpotType && payload.barrier !== undefined && payload.barrier !== null) ? payload.barrier : '-',
                     exit: '-',
                     entrySpot: '-',
                     currency: payload.currency || 'USD'

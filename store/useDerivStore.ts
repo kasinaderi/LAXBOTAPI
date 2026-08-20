@@ -402,7 +402,7 @@ export const useDerivStore = create<DerivState>()(
                 currentStep: 1,
             },
             virtualSettings: {
-                isVirtualMode: true,
+                isVirtualMode: false,
 
                 startVirtualToReal: false,
                 vThreshold: 3,

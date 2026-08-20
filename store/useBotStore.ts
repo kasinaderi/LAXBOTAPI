@@ -68,11 +68,13 @@ export interface SwitcherTradeConfig {
   contractType: string; // e.g. 'DIGITOVER', 'DIGITUNDER', 'DIGITEVEN', 'DIGITODD', etc.
   barrier: number;       // default prediction / barrier
   count: number;         // count of trades to send
+  ticks?: number;        // custom tick duration for this contract (e.g. 2 to 5 ticks)
 }
 
 export interface AdaptiveSwitchStep {
   contractType?: string; // legacy fallback
   reps: number;         // how many trades to execute at this step
+  ticks?: number;       // custom tick duration fallback for step
   trades?: SwitcherTradeConfig[]; // new config for bulk / different contract types
 }
 
@@ -140,6 +142,8 @@ export const TRADE_OPTIONS = [
   { value: 'DIGITDIFF',  label: '≠(DIFF)'   },
   { value: 'CALL',       label: 'RISE'      },
   { value: 'PUT',        label: 'FALL'      },
+  { value: 'RUNHIGH',    label: '↑ ONLY UPS'  },
+  { value: 'RUNLOW',     label: '↓ ONLY DOWNS' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -149,7 +153,7 @@ export const TRADE_OPTIONS = [
 export function createCondition(): Condition {
   return {
     id: Math.random().toString(36).slice(2, 9),
-    type: 'EVEN_PCT',
+    type: 'LAST_DIGITS',
     comparator: '>',
     value: 60,
     lastN: 4,
@@ -729,7 +733,7 @@ export const useBotStore = create<BotStoreState>()(
       martingale:      '2.1',
       tradingMode:     'continuous',
       strategies:      [createStrategy(0)],
-      selectedMarkets: ['1HZ10V', 'R_10', '1HZ25V', 'R_25', '1HZ50V', '1HZ75V'],
+      selectedMarkets: ['1HZ10V', '1HZ100V'],
       theme:           'dark',
       crossMarketDelay: '1.5',
       adaptiveSwitch:  {
@@ -878,11 +882,26 @@ export const useBotStore = create<BotStoreState>()(
           vt.ticksCount++;
           vt.lastEpoch = lastEpoch;
 
+          const rDigits  = (regime.digits  || []) as number[];
+          const rQuotes  = (regime.quotes  || []) as number[];
+          const exitDigit = rDigits[rDigits.length - 1] ?? 0;
+          const exitPrice = rQuotes[rQuotes.length - 1] ?? 0;
+          const prevPrice = rQuotes[rQuotes.length - 2] ?? vt.entryPrice;
+
+          // Deriv Early Knockout: RUNHIGH loses immediately if tick <= prev; RUNLOW loses immediately if tick >= prev
+          let isEarlyKnockout = false;
+          if (vt.contractType === 'RUNHIGH' && exitPrice <= prevPrice) {
+            isEarlyKnockout = true;
+          } else if (vt.contractType === 'RUNLOW' && exitPrice >= prevPrice) {
+            isEarlyKnockout = true;
+          }
+
+          if (isEarlyKnockout) {
+            resolved.push({ ...vt, isWin: false, exitDigit, exitPrice });
+            continue;
+          }
+
           if (vt.ticksCount >= vt.duration) {
-            const rDigits  = (regime.digits  || []) as number[];
-            const rQuotes  = (regime.quotes  || []) as number[];
-            const exitDigit = rDigits[rDigits.length - 1] ?? 0;
-            const exitPrice = rQuotes[rQuotes.length - 1] ?? 0;
             let win = false;
             switch (vt.contractType) {
               case 'DIGITEVEN':  win = exitDigit % 2 === 0; break;
@@ -893,6 +912,20 @@ export const useBotStore = create<BotStoreState>()(
               case 'DIGITDIFF':  win = exitDigit !== (vt.barrier ?? 0); break;
               case 'CALL':       win = exitPrice > vt.entryPrice; break;
               case 'PUT':        win = exitPrice < vt.entryPrice; break;
+              case 'RUNHIGH': {
+                // Survived all ticks strictly rising
+                const priceSlice = rQuotes.slice(-(vt.duration + 1));
+                win = priceSlice.length >= vt.duration + 1 &&
+                      priceSlice.every((q, i) => i === 0 || q > priceSlice[i - 1]);
+                break;
+              }
+              case 'RUNLOW': {
+                // Survived all ticks strictly falling
+                const priceSlice = rQuotes.slice(-(vt.duration + 1));
+                win = priceSlice.length >= vt.duration + 1 &&
+                      priceSlice.every((q, i) => i === 0 || q < priceSlice[i - 1]);
+                break;
+              }
             }
             resolved.push({ ...vt, isWin: win, exitDigit, exitPrice });
           } else {
@@ -902,14 +935,19 @@ export const useBotStore = create<BotStoreState>()(
         eng.activeVirtual = remaining;
 
         for (const rt of resolved) {
-          const { requestId: vtId, stratId, symbol: vtSym, stake: vtStake, isWin, exitDigit, roundId } = rt;
+          const { requestId: vtId, stratId, symbol: vtSym, stake: vtStake, isWin, exitDigit, exitPrice, contractType: vtContractType, roundId } = rt;
           const resultProfit = isWin ? vtStake * 0.95 : -vtStake;
 
-          // Update virtual log with exit digit and final result
+          // For RUNHIGH/RUNLOW and CALL/PUT show full price as exit spot, for digits show last digit
+          const isFullSpotVirt = vtContractType === 'RUNHIGH' || vtContractType === 'RUNLOW' ||
+                                 vtContractType === 'CALL' || vtContractType === 'PUT';
+          const exitSpotDisplay = isFullSpotVirt ? String(exitPrice) : String(exitDigit);
+
+          // Update virtual log with exit spot and final result
           get().updateLog(vtId, {
             result:   isWin ? 'VIRT WON' : 'VIRT LOST',
             profit:   resultProfit,
-            exitSpot: String(exitDigit),
+            exitSpot: exitSpotDisplay,
           });
 
           if (roundId && eng.roundState[roundId]) {
@@ -1267,7 +1305,7 @@ export const useBotStore = create<BotStoreState>()(
 
 
           const aSwitch = state.adaptiveSwitch;
-          let tradesToPlace: { contractType: string; barrier?: number; count: number }[] = [];
+          let tradesToPlace: { contractType: string; barrier?: number; count: number; ticks?: number }[] = [];
 
           if (aSwitch.enabled && aSwitch.steps.length > 0) {
             const pos = eng.adaptivePos;
@@ -1279,13 +1317,15 @@ export const useBotStore = create<BotStoreState>()(
               tradesToPlace = curStep.trades.map((t: any) => ({
                 contractType: t.contractType,
                 barrier: needsBarrier(t.contractType) ? (t.barrier ?? s.prediction ?? 4) : undefined,
-                count: t.count || 1
+                count: t.count || 1,
+                ticks: t.ticks || curStep.ticks || s.ticks,
               }));
             } else {
               tradesToPlace = [{
                 contractType: curStep.contractType || 'DIGITEVEN',
                 barrier: needsBarrier(curStep.contractType || 'DIGITEVEN') ? (s.prediction ?? 4) : undefined,
-                count: 1
+                count: 1,
+                ticks: curStep.ticks || s.ticks,
               }];
             }
 
@@ -1299,7 +1339,8 @@ export const useBotStore = create<BotStoreState>()(
             tradesToPlace = [{
               contractType: s.tradeType,
               barrier: needsBarrier(s.tradeType) ? s.prediction : undefined,
-              count: 1
+              count: 1,
+              ticks: s.ticks,
             }];
           }
 
@@ -1311,7 +1352,8 @@ export const useBotStore = create<BotStoreState>()(
               tradesToPlace = [{
                 contractType: box.type,
                 barrier: needsBarrier(box.type) ? box.barrier : undefined,
-                count: 1
+                count: 1,
+                ticks: s.ticks,
               }];
             }
           }
@@ -1319,11 +1361,11 @@ export const useBotStore = create<BotStoreState>()(
           // ── Dual-mode override: exactly 2 trades, count = 1 each ─────────────
           const isDualMode = aSwitch.enabled && aSwitch.dualMode;
           if (isDualMode) {
-            const slotA = tradesToPlace[0] ?? { contractType: 'DIGITEVEN', count: 1 };
+            const slotA = tradesToPlace[0] ?? { contractType: 'DIGITEVEN', count: 1, ticks: s.ticks };
             const slotB = tradesToPlace[1] ?? slotA;
             tradesToPlace = [
-              { contractType: slotA.contractType, barrier: slotA.barrier, count: 1 },
-              { contractType: slotB.contractType, barrier: slotB.barrier, count: 1 },
+              { contractType: slotA.contractType, barrier: slotA.barrier, count: 1, ticks: slotA.ticks || s.ticks },
+              { contractType: slotB.contractType, barrier: slotB.barrier, count: 1, ticks: slotB.ticks || s.ticks },
             ];
           }
 
@@ -1336,11 +1378,12 @@ export const useBotStore = create<BotStoreState>()(
           const currency = account?.currency || 'USD';
 
           // Flatten list of orders to send
-          const orders: { contractType: string; barrier?: number }[] = [];
+          const orders: { contractType: string; barrier?: number; ticks: number }[] = [];
           for (const item of tradesToPlace) {
             const cnt = Math.max(1, Math.min(20, item.count || 1));
+            const itemTicks = item.ticks || s.ticks;
             for (let i = 0; i < cnt; i++) {
-              orders.push({ contractType: item.contractType, barrier: item.barrier });
+              orders.push({ contractType: item.contractType, barrier: item.barrier, ticks: itemTicks });
             }
           }
 
@@ -1366,16 +1409,20 @@ export const useBotStore = create<BotStoreState>()(
               eng.activeVirtual.push({
                 requestId: fakeId, stratId, symbol,
                 stake: tradeStake, contractType: order.contractType, barrier: order.barrier,
-                entryPrice, duration: s.ticks, ticksCount: 0,
+                entryPrice, duration: order.ticks, ticksCount: 0,
                 lastEpoch: regime.lastEpoch || 0,
                 roundId,
               });
+
+              const isFullSpotVirt = order.contractType === 'CALL' || order.contractType === 'PUT' ||
+                                     order.contractType === 'RUNHIGH' || order.contractType === 'RUNLOW';
+              const entrySpotDisplay = isFullSpotVirt ? String(entryPrice) : String(entryDigit);
 
               get().addLog({
                 id: fakeId, time: now, symbol, strategyIndex: si,
                 contract: order.contractType, stake: tradeStake,
                 result: 'VIRTUAL', profit: 0,
-                entrySpot: String(entryDigit),
+                entrySpot: entrySpotDisplay,
                 exitSpot:  '-',
                 step: ss.lossCount + 1,
               });
@@ -1406,7 +1453,7 @@ export const useBotStore = create<BotStoreState>()(
               stake: tradeStake,
               symbol,
               currency,
-              duration: s.ticks,
+              duration: order.ticks,
               duration_unit: 't',
               barrier: order.barrier !== undefined ? order.barrier : undefined,
             }));
