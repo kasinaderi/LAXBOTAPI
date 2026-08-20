@@ -1926,19 +1926,49 @@ export default function LaxPrimePage() {
                       <span className="lp-vp-sw-track" />
                     </label>
                   </div>
-                  <button
-                    className="lp-sw-add-step"
-                    onClick={() => setAdaptiveSwitch({
-                      ...adaptiveSwitch,
-                      steps: [...adaptiveSwitch.steps, { contractType: 'DIGITEVEN', reps: 2 }],
-                    })}
-                  >
-                    + Add Step
-                  </button>
+                  {(adaptiveSwitch.mode || 'sequence') === 'sequence' && (
+                    <button
+                      className="lp-sw-add-step"
+                      onClick={() => setAdaptiveSwitch({
+                        ...adaptiveSwitch,
+                        steps: [...adaptiveSwitch.steps, { contractType: 'DIGITEVEN', reps: 2 }],
+                      })}
+                    >
+                      + Add Step
+                    </button>
+                  )}
                 </div>
 
                 <div className="lp-sw-desc" style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)', marginTop: '4px', marginBottom: '10px' }}>
-                  Adaptive Switch mode overrides strategy trade types using a step-by-step cycle. On <strong>win</strong>, it advances reps or moves to the next step.
+                  {(adaptiveSwitch.mode || 'sequence') === 'adaptive'
+                    ? 'Automatically inter-switches between Contract A and Contract B on loss to target the winning side.'
+                    : 'Adaptive Switch mode overrides strategy trade types using a step-by-step cycle. On win, it advances reps or moves to next step.'}
+                </div>
+
+                {/* Switcher Mode Tabs (Sequence Steps vs Adaptive Auto-Switch) */}
+                <div style={{ display: 'flex', gap: '6px', background: 'rgba(255,255,255,0.04)', padding: '4px', borderRadius: '8px', marginBottom: '12px' }}>
+                  <button
+                    onClick={() => setAdaptiveSwitch({ ...adaptiveSwitch, mode: 'sequence' })}
+                    style={{
+                      flex: 1, padding: '6px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold',
+                      background: (adaptiveSwitch.mode || 'sequence') === 'sequence' ? '#7c3aed' : 'transparent',
+                      color: (adaptiveSwitch.mode || 'sequence') === 'sequence' ? '#ffffff' : 'rgba(255,255,255,0.6)',
+                      border: 'none', cursor: 'pointer', transition: 'all 0.2s'
+                    }}
+                  >
+                    📋 SEQUENCE STEPS
+                  </button>
+                  <button
+                    onClick={() => setAdaptiveSwitch({ ...adaptiveSwitch, mode: 'adaptive' })}
+                    style={{
+                      flex: 1, padding: '6px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold',
+                      background: (adaptiveSwitch.mode || 'sequence') === 'adaptive' ? '#7c3aed' : 'transparent',
+                      color: (adaptiveSwitch.mode || 'sequence') === 'adaptive' ? '#ffffff' : 'rgba(255,255,255,0.6)',
+                      border: 'none', cursor: 'pointer', transition: 'all 0.2s'
+                    }}
+                  >
+                    ⚡ ADAPTIVE CONTRACTS
+                  </button>
                 </div>
 
                 {/* Dual Mode Switcher Toggle */}
@@ -1964,7 +1994,155 @@ export default function LaxPrimePage() {
                   </label>
                 </div>
 
-                {/* Steps List */}
+                {/* ADAPTIVE CONTRACTS (AUTO-SWITCH ON LOSS) PANEL */}
+                {adaptiveSwitch.mode === 'adaptive' && (() => {
+                  const ac = adaptiveSwitch.adaptiveContracts || {
+                    contractA: { type: 'DIGITEVEN', barrier: 4, ticks: 5 },
+                    contractB: { type: 'DIGITODD', barrier: 4, ticks: 5 },
+                    activeSide: 'A',
+                    startSide: 'A',
+                  };
+                  const activeSide = ac.activeSide || ac.startSide || 'A';
+                  const startSide = ac.startSide || 'A';
+
+                  const updateAC = (patch: Partial<typeof ac>) => {
+                    setAdaptiveSwitch({
+                      ...adaptiveSwitch,
+                      adaptiveContracts: { ...ac, ...patch },
+                    });
+                  };
+
+                  return (
+                    <div style={{
+                      display: 'flex', flexDirection: 'column', gap: '10px',
+                      padding: '12px', background: 'rgba(124, 58, 237, 0.05)',
+                      borderRadius: '8px', border: '1px solid rgba(124, 58, 237, 0.2)',
+                      marginBottom: '12px'
+                    }}>
+                      {/* Active Status Header */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '8px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#c4b5fd' }}>AUTO-SWITCH ON LOSS</span>
+                          <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.45)' }}>Targets winning side. Switches instantly when a loss occurs.</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ fontSize: '9px', fontWeight: 'bold', color: '#4ade80', background: 'rgba(74,222,128,0.12)', padding: '2px 6px', borderRadius: '4px', border: '1px solid rgba(74,222,128,0.3)' }}>
+                            ● ACTIVE: CONTRACT {activeSide}
+                          </span>
+                          <button
+                            onClick={() => updateAC({ activeSide: activeSide === 'A' ? 'B' : 'A' })}
+                            style={{ fontSize: '9px', fontWeight: 'bold', background: 'rgba(255,255,255,0.08)', color: '#22d3ee', border: '1px solid rgba(34,211,238,0.3)', padding: '2px 6px', borderRadius: '4px', cursor: 'pointer' }}
+                          >
+                            ⇌ Switch Now
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Start Side Selector */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', fontWeight: 'bold' }}>Start Side:</span>
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <button
+                            onClick={() => updateAC({ startSide: 'A', activeSide: 'A' })}
+                            style={{ fontSize: '9px', fontWeight: 'bold', padding: '3px 8px', borderRadius: '4px', border: 'none', background: startSide === 'A' ? '#6366f1' : 'rgba(255,255,255,0.06)', color: '#fff', cursor: 'pointer' }}
+                          >
+                            Contract A
+                          </button>
+                          <button
+                            onClick={() => updateAC({ startSide: 'B', activeSide: 'B' })}
+                            style={{ fontSize: '9px', fontWeight: 'bold', padding: '3px 8px', borderRadius: '4px', border: 'none', background: startSide === 'B' ? '#6366f1' : 'rgba(255,255,255,0.06)', color: '#fff', cursor: 'pointer' }}
+                          >
+                            Contract B
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Contract A & B Configuration Cards */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                        {/* Contract A */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '8px', background: activeSide === 'A' ? 'rgba(99,102,241,0.12)' : 'rgba(255,255,255,0.02)', borderRadius: '6px', border: activeSide === 'A' ? '1px solid #6366f1' : '1px solid rgba(255,255,255,0.08)' }}>
+                          <span style={{ fontSize: '10px', fontWeight: 'bold', color: activeSide === 'A' ? '#818cf8' : '#9ca3af' }}>
+                            CONTRACT A {activeSide === 'A' ? '(CURRENTLY TRADING)' : ''}
+                          </span>
+                          <select
+                            className="lp-sel"
+                            style={{ height: '26px', fontSize: '11px', padding: '0 4px', width: '100%' }}
+                            value={ac.contractA?.type || 'DIGITEVEN'}
+                            onChange={e => updateAC({ contractA: { ...ac.contractA, type: e.target.value } })}
+                          >
+                            {TRADE_OPTIONS.map(opt => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                          {needsBarrier(ac.contractA?.type || 'DIGITEVEN') && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)' }}>Barrier:</span>
+                              <input
+                                className="lp-num"
+                                type="number" min={0} max={9}
+                                value={ac.contractA?.barrier ?? 4}
+                                style={{ width: '32px', height: '22px', fontSize: '11px', textAlign: 'center' }}
+                                onChange={e => updateAC({ contractA: { ...ac.contractA, barrier: Math.min(9, Math.max(0, +e.target.value || 0)) } })}
+                              />
+                            </div>
+                          )}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ fontSize: '9px', color: '#a78bfa', fontWeight: 'bold' }}>Ticks:</span>
+                            <input
+                              className="lp-num"
+                              type="number" min={1} max={100}
+                              value={ac.contractA?.ticks ?? 5}
+                              style={{ width: '36px', height: '22px', fontSize: '11px', textAlign: 'center' }}
+                              onChange={e => updateAC({ contractA: { ...ac.contractA, ticks: Math.max(1, +e.target.value || 1) } })}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Contract B */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '8px', background: activeSide === 'B' ? 'rgba(99,102,241,0.12)' : 'rgba(255,255,255,0.02)', borderRadius: '6px', border: activeSide === 'B' ? '1px solid #6366f1' : '1px solid rgba(255,255,255,0.08)' }}>
+                          <span style={{ fontSize: '10px', fontWeight: 'bold', color: activeSide === 'B' ? '#818cf8' : '#9ca3af' }}>
+                            CONTRACT B {activeSide === 'B' ? '(CURRENTLY TRADING)' : ''}
+                          </span>
+                          <select
+                            className="lp-sel"
+                            style={{ height: '26px', fontSize: '11px', padding: '0 4px', width: '100%' }}
+                            value={ac.contractB?.type || 'DIGITODD'}
+                            onChange={e => updateAC({ contractB: { ...ac.contractB, type: e.target.value } })}
+                          >
+                            {TRADE_OPTIONS.map(opt => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                          {needsBarrier(ac.contractB?.type || 'DIGITODD') && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)' }}>Barrier:</span>
+                              <input
+                                className="lp-num"
+                                type="number" min={0} max={9}
+                                value={ac.contractB?.barrier ?? 4}
+                                style={{ width: '32px', height: '22px', fontSize: '11px', textAlign: 'center' }}
+                                onChange={e => updateAC({ contractB: { ...ac.contractB, barrier: Math.min(9, Math.max(0, +e.target.value || 0)) } })}
+                              />
+                            </div>
+                          )}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ fontSize: '9px', color: '#a78bfa', fontWeight: 'bold' }}>Ticks:</span>
+                            <input
+                              className="lp-num"
+                              type="number" min={1} max={100}
+                              value={ac.contractB?.ticks ?? 5}
+                              style={{ width: '36px', height: '22px', fontSize: '11px', textAlign: 'center' }}
+                              onChange={e => updateAC({ contractB: { ...ac.contractB, ticks: Math.max(1, +e.target.value || 1) } })}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Steps List (Only when mode === 'sequence') */}
+                {(adaptiveSwitch.mode || 'sequence') === 'sequence' && (
                 <div className="lp-sw-steps">
                   {adaptiveSwitch.steps.map((step, si) => {
                     const stepTrades = step.trades && step.trades.length > 0
@@ -2317,26 +2495,51 @@ export default function LaxPrimePage() {
                     );
                   })}
                 </div>
+                )}
 
                 {/* Preview sequence */}
                 <div className="lp-sw-preview" style={{ marginTop: '10px' }}>
-                  {adaptiveSwitch.steps.map((step, si) => {
-                    const stepTrades = step.trades && step.trades.length > 0
-                      ? step.trades
-                      : [{ contractType: step.contractType || 'DIGITEVEN', count: 1 }];
-
-                    const label = stepTrades.map(t => {
-                      const lbl = TRADE_OPTIONS.find(o => o.value === t.contractType)?.label || t.contractType;
-                      return t.count > 1 ? `${lbl} (x${t.count})` : lbl;
-                    }).join(' + ');
+                  {adaptiveSwitch.mode === 'adaptive' ? (() => {
+                    const ac = adaptiveSwitch.adaptiveContracts || {
+                      contractA: { type: 'DIGITEVEN' },
+                      contractB: { type: 'DIGITODD' },
+                      activeSide: 'A',
+                    };
+                    const lblA = TRADE_OPTIONS.find(o => o.value === (ac.contractA?.type || 'DIGITEVEN'))?.label || ac.contractA?.type;
+                    const lblB = TRADE_OPTIONS.find(o => o.value === (ac.contractB?.type || 'DIGITODD'))?.label || ac.contractB?.type;
+                    const activeSide = ac.activeSide || ac.startSide || 'A';
 
                     return (
-                      <span key={si} className="lp-sw-preview-chip">
-                        {label} ×{step.reps}
-                        {si < adaptiveSwitch.steps.length - 1 && <span className="lp-sw-arrow">→</span>}
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: 'bold' }}>
+                        <span className={`lp-sw-preview-chip ${activeSide === 'A' ? 'active' : ''}`} style={{ background: activeSide === 'A' ? '#6366f1' : undefined, color: activeSide === 'A' ? '#fff' : undefined }}>
+                          A: {lblA}
+                        </span>
+                        <span className="lp-sw-arrow">⇌</span>
+                        <span className={`lp-sw-preview-chip ${activeSide === 'B' ? 'active' : ''}`} style={{ background: activeSide === 'B' ? '#6366f1' : undefined, color: activeSide === 'B' ? '#fff' : undefined }}>
+                          B: {lblB}
+                        </span>
+                        <span style={{ fontSize: '9px', color: '#a78bfa', marginLeft: 4 }}>(Switches on Loss)</span>
+                      </div>
                     );
-                  })}
+                  })() : (
+                    adaptiveSwitch.steps.map((step, si) => {
+                      const stepTrades = step.trades && step.trades.length > 0
+                        ? step.trades
+                        : [{ contractType: step.contractType || 'DIGITEVEN', count: 1 }];
+
+                      const label = stepTrades.map(t => {
+                        const lbl = TRADE_OPTIONS.find(o => o.value === t.contractType)?.label || t.contractType;
+                        return t.count > 1 ? `${lbl} (x${t.count})` : lbl;
+                      }).join(' + ');
+
+                      return (
+                        <span key={si} className="lp-sw-preview-chip">
+                          {label} ×{step.reps}
+                          {si < adaptiveSwitch.steps.length - 1 && <span className="lp-sw-arrow">→</span>}
+                        </span>
+                      );
+                    })
+                  )}
                 </div>
 
                 {/* Live status when running */}

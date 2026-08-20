@@ -78,9 +78,22 @@ export interface AdaptiveSwitchStep {
   trades?: SwitcherTradeConfig[]; // new config for bulk / different contract types
 }
 
+export interface AdaptiveContractConfig {
+  type: string;
+  barrier?: number;
+  ticks?: number;
+}
+
 export interface AdaptiveSwitch {
   enabled: boolean;
   dualMode: boolean;  // Fire exactly 2 contracts per entry; martingale only on both-loss
+  mode?: 'sequence' | 'adaptive'; // 'sequence' (Step sequence) vs 'adaptive' (Auto-switch on loss)
+  adaptiveContracts?: {
+    contractA: AdaptiveContractConfig;
+    contractB: AdaptiveContractConfig;
+    activeSide?: 'A' | 'B';
+    startSide?: 'A' | 'B';
+  };
   steps: AdaptiveSwitchStep[];
 }
 
@@ -614,36 +627,62 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
 
   // 2. Switcher position advancement (only once per round!)
   const aSwState = get().adaptiveSwitch;
-  if (aSwState.enabled && aSwState.steps.length > 0) {
-    const pos = eng.adaptivePos;
-    // Clamp index (fix: compare number to number, not to boolean)
-    if (pos.stepIndex >= aSwState.steps.length) { pos.stepIndex = 0; pos.repCount = 0; }
-    const curStepCfg = aSwState.steps[pos.stepIndex];
-    if (curStepCfg) {
-      // Advance on a clean win OR a dual-push (push resets to Step 1 like a win)
+  if (aSwState.enabled) {
+    if (aSwState.mode === 'adaptive') {
+      const ac = aSwState.adaptiveContracts || {
+        contractA: { type: 'DIGITEVEN', barrier: 4, ticks: 5 },
+        contractB: { type: 'DIGITODD', barrier: 4, ticks: 5 },
+        activeSide: 'A',
+        startSide: 'A',
+      };
+      let curSide = ac.activeSide || ac.startSide || 'A';
+
       if (isRoundWin || isDualPush) {
-        if (isDualPush) {
-          // Push: reset switcher back to Step 1 (stake already reset to base above)
-          pos.stepIndex = 0;
-          pos.repCount  = 0;
-        } else {
-          pos.repCount++;
-          if (pos.repCount >= curStepCfg.reps) {
+        // WIN or PUSH: Continue on current winning side!
+      } else {
+        // LOSS: Instantly inter-switch to opposite side!
+        curSide = curSide === 'A' ? 'B' : 'A';
+        useBotStore.getState().setAdaptiveSwitch({
+          ...aSwState,
+          adaptiveContracts: { ...ac, activeSide: curSide },
+        });
+      }
+
+      const activeCfg = curSide === 'A' ? (ac.contractA || { type: 'DIGITEVEN' }) : (ac.contractB || { type: 'DIGITODD' });
+      const lbl = TRADE_OPTIONS.find(o => o.value === activeCfg.type)?.label || activeCfg.type;
+      const pushTag = isDualPush ? ' ⇌ PUSH' : '';
+      set({ adaptiveLiveStatus: `⚡ ADAPTIVE: ${lbl} (Side ${curSide})${pushTag} [Auto-Switch on Loss]` });
+    } else if (aSwState.steps.length > 0) {
+      const pos = eng.adaptivePos;
+      // Clamp index
+      if (pos.stepIndex >= aSwState.steps.length) { pos.stepIndex = 0; pos.repCount = 0; }
+      const curStepCfg = aSwState.steps[pos.stepIndex];
+      if (curStepCfg) {
+        // Advance on a clean win OR a dual-push (push resets to Step 1 like a win)
+        if (isRoundWin || isDualPush) {
+          if (isDualPush) {
+            // Push: reset switcher back to Step 1 (stake already reset to base above)
+            pos.stepIndex = 0;
             pos.repCount  = 0;
-            pos.stepIndex = (pos.stepIndex + 1) % aSwState.steps.length;
+          } else {
+            pos.repCount++;
+            if (pos.repCount >= curStepCfg.reps) {
+              pos.repCount  = 0;
+              pos.stepIndex = (pos.stepIndex + 1) % aSwState.steps.length;
+            }
           }
         }
-      }
-      // On loss: retry same step/rep
+        // On loss: retry same step/rep
 
-      const nextStep  = aSwState.steps[pos.stepIndex] ?? aSwState.steps[0];
-      const tradesList = nextStep.trades && nextStep.trades.length > 0 ? nextStep.trades : [{ contractType: nextStep.contractType || 'DIGITEVEN', count: 1 }];
-      const nextLabel = tradesList.map((t: any) => {
-        const lbl = TRADE_OPTIONS.find(o => o.value === t.contractType)?.label || t.contractType;
-        return t.count > 1 ? `${lbl} (x${t.count})` : lbl;
-      }).join(' + ');
-      const pushTag = isDualPush ? ' ⇌ PUSH' : '';
-      set({ adaptiveLiveStatus: `${nextLabel}${pushTag} [Step ${pos.stepIndex + 1}, ${pos.repCount + 1}/${nextStep.reps}]` });
+        const nextStep  = aSwState.steps[pos.stepIndex] ?? aSwState.steps[0];
+        const tradesList = nextStep.trades && nextStep.trades.length > 0 ? nextStep.trades : [{ contractType: nextStep.contractType || 'DIGITEVEN', count: 1 }];
+        const nextLabel = tradesList.map((t: any) => {
+          const lbl = TRADE_OPTIONS.find(o => o.value === t.contractType)?.label || t.contractType;
+          return t.count > 1 ? `${lbl} (x${t.count})` : lbl;
+        }).join(' + ');
+        const pushTag = isDualPush ? ' ⇌ PUSH' : '';
+        set({ adaptiveLiveStatus: `${nextLabel}${pushTag} [Step ${pos.stepIndex + 1}, ${pos.repCount + 1}/${nextStep.reps}]` });
+      }
     }
   }
 
@@ -1453,34 +1492,64 @@ export const useBotStore = create<BotStoreState>()(
           const aSwitch = state.adaptiveSwitch;
           let tradesToPlace: { contractType: string; barrier?: number; count: number; ticks?: number }[] = [];
 
-          if (aSwitch.enabled && aSwitch.steps.length > 0) {
-            const pos = eng.adaptivePos;
-            if (pos.stepIndex >= aSwitch.steps.length) {
-              pos.stepIndex = 0; pos.repCount = 0;
-            }
-            const curStep = aSwitch.steps[pos.stepIndex];
-            if (curStep.trades && curStep.trades.length > 0) {
-              tradesToPlace = curStep.trades.map((t: any) => ({
-                contractType: t.contractType,
-                barrier: needsBarrier(t.contractType) ? (t.barrier ?? s.prediction ?? 4) : undefined,
-                count: t.count || 1,
-                ticks: t.ticks || curStep.ticks || s.ticks,
-              }));
-            } else {
-              tradesToPlace = [{
-                contractType: curStep.contractType || 'DIGITEVEN',
-                barrier: needsBarrier(curStep.contractType || 'DIGITEVEN') ? (s.prediction ?? 4) : undefined,
-                count: 1,
-                ticks: curStep.ticks || s.ticks,
-              }];
-            }
+          if (aSwitch.enabled) {
+            const isAdaptiveMode = aSwitch.mode === 'adaptive';
+            if (isAdaptiveMode) {
+              const ac = aSwitch.adaptiveContracts || {
+                contractA: { type: 'DIGITEVEN', barrier: 4, ticks: 5 },
+                contractB: { type: 'DIGITODD', barrier: 4, ticks: 5 },
+                activeSide: 'A',
+                startSide: 'A',
+              };
+              const activeSide = ac.activeSide || ac.startSide || 'A';
+              const activeContract = activeSide === 'A' ? (ac.contractA || { type: 'DIGITEVEN', barrier: 4, ticks: 5 }) : (ac.contractB || { type: 'DIGITODD', barrier: 4, ticks: 5 });
 
-            const stepLabel = tradesToPlace.map(t => {
-              const lbl = TRADE_OPTIONS.find(o => o.value === t.contractType)?.label || t.contractType;
-              return t.count > 1 ? `${lbl} (x${t.count})` : lbl;
-            }).join(' + ');
-            const liveStatus = `${stepLabel} [Step ${pos.stepIndex + 1}, ${pos.repCount + 1}/${curStep.reps}]`;
-            set({ adaptiveLiveStatus: liveStatus });
+              if (aSwitch.dualMode) {
+                const altContract = activeSide === 'A' ? (ac.contractB || { type: 'DIGITODD', barrier: 4, ticks: 5 }) : (ac.contractA || { type: 'DIGITEVEN', barrier: 4, ticks: 5 });
+                tradesToPlace = [
+                  { contractType: activeContract.type || 'DIGITEVEN', barrier: needsBarrier(activeContract.type || 'DIGITEVEN') ? (activeContract.barrier ?? s.prediction ?? 4) : undefined, count: 1, ticks: activeContract.ticks || s.ticks },
+                  { contractType: altContract.type || 'DIGITODD', barrier: needsBarrier(altContract.type || 'DIGITODD') ? (altContract.barrier ?? s.prediction ?? 4) : undefined, count: 1, ticks: altContract.ticks || s.ticks },
+                ];
+              } else {
+                tradesToPlace = [{
+                  contractType: activeContract.type || 'DIGITEVEN',
+                  barrier: needsBarrier(activeContract.type || 'DIGITEVEN') ? (activeContract.barrier ?? s.prediction ?? 4) : undefined,
+                  count: 1,
+                  ticks: activeContract.ticks || s.ticks,
+                }];
+              }
+
+              const lblA = TRADE_OPTIONS.find(o => o.value === (activeContract.type || 'DIGITEVEN'))?.label || activeContract.type;
+              set({ adaptiveLiveStatus: `⚡ ADAPTIVE: ${lblA} (Side ${activeSide}) [Auto-Switch on Loss]` });
+            } else if (aSwitch.steps.length > 0) {
+              const pos = eng.adaptivePos;
+              if (pos.stepIndex >= aSwitch.steps.length) {
+                pos.stepIndex = 0; pos.repCount = 0;
+              }
+              const curStep = aSwitch.steps[pos.stepIndex];
+              if (curStep.trades && curStep.trades.length > 0) {
+                tradesToPlace = curStep.trades.map((t: any) => ({
+                  contractType: t.contractType,
+                  barrier: needsBarrier(t.contractType) ? (t.barrier ?? s.prediction ?? 4) : undefined,
+                  count: t.count || 1,
+                  ticks: t.ticks || curStep.ticks || s.ticks,
+                }));
+              } else {
+                tradesToPlace = [{
+                  contractType: curStep.contractType || 'DIGITEVEN',
+                  barrier: needsBarrier(curStep.contractType || 'DIGITEVEN') ? (s.prediction ?? 4) : undefined,
+                  count: 1,
+                  ticks: curStep.ticks || s.ticks,
+                }];
+              }
+
+              const stepLabel = tradesToPlace.map(t => {
+                const lbl = TRADE_OPTIONS.find(o => o.value === t.contractType)?.label || t.contractType;
+                return t.count > 1 ? `${lbl} (x${t.count})` : lbl;
+              }).join(' + ');
+              const liveStatus = `${stepLabel} [Step ${pos.stepIndex + 1}, ${pos.repCount + 1}/${curStep.reps}]`;
+              set({ adaptiveLiveStatus: liveStatus });
+            }
           } else {
             tradesToPlace = [{
               contractType: s.tradeType,
