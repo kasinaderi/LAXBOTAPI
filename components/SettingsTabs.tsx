@@ -389,8 +389,8 @@ export function SettingsTabs() {
                                                     <span className="text-[9px] font-bold text-gray-400">Target Value</span>
                                                     <input
                                                         type="number" min={1}
-                                                        value={virtual.vThresholdB || 1}
-                                                        onChange={(e) => settings.setVirtualSettings({ vThresholdB: Math.max(1, parseInt(e.target.value) || 1) })}
+                                                        value={virtual.vThresholdB ?? ''}
+                                                        onChange={(e) => settings.setVirtualSettings({ vThresholdB: e.target.value === '' ? ('' as any) : Math.max(1, parseInt(e.target.value) || 1) })}
                                                         className="w-full bg-dark border border-dark-hover rounded-lg px-3 py-1.5 text-xs font-bold text-purple-300 outline-none"
                                                     />
                                                 </div>
@@ -398,8 +398,8 @@ export function SettingsTabs() {
                                                     <span className="text-[9px] font-bold text-gray-400">Real Reps</span>
                                                     <input
                                                         type="number" min={1}
-                                                        value={virtual.vStageBReps || 1}
-                                                        onChange={(e) => settings.setVirtualSettings({ vStageBReps: Math.max(1, parseInt(e.target.value) || 1) })}
+                                                        value={virtual.vStageBReps ?? ''}
+                                                        onChange={(e) => settings.setVirtualSettings({ vStageBReps: e.target.value === '' ? ('' as any) : Math.max(1, parseInt(e.target.value) || 1) })}
                                                         className="w-full bg-dark border border-dark-hover rounded-lg px-3 py-1.5 text-xs font-bold text-purple-300 outline-none"
                                                     />
                                                 </div>

@@ -1365,8 +1365,25 @@ main:has(.lp-root) {
 
 .lp-tx-list {
   overflow-y: auto;
-  max-height: 270px;
+  max-height: 360px;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
 }
+.lp-tx-list::-webkit-scrollbar {
+  width: 6px;
+}
+.lp-tx-list::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 3px;
+}
+.lp-tx-list::-webkit-scrollbar-thumb {
+  background: rgba(124, 58, 237, 0.5);
+  border-radius: 3px;
+}
+.lp-tx-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(124, 58, 237, 0.85);
+}
+
 .lp-tx-row {
   display: grid;
   grid-template-columns: 1fr 1fr 1.2fr 1fr;
@@ -1404,6 +1421,16 @@ main:has(.lp-root) {
   border-radius: 3px;
   padding: 1px 4px;
   letter-spacing: .5px;
+}
+.lp-virt-badge.won {
+  background: #16a34a !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 6px rgba(22, 163, 74, 0.5);
+}
+.lp-virt-badge.lost {
+  background: #dc2626 !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 6px rgba(220, 38, 38, 0.5);
 }
 .lp-tx-pnl {
   font-size: 11px;

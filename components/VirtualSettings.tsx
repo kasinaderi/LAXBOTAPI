@@ -127,8 +127,8 @@ export function VirtualSettings() {
                                             <Input
                                                 type="number"
                                                 min={1}
-                                                value={virtualSettings.vThresholdB?.toString() || '1'}
-                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVirtualSettings({ vThresholdB: Math.max(1, parseInt(e.target.value) || 1) })}
+                                                value={virtualSettings.vThresholdB ?? ''}
+                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVirtualSettings({ vThresholdB: e.target.value === '' ? ('' as any) : Math.max(1, parseInt(e.target.value) || 1) })}
                                                 className="bg-dark/60 border-dark/60 h-8 text-xs font-bold"
                                             />
                                         </div>
@@ -137,8 +137,8 @@ export function VirtualSettings() {
                                             <Input
                                                 type="number"
                                                 min={1}
-                                                value={virtualSettings.vStageBReps?.toString() || '1'}
-                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVirtualSettings({ vStageBReps: Math.max(1, parseInt(e.target.value) || 1) })}
+                                                value={virtualSettings.vStageBReps ?? ''}
+                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVirtualSettings({ vStageBReps: e.target.value === '' ? ('' as any) : Math.max(1, parseInt(e.target.value) || 1) })}
                                                 className="bg-dark/60 border-dark/60 h-8 text-xs font-bold"
                                             />
                                         </div>

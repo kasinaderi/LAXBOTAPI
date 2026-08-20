@@ -1237,8 +1237,8 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
                 const isVirt = String(log.id).startsWith('VIRT_');
                 const won    = !isVirt && (log.result === 'WON');
                 const lost   = !isVirt && (log.result === 'LOST');
-                const virtWon  = isVirt && (log.result === 'VIRT WON'  || log.result === 'WON');
-                const virtLost = isVirt && (log.result === 'VIRT LOST' || log.result === 'LOST');
+                const virtWon  = isVirt && (log.result === 'VIRT WON'  || log.result === 'WON'  || (log.profit !== undefined && log.profit > 0));
+                const virtLost = isVirt && (log.result === 'VIRT LOST' || log.result === 'LOST' || (log.profit !== undefined && log.profit < 0));
                 const live   = !isVirt && (log.result === 'SENT' || log.result === 'BUYING...' || log.result === 'RUNNING...' || log.result === 'RUNNING');
                 const virtLive = isVirt && log.result === 'VIRTUAL';
 
@@ -1262,9 +1262,7 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
                         </span>
                       )}
                       {isVirt && (
-                        <span className="lp-virt-badge" style={{
-                          background: virtWon ? '#16a34a' : virtLost ? '#dc2626' : undefined
-                        }}>VIRT</span>
+                        <span className={`lp-virt-badge ${virtWon ? 'won' : virtLost ? 'lost' : ''}`}>VIRT</span>
                       )}
                       {log.step > 1 && <span style={{ fontSize: 8, color: '#f59e0b', fontWeight: 'bold' }}>Step {log.step}</span>}
                     </div>
@@ -1728,8 +1726,8 @@ export default function LaxPrimePage() {
                             <option value="total">Total</option>
                           </select>
                           <span className="lp-vp-sub-lbl">Threshold:</span>
-                          <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.vThreshold}
-                            onChange={e => setVirtualSettings({ vThreshold: +e.target.value || 0 })} />
+                          <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.vThreshold ?? ''}
+                            onChange={e => setVirtualSettings({ vThreshold: e.target.value === '' ? ('' as any) : (+e.target.value || 0) })} />
                         </div>
 
                         {/* Stage B Controls (Double Virtual) */}
@@ -1754,11 +1752,11 @@ export default function LaxPrimePage() {
                                 <option value="total">Total</option>
                               </select>
                               <span className="lp-vp-sub-lbl">Target:</span>
-                              <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.vThresholdB || 1}
-                                onChange={e => setVirtualSettings({ vThresholdB: Math.max(1, +e.target.value || 1) })} title="Virtual Target in Stage B" />
+                              <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.vThresholdB ?? ''}
+                                onChange={e => setVirtualSettings({ vThresholdB: e.target.value === '' ? ('' as any) : (+e.target.value || 1) })} title="Virtual Target in Stage B" />
                               <span className="lp-vp-sub-lbl">→ Real Reps:</span>
-                              <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.vStageBReps || 1}
-                                onChange={e => setVirtualSettings({ vStageBReps: Math.max(1, +e.target.value || 1) })} title="Real trades to run in Stage B before recycling back to Stage A" />
+                              <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.vStageBReps ?? ''}
+                                onChange={e => setVirtualSettings({ vStageBReps: e.target.value === '' ? ('' as any) : (+e.target.value || 1) })} title="Real trades to run in Stage B before recycling back to Stage A" />
                             </div>
                           </div>
                         )}
@@ -1902,8 +1900,8 @@ export default function LaxPrimePage() {
                           <option value="total">Total</option>
                         </select>
                         <span className="lp-vp-sub-lbl">Threshold:</span>
-                        <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.rThreshold}
-                          onChange={e => setVirtualSettings({ rThreshold: +e.target.value || 0 })} />
+                        <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.rThreshold ?? ''}
+                          onChange={e => setVirtualSettings({ rThreshold: e.target.value === '' ? ('' as any) : (+e.target.value || 0) })} />
                       </div>
                     )}
                     <div className="lp-vp-streak">
