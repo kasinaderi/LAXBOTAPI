@@ -14,6 +14,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { useScannerStore } from './useScannerStore';
 import { useDerivStore } from './useDerivStore';
+import { getActivePageId } from './usePageSettings';
 import { tradeWS } from '../lib/deriv/trade-ws';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -109,6 +110,7 @@ export interface TradeLog {
   entrySpot: string;
   exitSpot: string;
   step: number;
+  pageId?: string;
 }
 
 interface PerStrategyState {
@@ -844,9 +846,13 @@ export const useBotStore = create<BotStoreState>()(
       setCrossMarketDelay: (v) => set({ crossMarketDelay: v }),
       setAdaptiveSwitch:  (v) => set({ adaptiveSwitch: v }),
 
-      addLog: (log) => set(state => ({
-        tradeLogs: [log, ...state.tradeLogs].slice(0, 50),
-      })),
+      addLog: (log) => {
+        const pageId = log.pageId || getActivePageId();
+        const logWithPage = { ...log, pageId };
+        set(state => ({
+          tradeLogs: [logWithPage, ...state.tradeLogs].slice(0, 50),
+        }));
+      },
       updateLog: (id, patch) => set(state => ({
         tradeLogs: state.tradeLogs.map(l => l.id === id ? { ...l, ...patch } : l),
       })),

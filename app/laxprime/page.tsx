@@ -1115,7 +1115,7 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
   const combinedLogs = React.useMemo(() => {
     // 1. Map real trades from Deriv store
     const realBotLogs = derivLogs
-      .filter(l => l.requestId && botTradeIds.has(String(l.requestId)))
+      .filter(l => l.requestId && botTradeIds.has(String(l.requestId)) && (!l.pageId || l.pageId === 'laxprime'))
       .map(l => {
         const localLog = rawLogs.find(x => String(x.id) === String(l.requestId));
         
@@ -1150,7 +1150,7 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
 
     // 2. Map virtual trades from botStore
     const virtLogs = rawLogs
-      .filter(l => String(l.id).startsWith('VIRT_'))
+      .filter(l => String(l.id).startsWith('VIRT_') && (!l.pageId || l.pageId === 'laxprime'))
       .map(l => ({
         id: String(l.id),
         time: l.time,

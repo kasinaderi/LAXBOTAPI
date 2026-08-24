@@ -4,15 +4,30 @@ import React from 'react';
 import { Card, CardHeader, CardContent, Badge } from './ui';
 import { ClipboardList, Trash2, Clock, Download, Zap } from 'lucide-react';
 import { useDerivStore } from '@/store/useDerivStore';
+import { usePathname } from 'next/navigation';
+import { getActivePageId } from '@/store/usePageSettings';
 
-export function TradeLog() {
+export function TradeLog({ pageId }: { pageId?: string }) {
     const { tradeLogs, clearLogs } = useDerivStore();
+    const pathname = usePathname();
+
+    const currentPageId = pageId || (
+      pathname?.includes('laxsniper-xv') ? 'laxsniper-xv' :
+      pathname?.includes('dtrader') ? 'dtrader' :
+      pathname?.includes('auto-trade') ? 'auto-trade' :
+      pathname?.includes('laxprime') ? 'laxprime' :
+      getActivePageId()
+    );
+
+    const filteredLogs = React.useMemo(() => {
+        return tradeLogs.filter((log: any) => !log.pageId || log.pageId === currentPageId);
+    }, [tradeLogs, currentPageId]);
 
     const exportToCSV = () => {
-        if (tradeLogs.length === 0) return;
+        if (filteredLogs.length === 0) return;
 
         const headers = ['Time', 'Contract', 'Stake', 'P/L', 'Result'];
-        const rows = tradeLogs.map(log => [
+        const rows = filteredLogs.map(log => [
             new Date(log.time).toISOString(),
             log.contract,
             log.stake,
@@ -42,7 +57,7 @@ export function TradeLog() {
                             onClick={exportToCSV}
                             className="p-1 hover:text-white text-gray-400 transition-colors"
                             title="Export CSV"
-                            disabled={tradeLogs.length === 0}
+                            disabled={filteredLogs.length === 0}
                         >
                             <Download className="w-4 h-4" />
                         </button>
@@ -60,7 +75,7 @@ export function TradeLog() {
             </CardHeader>
             <CardContent className="p-0">
                 <div className="max-h-[400px] overflow-y-auto overflow-x-auto scrollbar-thin scrollbar-thumb-dark scrollbar-track-transparent">
-                    {tradeLogs.length > 0 ? (
+                    {filteredLogs.length > 0 ? (
                         <table className="w-full text-left text-[11px] border-collapse min-w-[500px]">
                             <thead className="sticky top-0 bg-dark-card/95 backdrop-blur shadow-sm z-10">
                                 <tr className="border-b border-dark">
@@ -73,7 +88,7 @@ export function TradeLog() {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-dark">
-                                {tradeLogs.map((log, i) => {
+                                {filteredLogs.map((log, i) => {
                                     const isRiseFall = log.contract === 'CALL' || log.contract === 'PUT';
                                     const isWon = log.result === 'WON' || log.result === 'RISE WIN' || log.result === 'FALL WIN' || log.result === 'VIRT WON';
                                     const isLost = log.result === 'LOST' || log.result === 'RISE LOSS' || log.result === 'FALL LOSS' || log.result === 'VIRT LOST';

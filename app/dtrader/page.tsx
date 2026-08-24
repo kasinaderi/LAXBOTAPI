@@ -363,136 +363,143 @@ function TradeLogSidebar() {
       )}
 
       {/* Log Type Tabs */}
-      <div className="flex border-b border-white/5 bg-[#080c12]/60 p-1 flex-shrink-0">
-        <button
-          onClick={() => setLogType('manual')}
-          className={`flex-1 py-1 rounded text-[9px] font-black uppercase tracking-wider transition-all ${
-            logType === 'manual'
-              ? 'bg-teal-500/15 border border-teal-500/30 text-teal-400'
-              : 'text-gray-500 hover:text-gray-300'
-          }`}
-        >
-          Manual ({manualPositions.length})
-        </button>
-        <button
-          onClick={() => setLogType('bot')}
-          className={`flex-1 py-1 rounded text-[9px] font-black uppercase tracking-wider transition-all ${
-            logType === 'bot'
-              ? 'bg-indigo-500/15 border border-indigo-500/30 text-indigo-400'
-              : 'text-gray-500 hover:text-gray-300'
-          }`}
-        >
-          Bot ({tradeLogs.length})
-        </button>
-      </div>
-
-      {/* List */}
-      <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-1.5 trade-form-scroll max-h-[400px] md:max-h-none">
-        {logType === 'manual' ? (
-          manualPositions.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-6 text-center text-gray-500 gap-1.5">
-              <span className="text-lg">📋</span>
-              <span className="text-[10px] font-bold uppercase tracking-wider">No manual trades</span>
+      {(() => {
+        const filteredBotLogs = tradeLogs.filter((log: any) => !log.pageId || log.pageId === 'dtrader');
+        return (
+          <>
+            <div className="flex border-b border-white/5 bg-[#080c12]/60 p-1 flex-shrink-0">
+              <button
+                onClick={() => setLogType('manual')}
+                className={`flex-1 py-1 rounded text-[9px] font-black uppercase tracking-wider transition-all ${
+                  logType === 'manual'
+                    ? 'bg-teal-500/15 border border-teal-500/30 text-teal-400'
+                    : 'text-gray-500 hover:text-gray-300'
+                }`}
+              >
+                Manual ({manualPositions.length})
+              </button>
+              <button
+                onClick={() => setLogType('bot')}
+                className={`flex-1 py-1 rounded text-[9px] font-black uppercase tracking-wider transition-all ${
+                  logType === 'bot'
+                    ? 'bg-indigo-500/15 border border-indigo-500/30 text-indigo-400'
+                    : 'text-gray-500 hover:text-gray-300'
+                }`}
+              >
+                Bot ({filteredBotLogs.length})
+              </button>
             </div>
-          ) : (
-            manualPositions.slice().reverse().map((pos: any) => {
-              const profit = pos.currentProfit;
-              const isSettled = pos.isSold;
 
-              return (
-                <div key={pos.contractId} className="bg-white/3 border border-white/5 rounded-lg p-2 flex flex-col gap-1 text-[10px] font-medium">
-                  <div className="flex justify-between items-center font-bold">
-                    <span className="text-gray-400 uppercase tracking-wider">{pos.type}</span>
-                    <span className={profit > 0 ? 'text-emerald-400 font-mono font-black' : profit < 0 ? 'text-rose-400 font-mono font-black' : 'text-gray-400 font-mono'}>
-                      {profit > 0 ? `+$${profit.toFixed(2)}` : profit < 0 ? `-$${Math.abs(profit).toFixed(2)}` : '$0.00'}
-                    </span>
+            {/* List */}
+            <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-1.5 trade-form-scroll max-h-[400px] md:max-h-none">
+              {logType === 'manual' ? (
+                manualPositions.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-6 text-center text-gray-500 gap-1.5">
+                    <span className="text-lg">📋</span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider">No manual trades</span>
                   </div>
-                  <div className="flex justify-between text-gray-500 text-[9px] font-mono">
-                    <span>ID: {pos.contractId}</span>
-                    <span>Stake: ${pos.buyPrice.toFixed(2)}</span>
+                ) : (
+                  manualPositions.slice().reverse().map((pos: any) => {
+                    const profit = pos.currentProfit;
+                    const isSettled = pos.isSold;
+
+                    return (
+                      <div key={pos.contractId} className="bg-white/3 border border-white/5 rounded-lg p-2 flex flex-col gap-1 text-[10px] font-medium">
+                        <div className="flex justify-between items-center font-bold">
+                          <span className="text-gray-400 uppercase tracking-wider">{pos.type}</span>
+                          <span className={profit > 0 ? 'text-emerald-400 font-mono font-black' : profit < 0 ? 'text-rose-400 font-mono font-black' : 'text-gray-400 font-mono'}>
+                            {profit > 0 ? `+$${profit.toFixed(2)}` : profit < 0 ? `-$${Math.abs(profit).toFixed(2)}` : '$0.00'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-gray-500 text-[9px] font-mono">
+                          <span>ID: {pos.contractId}</span>
+                          <span>Stake: ${pos.buyPrice.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-gray-500 text-[9px] font-mono">
+                          <span>Spot: {pos.entrySpot}</span>
+                          {pos.prediction !== null && <span>Pred: {pos.prediction}</span>}
+                        </div>
+                        {!isSettled && (
+                          <button
+                            onClick={() => handleSell(pos.contractId)}
+                            className="mt-1 w-full bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 py-0.5 rounded font-bold text-[9px] transition-all"
+                          >
+                            Sell
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })
+                )
+              ) : (
+                filteredBotLogs.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-6 text-center text-gray-500 gap-1.5">
+                    <span className="text-lg">🤖</span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider">No bot trades</span>
                   </div>
-                  <div className="flex justify-between text-gray-500 text-[9px] font-mono">
-                    <span>Spot: {pos.entrySpot}</span>
-                    {pos.prediction !== null && <span>Pred: {pos.prediction}</span>}
-                  </div>
-                  {!isSettled && (
-                    <button
-                      onClick={() => handleSell(pos.contractId)}
-                      className="mt-1 w-full bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 py-0.5 rounded font-bold text-[9px] transition-all"
-                    >
-                      Sell
-                    </button>
-                  )}
-                </div>
-              );
-            })
-          )
-        ) : (
-          tradeLogs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-6 text-center text-gray-500 gap-1.5">
-              <span className="text-lg">🤖</span>
-              <span className="text-[10px] font-bold uppercase tracking-wider">No bot trades</span>
-            </div>
-          ) : (
-            tradeLogs.map((log: any, idx: number) => {
-              const profit = Number(log.profit) || 0;
-              const isRiseFall = log.contract === 'CALL' || log.contract === 'PUT';
-              const isWon = log.result === 'WON' || log.result === 'RISE WIN' || log.result === 'FALL WIN';
-              const isLost = log.result === 'LOST' || log.result === 'RISE LOSS' || log.result === 'FALL LOSS';
-              const isSettled = isWon || isLost;
-              return (
-                <div key={idx} className={`border rounded-lg p-2 flex flex-col gap-1 text-[10px] font-medium ${
-                  log.isVirtual ? 'border-indigo-500/20 bg-indigo-500/5' : 'border-white/5 bg-white/3'
-                }`}>
-                  <div className="flex justify-between items-center font-bold">
-                    <div className="flex items-center gap-1">
-                      {log.isVirtual && (
-                        <span className="text-[8px] font-black text-indigo-400 bg-indigo-500/15 border border-indigo-500/20 px-1 py-0.5 rounded uppercase leading-none">
-                          V
-                        </span>
-                      )}
-                      <span className="text-gray-400 uppercase tracking-wider">{log.contract}</span>
-                    </div>
-                    {isSettled ? (
-                      <span className={isWon ? 'text-emerald-400 font-mono font-black' : 'text-rose-400 font-mono font-black'}>
-                        {profit >= 0 ? `+$${profit.toFixed(2)}` : `-$${Math.abs(profit).toFixed(2)}`}
-                      </span>
-                    ) : (
-                      <span className="text-amber-400 font-mono font-black animate-pulse">
-                        {log.result || 'BUYING...'}
-                      </span>
-                    )}
-                  </div>
-                  {isSettled && (
-                    <div className="flex justify-end">
-                      <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wide ${
-                        isWon ? 'text-emerald-400 bg-emerald-500/10' : 'text-rose-400 bg-rose-500/10'
+                ) : (
+                  filteredBotLogs.map((log: any, idx: number) => {
+                    const profit = Number(log.profit) || 0;
+                    const isRiseFall = log.contract === 'CALL' || log.contract === 'PUT';
+                    const isWon = log.result === 'WON' || log.result === 'RISE WIN' || log.result === 'FALL WIN';
+                    const isLost = log.result === 'LOST' || log.result === 'RISE LOSS' || log.result === 'FALL LOSS';
+                    const isSettled = isWon || isLost;
+                    return (
+                      <div key={idx} className={`border rounded-lg p-2 flex flex-col gap-1 text-[10px] font-medium ${
+                        log.isVirtual ? 'border-indigo-500/20 bg-indigo-500/5' : 'border-white/5 bg-white/3'
                       }`}>
-                        {log.result}
-                      </span>
-                    </div>
-                  )}
-                  <div className="flex justify-between text-gray-500 text-[9px] font-mono">
-                    <span>Time: {new Date(log.time).toLocaleTimeString([], { hour12: false })}</span>
-                    <span>Stake: ${Number(log.stake || 0).toFixed(2)}</span>
-                  </div>
-                  {isRiseFall ? (
-                    <div className="flex justify-between text-gray-500 text-[9px] font-mono">
-                      <span>Entry: <span className="text-gray-300">{log.entrySpot || '-'}</span></span>
-                      <span>Exit: <span className="text-gray-300">{log.exit || '-'}</span></span>
-                    </div>
-                  ) : (
-                    <div className="flex justify-between text-gray-500 text-[9px] font-mono">
-                      <span>Exit Digit: {log.exit !== undefined && log.exit !== null ? log.exit : '-'}</span>
-                      {log.digit !== undefined && log.digit !== '-' && <span>Pred: {log.digit}</span>}
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )
-        )}
-      </div>
+                        <div className="flex justify-between items-center font-bold">
+                          <div className="flex items-center gap-1">
+                            {log.isVirtual && (
+                              <span className="text-[8px] font-black text-indigo-400 bg-indigo-500/15 border border-indigo-500/20 px-1 py-0.5 rounded uppercase leading-none">
+                                V
+                              </span>
+                            )}
+                            <span className="text-gray-400 uppercase tracking-wider">{log.contract}</span>
+                          </div>
+                          {isSettled ? (
+                            <span className={isWon ? 'text-emerald-400 font-mono font-black' : 'text-rose-400 font-mono font-black'}>
+                              {profit >= 0 ? `+$${profit.toFixed(2)}` : `-$${Math.abs(profit).toFixed(2)}`}
+                            </span>
+                          ) : (
+                            <span className="text-amber-400 font-mono font-black animate-pulse">
+                              {log.result || 'BUYING...'}
+                            </span>
+                          )}
+                        </div>
+                        {isSettled && (
+                          <div className="flex justify-end">
+                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wide ${
+                              isWon ? 'text-emerald-400 bg-emerald-500/10' : 'text-rose-400 bg-rose-500/10'
+                            }`}>
+                              {log.result}
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-gray-500 text-[9px] font-mono">
+                          <span>Time: {new Date(log.time).toLocaleTimeString([], { hour12: false })}</span>
+                          <span>Stake: ${Number(log.stake || 0).toFixed(2)}</span>
+                        </div>
+                        {isRiseFall ? (
+                          <div className="flex justify-between text-gray-500 text-[9px] font-mono">
+                            <span>Entry: <span className="text-gray-300">{log.entrySpot || '-'}</span></span>
+                            <span>Exit: <span className="text-gray-300">{log.exit || '-'}</span></span>
+                          </div>
+                        ) : (
+                          <div className="flex justify-between text-gray-500 text-[9px] font-mono">
+                            <span>Exit Digit: {log.exit !== undefined && log.exit !== null ? log.exit : '-'}</span>
+                            {log.digit !== undefined && log.digit !== '-' && <span>Pred: {log.digit}</span>}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )
+              )}
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }

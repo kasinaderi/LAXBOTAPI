@@ -8,6 +8,7 @@ import { tradeWS } from '../lib/deriv/trade-ws';
 import { backendWS } from '../lib/backend-ws';
 import { EntryDigitTrigger, DigitPatternTrigger } from '../lib/triggers/types';
 import { fetchAccounts } from '../lib/deriv/auth';
+import { getActivePageId } from './usePageSettings';
 
 interface DerivState {
     status: ConnectionStatus;
@@ -604,7 +605,9 @@ export const useDerivStore = create<DerivState>()(
                 if (log.requestId && state.tradeLogs.some(l => String(l.requestId) === String(log.requestId))) {
                     return {}; // no-op
                 }
-                return { tradeLogs: [log, ...state.tradeLogs].slice(0, 100) };
+                const pageId = log.pageId || getActivePageId();
+                const logWithPage = { ...log, pageId };
+                return { tradeLogs: [logWithPage, ...state.tradeLogs].slice(0, 100) };
             }),
 
             updateTradeLog: (requestId: string, updates: any) => set((state: DerivState) => {

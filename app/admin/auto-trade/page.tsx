@@ -686,8 +686,9 @@ export default function AutoTradePage() {
 
     // ── Trade log watcher ──────────────────────────────────────────────────
     useEffect(() => {
-        if (!isRunningAuto || tradeLogs.length === 0) return;
-        const latest = tradeLogs[0] as any;
+        const autoLogs = tradeLogs.filter((l: any) => !l.pageId || l.pageId === 'auto-trade');
+        if (!isRunningAuto || autoLogs.length === 0) return;
+        const latest = autoLogs[0] as any;
         if (!latest) return;
 
         const isWon  = latest.result?.includes('WIN')  || latest.result === 'WON';

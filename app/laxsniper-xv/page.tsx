@@ -72,7 +72,7 @@ export default function LaxSniperXV() {
                     <PerformanceStats />
                     <LiveDigits />
                     <BotControl />
-                    <TradeLog />
+                    <TradeLog pageId="laxsniper-xv" />
                 </div>
             </div>
 
