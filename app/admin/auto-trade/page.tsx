@@ -362,6 +362,9 @@ export default function AutoTradePage() {
     const playlistStatusRef         = useRef<'idle' | 'countdown' | 'executing' | 'completed'>('idle');
     const playlistCountdownTimerRef = useRef<NodeJS.Timeout | null>(null);
     const lastBotLogIdRef           = useRef<string | null>(null);
+    const activeStepSourceRef       = useRef<'laxprime' | 'laxsniper-xv' | null>(null);
+    const stepLaunchTimeRef         = useRef<number>(0);
+    const playlistTargetTimeRef     = useRef<number>(0);
 
     // Subscribe to LaxPrime (useBotStore) trade logs
     const botTradeLogs = useBotStore(state => state.tradeLogs);
@@ -695,18 +698,21 @@ export default function AutoTradePage() {
         if (playlistCountdownTimerRef.current) clearInterval(playlistCountdownTimerRef.current);
         setPlaylistStatus('countdown');
         playlistStatusRef.current = 'countdown';
+        activeStepSourceRef.current = null;
         setPlaylistCountdownSecs(totalSeconds);
 
-        let remaining = totalSeconds;
+        const targetMs = Date.now() + totalSeconds * 1000;
+        playlistTargetTimeRef.current = targetMs;
+
         const formatCd = (sec: number) => {
             const m = Math.floor(sec / 60).toString().padStart(2, '0');
             const s = (sec % 60).toString().padStart(2, '0');
             return `${m}:${s}`;
         };
-        setNextExecCd(formatCd(remaining));
+        setNextExecCd(formatCd(totalSeconds));
 
         playlistCountdownTimerRef.current = setInterval(() => {
-            remaining -= 1;
+            const remaining = Math.max(0, Math.ceil((playlistTargetTimeRef.current - Date.now()) / 1000));
             setPlaylistCountdownSecs(remaining);
             if (remaining <= 0) {
                 if (playlistCountdownTimerRef.current) {
@@ -731,6 +737,14 @@ export default function AutoTradePage() {
         setPlaylistCurrentStepIdx(stepIdx);
         setPlaylistStatus('executing');
         playlistStatusRef.current = 'executing';
+        activeStepSourceRef.current = step.source;
+        stepLaunchTimeRef.current = Date.now();
+
+        // Snapshot current latest trade log IDs so we ONLY process new trades settled AFTER this instant
+        const currentBotLogs = useBotStore.getState().tradeLogs;
+        const currentDerivLogs = useDerivStore.getState().tradeLogs;
+        lastBotLogIdRef.current = currentBotLogs[0] ? `${currentBotLogs[0].id}::${currentBotLogs[0].result}` : '__INIT__';
+        lastIdRef.current = currentDerivLogs[0] ? `${currentDerivLogs[0].requestId}::${currentDerivLogs[0].result}` : '__INIT__';
 
         // Check global take profit & stop loss limits
         const curProfit = sessionProfRef.current;
@@ -758,58 +772,39 @@ export default function AutoTradePage() {
         const stakeStr = nextStakeVal.toFixed(2);
         setCurrentStake(stakeStr);
 
-        const snapKey = step.source === 'laxprime' ? 'page-settings-v2-laxprime' : 'page-settings-v2-laxsniper-xv';
-        const snapRaw = typeof window !== 'undefined' ? localStorage.getItem(snapKey) : null;
-        if (!snapRaw) {
-            addAuditLog(`⚠️ No saved settings found for ${step.source === 'laxprime' ? 'LaxPrime' : 'LaxSniper XV'}. Please visit that page first to configure settings.`, 'warn');
-            return;
-        }
-
         if (step.source === 'laxprime') {
             try {
-                const snap = JSON.parse(snapRaw);
-                const botPatch: any = {};
-                for (const f of SYNC_BOT_FIELDS) {
-                    if (snap[`bot_${f}`] !== undefined) {
-                        botPatch[f] = snap[`bot_${f}`];
-                    }
-                }
-                // Override stake with compounded stake & sync global TP / SL
-                botPatch.stake = stakeStr;
-                botPatch.targetProfit = takeProfit;
-                botPatch.stopLoss = stopLoss;
+                // Read live LaxPrime store state (contains all strategies, multi-entry boxes, custom contracts, and selected markets)
+                const currentBotState = useBotStore.getState();
+                const patch: any = {
+                    stake: stakeStr,
+                    targetProfit: takeProfit,
+                    stopLoss: stopLoss,
+                };
                 if (step.marketOverride) {
-                    botPatch.selectedMarkets = [step.marketOverride];
+                    patch.selectedMarkets = [step.marketOverride];
                 }
-                useBotStore.setState(botPatch);
+                useBotStore.setState(patch);
 
-                if (snap['deriv_virtualSettings']) {
-                    useDerivStore.setState({ virtualSettings: snap['deriv_virtualSettings'] });
-                }
-
-                addAuditLog(`🚀 [Step ${stepIdx + 1}/${currentSteps.length}] Starting LaxPrime | Stake: $${stakeStr} (Compounded)`, 'info');
+                const activeMkts = patch.selectedMarkets || currentBotState.selectedMarkets || [];
+                addAuditLog(`🚀 [Step ${stepIdx + 1}/${currentSteps.length}] Starting LaxPrime | Stake: $${stakeStr} (${currentBotState.strategies?.length || 0} strategies on ${activeMkts.length} markets)`, 'info');
                 useBotStore.getState().startBot();
             } catch (err) {
                 addAuditLog(`❌ Error starting LaxPrime step: ${String(err)}`, 'error');
             }
         } else {
             try {
-                const snap = JSON.parse(snapRaw);
-                const derivPatch: any = {};
-                for (const f of SYNC_DERIV_FIELDS) {
-                    if (snap[`deriv_${f}`] !== undefined) {
-                        derivPatch[f] = snap[`deriv_${f}`];
-                    }
-                }
-                // Override initialStake with compounded stake & sync global TP / SL
-                derivPatch.initialStake = Number(stakeStr);
-                derivPatch.takeProfit = Number(takeProfit);
-                derivPatch.stopLoss = Number(stopLoss);
-                if (step.marketOverride) derivPatch.market = step.marketOverride;
-                if (step.contractOverride) derivPatch.contractType = step.contractOverride;
-                if (step.digitOverride !== null && step.digitOverride !== undefined) derivPatch.prediction = step.digitOverride;
+                // Read live LaxSniper XV store state
+                const patch: any = {
+                    initialStake: Number(stakeStr),
+                    takeProfit: Number(takeProfit),
+                    stopLoss: Number(stopLoss),
+                };
+                if (step.marketOverride) patch.market = step.marketOverride;
+                if (step.contractOverride) patch.contractType = step.contractOverride;
+                if (step.digitOverride !== null && step.digitOverride !== undefined) patch.prediction = step.digitOverride;
 
-                useDerivStore.setState(derivPatch);
+                useDerivStore.setState(patch);
 
                 addAuditLog(`🚀 [Step ${stepIdx + 1}/${currentSteps.length}] Starting LaxSniper XV | Stake: $${stakeStr} (Compounded)`, 'info');
                 useDerivStore.getState().startBot();
@@ -823,6 +818,7 @@ export default function AutoTradePage() {
         // Stop bot engines immediately
         useBotStore.getState().stopBot();
         stopBot();
+        activeStepSourceRef.current = null;
 
         const currentSteps = playlistStepsRef.current;
         const currentIdx = playlistCurrentStepIdxRef.current;
@@ -1078,7 +1074,7 @@ export default function AutoTradePage() {
 
         // ── Autonomous Trade Playlist mode settlement (LaxSniper XV) ─────
         if (selectedPreset === 'trade_playlist') {
-            if (!isVirtual) {
+            if (activeStepSourceRef.current === 'laxsniper-xv' && playlistStatusRef.current === 'executing' && !isVirtual) {
                 handlePlaylistTradeSettled(profit, stakeVal, isWon, exitDigit !== null ? String(exitDigit) : null, cType);
             }
             return; // In playlist preset, playlist manager handles sequence transitions
@@ -1419,7 +1415,10 @@ export default function AutoTradePage() {
 
         // ── Autonomous Trade Playlist mode settlement (LaxPrime) ──────────
         if (selectedPreset === 'trade_playlist') {
-            handlePlaylistTradeSettled(profit, stakeVal, isWon, latest.exitSpot ? String(latest.exitSpot) : null, latest.contract || 'DIGITDIFF');
+            if (activeStepSourceRef.current === 'laxprime' && playlistStatusRef.current === 'executing') {
+                handlePlaylistTradeSettled(profit, stakeVal, isWon, latest.exitSpot ? String(latest.exitSpot) : null, latest.contract || 'DIGITDIFF');
+            }
+            return;
         }
     }, [botTradeLogs, isRunningAuto, selectedPreset, isCompounding, compoundPct, isCapitalCompound, capitalPct, baseStake, account?.balance, currentStake, handlePlaylistTradeSettled, addAuditLog]);
 
@@ -1733,6 +1732,15 @@ export default function AutoTradePage() {
             setPlaylistStepResults({});
             playlistCurrentStepIdxRef.current = 0;
             setPlaylistCurrentStepIdx(0);
+            activeStepSourceRef.current = null;
+            stepLaunchTimeRef.current = Date.now();
+
+            // Snapshot existing trade logs so historical logs are never treated as new settlements
+            const currentBotLogs = useBotStore.getState().tradeLogs;
+            const currentDerivLogs = useDerivStore.getState().tradeLogs;
+            lastBotLogIdRef.current = currentBotLogs[0] ? `${currentBotLogs[0].id}::${currentBotLogs[0].result}` : '__INIT__';
+            lastIdRef.current = currentDerivLogs[0] ? `${currentDerivLogs[0].requestId}::${currentDerivLogs[0].result}` : '__INIT__';
+
             const steps = playlistStepsRef.current;
             if (!steps || steps.length === 0) {
                 addAuditLog('⚠️ Playlist is empty! Please add at least 1 trade step.', 'warn');
