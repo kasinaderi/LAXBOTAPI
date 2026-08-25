@@ -138,9 +138,12 @@ const TARGET_MARKETS = [
     { value: 'R_75',    label: 'Volatility 75 Index' },
     { value: 'R_100',   label: 'Volatility 100 Index' },
     { value: '1HZ10V',  label: 'Vol 10 (1s) Index' },
+    { value: '1HZ15V',  label: 'Vol 15 (1s) Index' },
     { value: '1HZ25V',  label: 'Vol 25 (1s) Index' },
+    { value: '1HZ30V',  label: 'Vol 30 (1s) Index' },
     { value: '1HZ50V',  label: 'Vol 50 (1s) Index' },
     { value: '1HZ75V',  label: 'Vol 75 (1s) Index' },
+    { value: '1HZ90V',  label: 'Vol 90 (1s) Index' },
     { value: '1HZ100V', label: 'Vol 100 (1s) Index' },
 ];
 
@@ -982,10 +985,16 @@ export default function AutoTradePage() {
         }
     }, [applyStep]);
 
-    // ── Trade log watcher ──────────────────────────────────────────────────
+    // ── Trade log watcher (LaxSniper XV trades) ──────────────────────────────
     useEffect(() => {
+        if (!isRunningAuto) return;
+        // In trade_playlist preset, strictly ignore tradeLogs unless the currently executing step is LaxSniper XV
+        if (selectedPreset === 'trade_playlist' && (activeStepSourceRef.current !== 'laxsniper-xv' || playlistStatusRef.current !== 'executing')) {
+            return;
+        }
+
         const autoLogs = tradeLogs.filter((l: any) => !l.pageId || l.pageId === 'auto-trade');
-        if (!isRunningAuto || autoLogs.length === 0) return;
+        if (autoLogs.length === 0) return;
         const latest = autoLogs[0] as any;
         if (!latest) return;
 
@@ -1017,6 +1026,7 @@ export default function AutoTradePage() {
         const cType    = latest.contract || latest.contractType || '—';
         const entrySpot = latest.entrySpot || latest.entry_spot || '—';
         const stakeVal  = Number(latest.stake) || Number(currentStake);
+        const actualMarket = latest.symbol || latest.market || selectedMarket;
 
         // Only count real trades in the stats header — virtual trades are excluded
         if (!isVirtual) {
@@ -1054,7 +1064,7 @@ export default function AutoTradePage() {
         const record: AutoLXTradeRecord = {
             id:           latest.requestId || uid(),
             time:         new Date().toLocaleTimeString([], { hour12: false }),
-            market:       selectedMarket,
+            market:       actualMarket,
             contractType: cType,
             entrySpot,
             exitDigit,
@@ -1351,6 +1361,10 @@ export default function AutoTradePage() {
     // ── LaxPrime Trade Log Watcher ──────────────────────────────────────────
     useEffect(() => {
         if (!isRunningAuto) return;
+        // In trade_playlist preset, strictly ignore botTradeLogs unless the currently executing step is LaxPrime
+        if (selectedPreset === 'trade_playlist' && (activeStepSourceRef.current !== 'laxprime' || playlistStatusRef.current !== 'executing')) {
+            return;
+        }
         if (botTradeLogs.length === 0) return;
 
         const latest = botTradeLogs[0];
@@ -1390,10 +1404,13 @@ export default function AutoTradePage() {
         setMktTrades(p => p + 1);
         setTriggersFired(p => p + 1);
 
+        const actualMarket = latest.symbol || 'LaxPrime';
+        const mktLabel = TARGET_MARKETS.find(m => m.value === latest.symbol)?.label.replace(' Index', '') || actualMarket;
+
         const record: AutoLXTradeRecord = {
             id:           latest.id || uid(),
             time:         new Date(latest.time || Date.now()).toLocaleTimeString([], { hour12: false }),
-            market:       latest.symbol || 'LaxPrime',
+            market:       actualMarket,
             contractType: latest.contract || '—',
             entrySpot:    latest.entrySpot || '—',
             exitDigit:    latest.exitSpot ? Number(String(latest.exitSpot).slice(-1)) : null,
@@ -1409,7 +1426,7 @@ export default function AutoTradePage() {
         });
 
         addAuditLog(
-            `[LaxPrime] [${latest.contract || 'TRADE'}] ${isWon ? '✓ WIN' : '✗ LOSS'} | Exit: ${latest.exitSpot ?? '?'} | P/L: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}`,
+            `[${mktLabel}] [${latest.contract || 'TRADE'}] ${isWon ? '✓ WIN' : '✗ LOSS'} | Exit: ${latest.exitSpot ?? '?'} | P/L: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}`,
             isWon ? 'success' : 'error'
         );
 
