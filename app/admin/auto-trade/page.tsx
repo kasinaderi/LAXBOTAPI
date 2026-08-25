@@ -10,18 +10,45 @@ import {
     Clock, TrendingDown, Zap, BookOpen, Plus, Trash2,
     GitMerge, Shuffle, Layers, BarChart3, RefreshCw,
     Check, X, Minus, Search, Filter, Eye, Settings2,
-    Target, ChevronRight, ArrowLeftRight, AlertTriangle, FlaskConical
+    Target, ChevronRight, ArrowLeftRight, AlertTriangle, FlaskConical,
+    Copy, ArrowUp, ArrowDown, Repeat, Timer, ChevronDown, Sliders, Sparkles
 } from 'lucide-react';
 import { useDerivStore } from '@/store/useDerivStore';
 import { usePageSettings } from '@/store/usePageSettings';
 import { useScannerStore } from '@/store/useScannerStore';
+import { useBotStore } from '@/store/useBotStore';
 import { ticksToDecimals } from '@/lib/deriv/constants';
 import { tradeEngine } from '@/lib/deriv/trade-engine';
 import { tradeWS } from '@/lib/deriv/trade-ws';
 
+// ── Snapshot field lists (mirrors usePageSettings.ts) ──────────────────────
+// Used by LaxPrime/Sniper Sync preset to read saved-settings snapshots.
+const SYNC_DERIV_FIELDS = [
+    'market','contractType','prediction','triggerSequence','triggerMode',
+    'initialStake','martingaleMultiplier','maxMartingaleSteps','takeProfit','stopLoss',
+    'stopAfterTotalWins','stopAfterConsecutiveLosses','compoundProfits','stopOnMaxSteps',
+    'triggers','tradePattern','tradingMode','virtualSettings','recoverySettings',
+    'showQuickControls','quickSwitchVirtualBehavior','showLogOverlayOnRun',
+] as const;
+
+const SYNC_BOT_FIELDS = [
+    'stake','targetProfit','targetProfitMode','stopLoss','stopLossMode',
+    'martingale','tradingMode','strategies','selectedMarkets','crossMarketDelay','adaptiveSwitch',
+] as const;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
 // ═══════════════════════════════════════════════════════════════════════════
+
+export interface PlaylistTradeStep {
+    id: string;
+    delayMinutes: number;           // Delay in minutes to wait AFTER previous trade settles (0 = immediate)
+    source: 'laxprime' | 'laxsniper-xv'; // Which engine/rules to load
+    label?: string;                 // e.g. "Step 1"
+    marketOverride?: string;        // Optional override (e.g. 'R_100', '1HZ100V', etc.)
+    contractOverride?: ContractTypeKey | ''; // Optional override
+    digitOverride?: number | null;  // Optional prediction override (0-9)
+}
 
 type ContractTypeKey =
     | 'CALL' | 'PUT'
@@ -164,6 +191,15 @@ const RATING_CLS = {
     NEUTRAL:   'text-gray-400 bg-white/5 border-white/10',
     AVOID:     'text-rose-400 bg-rose-500/10 border-rose-500/30',
 };
+
+const DEFAULT_PLAYLIST_STEPS: PlaylistTradeStep[] = [
+    { id: 'step-1', delayMinutes: 0,  source: 'laxprime', label: 'Step 1 (Immediate)' },
+    { id: 'step-2', delayMinutes: 7,  source: 'laxprime', label: 'Step 2 (+7m delay)' },
+    { id: 'step-3', delayMinutes: 15, source: 'laxprime', label: 'Step 3 (+15m delay)' },
+    { id: 'step-4', delayMinutes: 6,  source: 'laxprime', label: 'Step 4 (+6m delay)' },
+];
+
+const QUICK_DELAY_OPTIONS = [1, 2, 3, 5, 7, 10, 15, 20, 30];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // COMPONENT
@@ -311,6 +347,25 @@ export default function AutoTradePage() {
     const pipelineStepsRef     = useRef<PipelineStep[]>(pipelineSteps);
     const pipelineModeRef      = useRef<TriggerMode>(pipelineMode);
 
+    // ── Autonomous Trade Playlist & Sync State ────────────────────────────
+    const [playlistSteps,          setPlaylistSteps]          = useState<PlaylistTradeStep[]>(DEFAULT_PLAYLIST_STEPS);
+    const [playlistLoop,           setPlaylistLoop]           = useState<boolean>(false);
+    const [playlistCurrentStepIdx, setPlaylistCurrentStepIdx] = useState<number>(0);
+    const [playlistStatus,         setPlaylistStatus]         = useState<'idle' | 'countdown' | 'executing' | 'completed'>('idle');
+    const [playlistCountdownSecs,  setPlaylistCountdownSecs]  = useState<number>(0);
+    const [playlistStepResults,    setPlaylistStepResults]    = useState<Record<string, { result: 'WIN' | 'LOSS'; profit: number; stake: number; exitSpot?: string; time: string }>>({});
+    const [expandedStepId,         setExpandedStepId]         = useState<string | null>(null);
+
+    const playlistStepsRef          = useRef<PlaylistTradeStep[]>(playlistSteps);
+    const playlistLoopRef           = useRef<boolean>(playlistLoop);
+    const playlistCurrentStepIdxRef = useRef<number>(0);
+    const playlistStatusRef         = useRef<'idle' | 'countdown' | 'executing' | 'completed'>('idle');
+    const playlistCountdownTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const lastBotLogIdRef           = useRef<string | null>(null);
+
+    // Subscribe to LaxPrime (useBotStore) trade logs
+    const botTradeLogs = useBotStore(state => state.tradeLogs);
+
     useEffect(() => { isRunningRef.current       = isRunningAuto;    }, [isRunningAuto]);
     useEffect(() => { curStepRef.current         = curStep;          }, [curStep]);
     useEffect(() => { curRepRef.current          = curRep;           }, [curRep]);
@@ -323,6 +378,9 @@ export default function AutoTradePage() {
     useEffect(() => { cycleIntervalRef.current   = cycleInterval;    }, [cycleInterval]);
     useEffect(() => { pipelineStepsRef.current   = pipelineSteps;    }, [pipelineSteps]);
     useEffect(() => { pipelineModeRef.current    = pipelineMode;     }, [pipelineMode]);
+    useEffect(() => { playlistStepsRef.current   = playlistSteps;    }, [playlistSteps]);
+    useEffect(() => { playlistLoopRef.current    = playlistLoop;     }, [playlistLoop]);
+    useEffect(() => { playlistStatusRef.current  = playlistStatus;   }, [playlistStatus]);
 
     // React to virtual ↔ real mode switches triggered by the trade engine
     const prevVirtualModeRef = useRef(virtualSettings.isVirtualMode);
@@ -557,6 +615,9 @@ export default function AutoTradePage() {
             if (s.compoundPct)         setCompoundPct(s.compoundPct);
             if (s.isCapitalCompound    !== undefined) setIsCapitalCompound(s.isCapitalCompound);
             if (s.capitalPct)          setCapitalPct(s.capitalPct);
+            // Autonomous Trade Playlist settings
+            if (s.playlistSteps && Array.isArray(s.playlistSteps)) setPlaylistSteps(s.playlistSteps);
+            if (s.playlistLoop !== undefined)                      setPlaylistLoop(s.playlistLoop);
         } catch (e) {
             console.warn('AUTO-LX: failed to restore settings', e);
         }
@@ -576,6 +637,7 @@ export default function AutoTradePage() {
                 isMartingaleEnabled, martingaleMul, maxMartSteps, stopOnMaxSteps, takeProfit, stopLoss,
                 maxWinsCap, maxTradesCap, maxTradesPerMarket, cycleInterval,
                 isCompounding, compoundPct, isCapitalCompound, capitalPct,
+                playlistSteps, playlistLoop,
             }));
         } catch (e) { /* quota exceeded — ignore */ }
     }, [
@@ -587,6 +649,7 @@ export default function AutoTradePage() {
         isMartingaleEnabled, martingaleMul, maxMartSteps, stopOnMaxSteps, takeProfit, stopLoss,
         maxWinsCap, maxTradesCap, maxTradesPerMarket, cycleInterval,
         isCompounding, compoundPct, isCapitalCompound, capitalPct,
+        playlistSteps, playlistLoop,
         isAuthorized,
     ]);
 
@@ -626,6 +689,245 @@ export default function AutoTradePage() {
         }
         return base.toFixed(2);
     }, [baseStake, isCapitalCompound, isCompounding, capitalPct, compoundPct, account?.balance]);
+
+    // ── Playlist Execution Handlers ─────────────────────────────────────────
+    const startPlaylistCountdown = useCallback((totalSeconds: number, targetStepIdx: number) => {
+        if (playlistCountdownTimerRef.current) clearInterval(playlistCountdownTimerRef.current);
+        setPlaylistStatus('countdown');
+        playlistStatusRef.current = 'countdown';
+        setPlaylistCountdownSecs(totalSeconds);
+
+        let remaining = totalSeconds;
+        const formatCd = (sec: number) => {
+            const m = Math.floor(sec / 60).toString().padStart(2, '0');
+            const s = (sec % 60).toString().padStart(2, '0');
+            return `${m}:${s}`;
+        };
+        setNextExecCd(formatCd(remaining));
+
+        playlistCountdownTimerRef.current = setInterval(() => {
+            remaining -= 1;
+            setPlaylistCountdownSecs(remaining);
+            if (remaining <= 0) {
+                if (playlistCountdownTimerRef.current) {
+                    clearInterval(playlistCountdownTimerRef.current);
+                    playlistCountdownTimerRef.current = null;
+                }
+                setNextExecCd(null);
+                executePlaylistStep(targetStepIdx);
+            } else {
+                setNextExecCd(formatCd(remaining));
+            }
+        }, 1000);
+    }, []);
+
+    const executePlaylistStep = useCallback((stepIdx: number) => {
+        if (!isRunningRef.current) return;
+        const currentSteps = playlistStepsRef.current;
+        if (!currentSteps || stepIdx >= currentSteps.length) return;
+
+        const step = currentSteps[stepIdx];
+        playlistCurrentStepIdxRef.current = stepIdx;
+        setPlaylistCurrentStepIdx(stepIdx);
+        setPlaylistStatus('executing');
+        playlistStatusRef.current = 'executing';
+
+        // Check global take profit & stop loss limits
+        const curProfit = sessionProfRef.current;
+        if (Number(takeProfit) > 0 && curProfit >= Number(takeProfit)) {
+            addAuditLog(`🎯 Global Take Profit reached ($${curProfit.toFixed(2)} >= $${takeProfit})! Session completed.`, 'success');
+            handleStop();
+            return;
+        }
+        if (Number(stopLoss) > 0 && curProfit <= -Math.abs(Number(stopLoss))) {
+            addAuditLog(`🛑 Global Stop Loss hit ($${curProfit.toFixed(2)} <= -$${stopLoss})! Session halted.`, 'error');
+            handleStop();
+            return;
+        }
+
+        // Calculate compounded stake
+        const base = parseFloat(baseStake) || 1.0;
+        let nextStakeVal = base;
+        if (isCapitalCompound) {
+            const bal = account?.balance || 0;
+            if (bal > 0) nextStakeVal = Math.max(0.35, bal * (parseFloat(capitalPct) / 100));
+        } else if (isCompounding && curProfit > 0) {
+            const comp = base + curProfit * (parseFloat(compoundPct) / 100);
+            nextStakeVal = Math.max(base, comp);
+        }
+        const stakeStr = nextStakeVal.toFixed(2);
+        setCurrentStake(stakeStr);
+
+        const snapKey = step.source === 'laxprime' ? 'page-settings-v2-laxprime' : 'page-settings-v2-laxsniper-xv';
+        const snapRaw = typeof window !== 'undefined' ? localStorage.getItem(snapKey) : null;
+        if (!snapRaw) {
+            addAuditLog(`⚠️ No saved settings found for ${step.source === 'laxprime' ? 'LaxPrime' : 'LaxSniper XV'}. Please visit that page first to configure settings.`, 'warn');
+            return;
+        }
+
+        if (step.source === 'laxprime') {
+            try {
+                const snap = JSON.parse(snapRaw);
+                const botPatch: any = {};
+                for (const f of SYNC_BOT_FIELDS) {
+                    if (snap[`bot_${f}`] !== undefined) {
+                        botPatch[f] = snap[`bot_${f}`];
+                    }
+                }
+                // Override stake with compounded stake & sync global TP / SL
+                botPatch.stake = stakeStr;
+                botPatch.targetProfit = takeProfit;
+                botPatch.stopLoss = stopLoss;
+                if (step.marketOverride) {
+                    botPatch.selectedMarkets = [step.marketOverride];
+                }
+                useBotStore.setState(botPatch);
+
+                if (snap['deriv_virtualSettings']) {
+                    useDerivStore.setState({ virtualSettings: snap['deriv_virtualSettings'] });
+                }
+
+                addAuditLog(`🚀 [Step ${stepIdx + 1}/${currentSteps.length}] Starting LaxPrime | Stake: $${stakeStr} (Compounded)`, 'info');
+                useBotStore.getState().startBot();
+            } catch (err) {
+                addAuditLog(`❌ Error starting LaxPrime step: ${String(err)}`, 'error');
+            }
+        } else {
+            try {
+                const snap = JSON.parse(snapRaw);
+                const derivPatch: any = {};
+                for (const f of SYNC_DERIV_FIELDS) {
+                    if (snap[`deriv_${f}`] !== undefined) {
+                        derivPatch[f] = snap[`deriv_${f}`];
+                    }
+                }
+                // Override initialStake with compounded stake & sync global TP / SL
+                derivPatch.initialStake = Number(stakeStr);
+                derivPatch.takeProfit = Number(takeProfit);
+                derivPatch.stopLoss = Number(stopLoss);
+                if (step.marketOverride) derivPatch.market = step.marketOverride;
+                if (step.contractOverride) derivPatch.contractType = step.contractOverride;
+                if (step.digitOverride !== null && step.digitOverride !== undefined) derivPatch.prediction = step.digitOverride;
+
+                useDerivStore.setState(derivPatch);
+
+                addAuditLog(`🚀 [Step ${stepIdx + 1}/${currentSteps.length}] Starting LaxSniper XV | Stake: $${stakeStr} (Compounded)`, 'info');
+                useDerivStore.getState().startBot();
+            } catch (err) {
+                addAuditLog(`❌ Error starting LaxSniper XV step: ${String(err)}`, 'error');
+            }
+        }
+    }, [account?.balance, baseStake, isCapitalCompound, isCompounding, capitalPct, compoundPct, takeProfit, stopLoss, addAuditLog]);
+
+    const handlePlaylistTradeSettled = useCallback((profit: number, stakeVal: number, isWon: boolean, exitSpot: string | null, contractType: string) => {
+        // Stop bot engines immediately
+        useBotStore.getState().stopBot();
+        stopBot();
+
+        const currentSteps = playlistStepsRef.current;
+        const currentIdx = playlistCurrentStepIdxRef.current;
+        const currentStep = currentSteps[currentIdx];
+        const stepKey = currentStep?.id || `step-${currentIdx}`;
+
+        // Save step result for visual roadmap
+        setPlaylistStepResults(prev => ({
+            ...prev,
+            [stepKey]: {
+                result: isWon ? 'WIN' : 'LOSS',
+                profit,
+                stake: stakeVal,
+                exitSpot: exitSpot ? String(exitSpot) : undefined,
+                time: new Date().toLocaleTimeString([], { hour12: false })
+            }
+        }));
+
+        // Check global take profit & stop loss limits
+        const curProfit = sessionProfRef.current;
+        if (Number(takeProfit) > 0 && curProfit >= Number(takeProfit)) {
+            addAuditLog(`🎯 Global Take Profit reached ($${curProfit.toFixed(2)} >= $${takeProfit})! Session completed.`, 'success');
+            setPlaylistStatus('completed');
+            handleStop();
+            return;
+        }
+        if (Number(stopLoss) > 0 && curProfit <= -Math.abs(Number(stopLoss))) {
+            addAuditLog(`🛑 Global Stop Loss hit ($${curProfit.toFixed(2)} <= -$${stopLoss})! Session halted.`, 'error');
+            setPlaylistStatus('completed');
+            handleStop();
+            return;
+        }
+
+        // Determine next step
+        const nextIdx = currentIdx + 1;
+        if (nextIdx < currentSteps.length) {
+            playlistCurrentStepIdxRef.current = nextIdx;
+            setPlaylistCurrentStepIdx(nextIdx);
+            const nextStep = currentSteps[nextIdx];
+            const delaySec = Math.max(1, (nextStep.delayMinutes || 0) * 60);
+            addAuditLog(`⏳ Step ${currentIdx + 1} settled (${isWon ? 'WIN' : 'LOSS'} | ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}). Cooling down for ${nextStep.delayMinutes}m before Step ${nextIdx + 1}...`, 'info');
+            startPlaylistCountdown(delaySec, nextIdx);
+        } else if (playlistLoopRef.current) {
+            playlistCurrentStepIdxRef.current = 0;
+            setPlaylistCurrentStepIdx(0);
+            const step0 = currentSteps[0];
+            const delaySec = Math.max(1, (step0.delayMinutes || 0) * 60);
+            addAuditLog(`🔄 Playlist cycle completed! Looping to Step 1 in ${step0.delayMinutes}m...`, 'info');
+            startPlaylistCountdown(delaySec, 0);
+        } else {
+            setPlaylistStatus('completed');
+            addAuditLog(`🏁 All ${currentSteps.length} Playlist steps successfully executed. Session finished.`, 'success');
+            handleStop();
+        }
+    }, [takeProfit, stopLoss, startPlaylistCountdown, addAuditLog]);
+
+    // ── Playlist Step Management Helpers ────────────────────────────────────
+    const addPlaylistStep = (delayMinutes: number = 5, source: 'laxprime' | 'laxsniper-xv' = 'laxprime') => {
+        const newStep: PlaylistTradeStep = {
+            id: uid(),
+            delayMinutes,
+            source,
+            label: `Step ${playlistSteps.length + 1} (+${delayMinutes}m delay)`,
+        };
+        setPlaylistSteps(prev => [...prev, newStep]);
+    };
+
+    const duplicatePlaylistStep = (id: string) => {
+        setPlaylistSteps(prev => {
+            const idx = prev.findIndex(s => s.id === id);
+            if (idx === -1) return prev;
+            const original = prev[idx];
+            const clone: PlaylistTradeStep = {
+                ...original,
+                id: uid(),
+                label: `${original.label || `Step ${idx + 1}`} (Copy)`,
+            };
+            const updated = [...prev];
+            updated.splice(idx + 1, 0, clone);
+            return updated;
+        });
+    };
+
+    const deletePlaylistStep = (id: string) => {
+        setPlaylistSteps(prev => {
+            if (prev.length <= 1) return prev;
+            return prev.filter(s => s.id !== id);
+        });
+    };
+
+    const updatePlaylistStep = (id: string, patch: Partial<PlaylistTradeStep>) => {
+        setPlaylistSteps(prev => prev.map(s => s.id === id ? { ...s, ...patch } : s));
+    };
+
+    const movePlaylistStep = (idx: number, dir: -1 | 1) => {
+        setPlaylistSteps(prev => {
+            const targetIdx = idx + dir;
+            if (targetIdx < 0 || targetIdx >= prev.length) return prev;
+            const copy = [...prev];
+            const temp = copy[idx];
+            copy[idx] = copy[targetIdx];
+            copy[targetIdx] = temp;
+            return copy;
+        });
+    };
 
     // ── Adaptive switch helper ────────────────────────────────────────────
     const doAdaptiveSwitch = useCallback((lastContract: string) => {
@@ -765,11 +1067,24 @@ export default function AutoTradePage() {
             result:       isWon ? 'WIN' : 'LOSS',
             isVirtual,
         };
-        setTradeLog(prev => [record, ...prev].slice(0, 300));
+        setTradeLog(prev => {
+            if (prev.some(r => String(r.id) === String(record.id))) return prev;
+            return [record, ...prev].slice(0, 300);
+        });
         addAuditLog(
             `${isVirtual ? '[VIRTUAL] ' : ''}[${cType}] ${isWon ? '✓ WIN' : '✗ LOSS'} | Exit: ${exitDigit ?? '?'} | P/L: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}`,
             isWon ? 'success' : 'error'
         );
+
+        // ── Autonomous Trade Playlist mode settlement (LaxSniper XV) ─────
+        if (selectedPreset === 'trade_playlist') {
+            if (!isVirtual) {
+                handlePlaylistTradeSettled(profit, stakeVal, isWon, exitDigit !== null ? String(exitDigit) : null, cType);
+            }
+            return; // In playlist preset, playlist manager handles sequence transitions
+        }
+
+
 
         // ── Advance pipeline (real trades only) ───────────────────────────
         if (!isVirtual) {
@@ -1035,7 +1350,80 @@ export default function AutoTradePage() {
         }
     }
 
-    }, [tradeLogs, isRunningAuto, cycleInterval, tradesPerCycle, isMartingaleEnabled, martingaleMul, maxMartSteps, stopOnMaxSteps, takeProfit, stopLoss, selectedPreset, marketRegimes]);
+    }, [tradeLogs, isRunningAuto, cycleInterval, tradesPerCycle, isMartingaleEnabled, martingaleMul, maxMartSteps, stopOnMaxSteps, takeProfit, stopLoss, selectedPreset, marketRegimes, handlePlaylistTradeSettled]);
+
+    // ── LaxPrime Trade Log Watcher ──────────────────────────────────────────
+    useEffect(() => {
+        if (!isRunningAuto) return;
+        if (botTradeLogs.length === 0) return;
+
+        const latest = botTradeLogs[0];
+        if (!latest) return;
+
+        const isWon = latest.result === 'WON';
+        const isLost = latest.result === 'LOST';
+        if (!isWon && !isLost) return; // Only process settled real trades
+
+        const logKey = `${latest.id}::${latest.result}`;
+        if (lastBotLogIdRef.current === logKey) return;
+        lastBotLogIdRef.current = logKey;
+
+        const profit   = Number(latest.profit) || 0;
+        const stakeVal = Number(latest.stake) || Number(currentStake);
+
+        setSessionTrades(p => p + 1);
+        if (isWon) setSessionWins(p => p + 1); else setSessionLosses(p => p + 1);
+
+        const nextProfit = sessionProfRef.current + profit;
+        sessionProfRef.current = nextProfit;
+        setSessionProfit(nextProfit);
+
+        // Update compounded stake immediately for next step
+        const base = parseFloat(baseStake) || 1.0;
+        let nextStakeVal = base;
+        if (isCapitalCompound) {
+            const bal = account?.balance || 0;
+            if (bal > 0) nextStakeVal = Math.max(0.35, bal * (parseFloat(capitalPct) / 100));
+        } else if (isCompounding && nextProfit > 0) {
+            const comp = base + nextProfit * (parseFloat(compoundPct) / 100);
+            nextStakeVal = Math.max(base, comp);
+        }
+        const nextStakeStr = nextStakeVal.toFixed(2);
+        setCurrentStake(nextStakeStr);
+
+        setMktTrades(p => p + 1);
+        setTriggersFired(p => p + 1);
+
+        const record: AutoLXTradeRecord = {
+            id:           latest.id || uid(),
+            time:         new Date(latest.time || Date.now()).toLocaleTimeString([], { hour12: false }),
+            market:       latest.symbol || 'LaxPrime',
+            contractType: latest.contract || '—',
+            entrySpot:    latest.entrySpot || '—',
+            exitDigit:    latest.exitSpot ? Number(String(latest.exitSpot).slice(-1)) : null,
+            stake:        stakeVal,
+            profit,
+            result:       isWon ? 'WIN' : 'LOSS',
+            isVirtual:    false,
+        };
+
+        setTradeLog(prev => {
+            if (prev.some(r => String(r.id) === String(record.id))) return prev;
+            return [record, ...prev].slice(0, 300);
+        });
+
+        addAuditLog(
+            `[LaxPrime] [${latest.contract || 'TRADE'}] ${isWon ? '✓ WIN' : '✗ LOSS'} | Exit: ${latest.exitSpot ?? '?'} | P/L: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}`,
+            isWon ? 'success' : 'error'
+        );
+
+        // ── Autonomous Trade Playlist mode settlement (LaxPrime) ──────────
+        if (selectedPreset === 'trade_playlist') {
+            handlePlaylistTradeSettled(profit, stakeVal, isWon, latest.exitSpot ? String(latest.exitSpot) : null, latest.contract || 'DIGITDIFF');
+        }
+    }, [botTradeLogs, isRunningAuto, selectedPreset, isCompounding, compoundPct, isCapitalCompound, capitalPct, baseStake, account?.balance, currentStake, handlePlaylistTradeSettled, addAuditLog]);
+
+
 
 
     // ── Market ratings ─────────────────────────────────────────────────────
@@ -1328,6 +1716,44 @@ export default function AutoTradePage() {
     // ── Start ──────────────────────────────────────────────────────────────
     const handleStart = () => {
         if (tradingStatus !== 'connected') { alert('Connect the Deriv trading hook first.'); return; }
+
+        setCurStep(0); setCurRep(0);
+        setIsRunningAuto(true);
+        setUptimeStart(Date.now());
+        setSessionProfit(0); setSessionWins(0); setSessionLosses(0); setSessionTrades(0);
+        setMktTrades(0); setTriggersFired(0);
+        setTradeLog([]); setAuditLogs([]);
+        cycleTradesCountRef.current = 0;
+        setCycleTradesCount(0);
+        lastIdRef.current = null;
+        sessionProfRef.current = 0;
+
+        // ── Autonomous Trade Playlist mode ────────────────────────────────────
+        if (selectedPreset === 'trade_playlist') {
+            setPlaylistStepResults({});
+            playlistCurrentStepIdxRef.current = 0;
+            setPlaylistCurrentStepIdx(0);
+            const steps = playlistStepsRef.current;
+            if (!steps || steps.length === 0) {
+                addAuditLog('⚠️ Playlist is empty! Please add at least 1 trade step.', 'warn');
+                return;
+            }
+            const step0 = steps[0];
+            const srcLabel = step0.source === 'laxprime' ? 'LaxPrime' : 'LaxSniper XV';
+            addAuditLog('⚡ Autonomous Trade Playlist launched.', 'success');
+            addAuditLog(`📋 Playlist contains ${steps.length} steps · Loop: ${playlistLoopRef.current ? 'ENABLED' : 'DISABLED'} · Compounding: ACTIVE`, 'info');
+
+            if (step0.delayMinutes <= 0) {
+                addAuditLog(`🚀 Step 1 starting immediately using ${srcLabel}...`, 'info');
+                setTimeout(() => executePlaylistStep(0), 500);
+            } else {
+                addAuditLog(`⏳ Step 1 initial countdown: ${step0.delayMinutes} min before execution...`, 'info');
+                startPlaylistCountdown(step0.delayMinutes * 60, 0);
+            }
+            return;
+        }
+
+        // ── Standard presets: apply stake / market / pipeline now ─────────────
         const s = calcStake();
         setCurrentStake(s);
         setRiskSettings({
@@ -1407,15 +1833,6 @@ export default function AutoTradePage() {
                 applyStep(0);
             }
         }
-        setCurStep(0); setCurRep(0);
-        setIsRunningAuto(true);
-        setUptimeStart(Date.now());
-        setSessionProfit(0); setSessionWins(0); setSessionLosses(0); setSessionTrades(0);
-        setMktTrades(0); setTriggersFired(0);
-        setTradeLog([]); setAuditLogs([]);
-        cycleTradesCountRef.current = 0;
-        setCycleTradesCount(0);
-        lastIdRef.current = null;
         if (virtualSettings.startVirtualToReal) {
             setVirtualSettings({
                 isVirtualMode: true,
@@ -1447,6 +1864,15 @@ export default function AutoTradePage() {
         setIsScannerWarmup(false);
         setNextExecCd(null);
         stopBot();
+        useBotStore.getState().stopBot();
+
+        if (playlistCountdownTimerRef.current) {
+            clearInterval(playlistCountdownTimerRef.current);
+            playlistCountdownTimerRef.current = null;
+        }
+        setPlaylistCountdownSecs(0);
+        setPlaylistStatus('idle');
+
         addAuditLog('AUTO-LX Session terminated.', 'warn');
     };
 
@@ -1674,6 +2100,15 @@ export default function AutoTradePage() {
                 `differ 2 preset loaded | Best market: ${bestSym || 'scanning…'} (odd%: ${bestOddPct >= 0 ? bestOddPct.toFixed(1) : '?'}%) | Top odd pair: [${initialPair.join(', ')}]`,
                 'info'
             );
+        } else if (preset === 'trade_playlist') {
+            // ── Autonomous Trade Playlist ─────────────────────────────────────
+            // Inherits triggers, strategies, and virtual rules from LaxPrime or
+            // LaxSniper XV per step, with customizable inter-trade delays and
+            // seamless compounding across all sequential trades.
+            setIsCompounding(true);
+            setCompoundPct('50.0');
+            setIsCapitalCompound(false);
+            addAuditLog('⚡ Autonomous Trade Playlist preset loaded. Build your delay chain below.', 'info');
         }
     };
 
@@ -1819,6 +2254,7 @@ export default function AutoTradePage() {
                                 onChange={handlePresetChange}
                                 disabled={isRunningAuto}
                                 options={[
+                                    { value: 'trade_playlist', label: '⚡ Autonomous Trade Playlist' },
                                     { value: 'custom', label: 'Custom (Manual)' },
                                     { value: 'differ_1', label: 'differ 1' },
                                     { value: 'differ_2', label: 'differ 2' },
@@ -1834,7 +2270,7 @@ export default function AutoTradePage() {
                     {/* Tab Bar */}
                     <div className="flex gap-1 bg-white/3 rounded-2xl p-1 border border-white/5">
                         {([
-                            { id: 'strategy', label: 'Strategy',   icon: <Layers className="w-3.5 h-3.5" /> },
+                            { id: 'strategy', label: selectedPreset === 'trade_playlist' ? 'Playlist' : 'Strategy',   icon: <Layers className="w-3.5 h-3.5" /> },
                             { id: 'triggers', label: 'Triggers',   icon: <Target className="w-3.5 h-3.5" /> },
                             { id: 'risk',     label: 'Risk',       icon: <Settings2 className="w-3.5 h-3.5" /> },
                             { id: 'markets',  label: 'Markets',    icon: <BarChart3 className="w-3.5 h-3.5" /> },
@@ -1855,125 +2291,457 @@ export default function AutoTradePage() {
                     {/* ─── STRATEGY TAB ───────────────────────────────────── */}
                     {activeTab === 'strategy' && (
                         <div className="space-y-4">
+                            {selectedPreset === 'trade_playlist' ? (
+                                <div className="space-y-4">
+                                    {/* ── Status & Live Control Bar ── */}
+                                    <div className="bg-white/2 rounded-2xl border border-indigo-500/25 p-5 space-y-4">
+                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-4">
+                                            <div className="flex items-center gap-2.5">
+                                                <div className="p-2 rounded-xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 shadow-lg shadow-indigo-500/10">
+                                                    <Timer className="w-5 h-5 text-indigo-400" />
+                                                </div>
+                                                <div>
+                                                    <div className="flex items-center gap-2">
+                                                        <p className="text-sm font-bold text-white">Autonomous Trade Playlist</p>
+                                                        <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-[9px] font-black text-indigo-300">
+                                                            {playlistSteps.length} STEPS
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-[10px] text-gray-400">Sequential inter-trade delay chain with continuous compounding</p>
+                                                </div>
+                                            </div>
 
-                            {/* Pipeline Sequence */}
-                            <div className="bg-white/2 rounded-2xl border border-white/8 p-5">
-                                <div className="flex items-center justify-between mb-4">
-                                    <div className="flex items-center gap-2">
-                                        <div className="p-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20">
-                                            <Layers className="w-4 h-4 text-indigo-400" />
+                                            {/* Live Status Badge */}
+                                            {isRunningAuto ? (
+                                                <div className="flex items-center gap-2">
+                                                    {playlistStatus === 'countdown' && (
+                                                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-300 text-[10px] font-black uppercase tracking-wider animate-pulse">
+                                                            <Clock className="w-3.5 h-3.5" />
+                                                            Cooldown: {nextExecCd || '00:00'} (Step {playlistCurrentStepIdx + 1})
+                                                        </span>
+                                                    )}
+                                                    {playlistStatus === 'executing' && (
+                                                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-[10px] font-black uppercase tracking-wider animate-pulse">
+                                                            <Zap className="w-3.5 h-3.5" />
+                                                            Executing Step {playlistCurrentStepIdx + 1}/{playlistSteps.length}
+                                                        </span>
+                                                    )}
+                                                    {playlistStatus === 'completed' && (
+                                                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border border-teal-500/30 bg-teal-500/10 text-teal-300 text-[10px] font-black uppercase tracking-wider">
+                                                            <Check className="w-3.5 h-3.5" />
+                                                            Playlist Completed
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            ) : (
+                                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border border-white/10 bg-white/5 text-gray-400 text-[10px] font-black uppercase tracking-wider">
+                                                    Ready to Launch
+                                                </span>
+                                            )}
                                         </div>
-                                        <div>
-                                            <p className="text-sm font-bold text-white">Pipeline Sequence</p>
-                                            <p className="text-[10px] text-gray-500">{pipelineSteps.length} active steps · {pipelineMode}</p>
-                                        </div>
-                                    </div>
-                                    {/* Mode Switcher */}
-                                    <div className="flex bg-white/5 rounded-xl p-0.5 gap-0.5">
-                                        {(['sequential', 'simultaneous'] as TriggerMode[]).map(m => (
-                                            <button key={m} onClick={() => setPipelineMode(m)} disabled={isRunningAuto}
-                                                className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wide transition-all ${pipelineMode === m ? 'bg-indigo-500 text-white shadow' : 'text-gray-500 hover:text-white'}`}>
-                                                {m === 'sequential' ? 'Sequential' : 'Simultaneous'}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
 
-                                {/* Steps */}
-                                <div className="space-y-2.5">
-                                    {pipelineSteps.map((step, idx) => {
-                                        const isActive = isRunningAuto && pipelineMode === 'sequential' && curStep === idx;
-                                        return (
-                                            <div key={step.id}
-                                                className={`flex items-center gap-3 p-3.5 rounded-xl border transition-all ${isActive ? 'border-teal-500/40 bg-teal-500/5 shadow-sm shadow-teal-500/10' : 'border-white/5 bg-white/2 hover:border-white/10'}`}>
-                                                {/* Step number */}
-                                                <div className={`shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-black transition-all ${isActive ? 'bg-teal-500 text-[#0a0a10]' : 'bg-white/8 text-gray-400'}`}>
-                                                    {idx + 1}
-                                                </div>
-
-                                                {/* Contract Type */}
-                                                <div className="flex-1 min-w-0">
-                                                    <Select
-                                                        options={CONTRACT_OPTIONS}
-                                                        value={step.contractType}
-                                                        onChange={v => updPipelineStep(step.id, 'contractType', v as ContractTypeKey)}
-                                                        disabled={isRunningAuto}
-                                                    />
-                                                </div>
-
-                                                {/* Digit */}
-                                                <div className="flex items-center gap-1.5 shrink-0">
-                                                    <span className="text-[9px] text-gray-500 font-bold uppercase">Digit</span>
-                                                    <input type="number" min={0} max={9} value={step.prediction}
-                                                        onChange={e => updPipelineStep(step.id, 'prediction', Number(e.target.value))}
-                                                        disabled={isRunningAuto}
-                                                        className="w-12 text-center bg-white/5 border border-white/10 rounded-lg text-xs font-black text-white py-1.5 focus:outline-none focus:border-teal-500/50 disabled:opacity-40" />
-                                                </div>
-
-                                                {/* Reps */}
-                                                <div className="flex items-center gap-1.5 shrink-0">
-                                                    <span className="text-[9px] text-gray-500 font-bold uppercase">Reps</span>
-                                                    <input type="number" min={1} value={step.reps}
-                                                        onChange={e => updPipelineStep(step.id, 'reps', Number(e.target.value))}
-                                                        disabled={isRunningAuto}
-                                                        className="w-12 text-center bg-white/5 border border-white/10 rounded-lg text-xs font-black text-white py-1.5 focus:outline-none focus:border-teal-500/50 disabled:opacity-40" />
-                                                </div>
-
-                                                {/* LIVE badge */}
-                                                {isActive && (
-                                                    <span className="shrink-0 text-[9px] font-black bg-teal-500/20 text-teal-400 px-2 py-0.5 rounded-md">
-                                                        {curRep + 1}/{step.reps}
+                                        {/* Loop & Compounding Settings Bar */}
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                                            <div className="flex items-center justify-between p-3 rounded-xl bg-white/3 border border-white/5">
+                                                <div className="space-y-0.5">
+                                                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                                                        <Repeat className="w-3.5 h-3.5 text-indigo-400" />
+                                                        Continuous Playlist Loop
                                                     </span>
-                                                )}
+                                                    <p className="text-[9px] text-gray-400">Restart from Step 1 after last step until TP or SL is hit</p>
+                                                </div>
+                                                <Toggle enabled={playlistLoop} onChange={setPlaylistLoop} disabled={isRunningAuto} />
+                                            </div>
 
-                                                {/* Delete */}
-                                                <button onClick={() => delPipelineStep(step.id)}
-                                                    disabled={isRunningAuto || pipelineSteps.length <= 1}
-                                                    className="shrink-0 p-1.5 rounded-lg text-gray-600 hover:text-rose-400 hover:bg-rose-500/10 transition-all disabled:opacity-20">
-                                                    <Trash2 className="w-3.5 h-3.5" />
+                                            <div className="flex items-center justify-between p-3 rounded-xl bg-white/3 border border-white/5">
+                                                <div className="space-y-0.5">
+                                                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                                                        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                                                        Next Stake (Compounded)
+                                                    </span>
+                                                    <p className="text-[9px] text-gray-400">Current running stake: <span className="font-mono text-emerald-400 font-bold">${currentStake}</span></p>
+                                                </div>
+                                                <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs font-black font-mono text-emerald-400">
+                                                    ${currentStake}
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        {/* ── Quick-Add Delay Badges Bar ── */}
+                                        <div className="pt-2">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <span className="text-[10px] font-black uppercase tracking-widest text-gray-400 flex items-center gap-1.5">
+                                                    <Plus className="w-3.5 h-3.5 text-teal-400" />
+                                                    Quick-Add Step with Delay (Starts after previous trade closes):
+                                                </span>
+                                            </div>
+                                            <div className="flex flex-wrap gap-1.5">
+                                                {QUICK_DELAY_OPTIONS.map(mins => (
+                                                    <button
+                                                        key={mins}
+                                                        onClick={() => addPlaylistStep(mins)}
+                                                        disabled={isRunningAuto}
+                                                        className="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-indigo-500/20 border border-white/10 hover:border-indigo-500/30 text-gray-300 hover:text-indigo-300 text-xs font-black font-mono transition-all hover:scale-105 active:scale-95 disabled:opacity-40"
+                                                    >
+                                                        +{mins}m
+                                                    </button>
+                                                ))}
+                                                <button
+                                                    onClick={() => addPlaylistStep(0)}
+                                                    disabled={isRunningAuto}
+                                                    className="px-3 py-1.5 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 border border-teal-500/30 text-teal-300 text-xs font-black transition-all hover:scale-105 active:scale-95 disabled:opacity-40"
+                                                >
+                                                    +Immediate (0m)
                                                 </button>
                                             </div>
-                                        );
-                                    })}
-                                </div>
-
-                                <button onClick={addPipelineStep} disabled={isRunningAuto}
-                                    className="mt-3 w-full py-2.5 rounded-xl border border-dashed border-white/10 hover:border-white/20 text-gray-500 hover:text-white text-xs font-bold flex items-center justify-center gap-2 transition-all disabled:opacity-30">
-                                    <Plus className="w-3.5 h-3.5" /> Add Step
-                                </button>
-                            </div>
-
-                            {/* Adaptive Switch */}
-                            <div className={`rounded-2xl border p-4 transition-all ${adaptiveSwitch ? 'border-amber-500/25 bg-amber-500/5' : 'border-white/5 bg-white/2'}`}>
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2.5">
-                                        <div className={`p-1.5 rounded-lg ${adaptiveSwitch ? 'bg-amber-500/15 border border-amber-500/25' : 'bg-white/5'}`}>
-                                            <Shuffle className={`w-4 h-4 ${adaptiveSwitch ? 'text-amber-400' : 'text-gray-500'}`} />
-                                        </div>
-                                        <div>
-                                            <p className="text-sm font-bold text-white">Adaptive Switch</p>
-                                            <p className="text-[10px] text-gray-500 mt-0.5">On loss → auto-swap Over↔Under · Rise↔Fall</p>
                                         </div>
                                     </div>
-                                    <Toggle enabled={adaptiveSwitch} onChange={setAdaptiveSwitch} disabled={isRunningAuto} />
+
+                                    {/* ── Playlist Step Cards (Interactive Sequence List) ── */}
+                                    <div className="space-y-3">
+                                        {playlistSteps.map((step, idx) => {
+                                            const isActive = isRunningAuto && playlistCurrentStepIdx === idx && playlistStatus === 'executing';
+                                            const isCountingDown = isRunningAuto && playlistCurrentStepIdx === idx && playlistStatus === 'countdown';
+                                            const stepResult = playlistStepResults[step.id];
+                                            const isExpanded = expandedStepId === step.id;
+
+                                            return (
+                                                <div
+                                                    key={step.id}
+                                                    className={`rounded-2xl border transition-all ${
+                                                        isActive
+                                                            ? 'border-emerald-500/50 bg-emerald-500/5 shadow-lg shadow-emerald-500/10'
+                                                            : isCountingDown
+                                                            ? 'border-amber-500/50 bg-amber-500/5 shadow-lg shadow-amber-500/10 animate-pulse'
+                                                            : stepResult
+                                                            ? stepResult.result === 'WIN'
+                                                                ? 'border-emerald-500/20 bg-white/2'
+                                                                : 'border-rose-500/20 bg-white/2'
+                                                            : 'border-white/8 bg-white/2 hover:border-white/15'
+                                                    }`}
+                                                >
+                                                    <div className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                                                        <div className="flex items-center gap-3">
+                                                            {/* Step Number */}
+                                                            <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black font-mono transition-all ${
+                                                                isActive
+                                                                    ? 'bg-emerald-500 text-[#0a0a10] shadow-md shadow-emerald-500/30'
+                                                                    : isCountingDown
+                                                                    ? 'bg-amber-500 text-[#0a0a10] shadow-md shadow-amber-500/30'
+                                                                    : stepResult?.result === 'WIN'
+                                                                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                                                    : stepResult?.result === 'LOSS'
+                                                                    ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                                                                    : 'bg-white/8 text-gray-400'
+                                                            }`}>
+                                                                {idx + 1}
+                                                            </div>
+
+                                                            {/* Step Info */}
+                                                            <div>
+                                                                <div className="flex items-center gap-2 flex-wrap">
+                                                                    <span className="text-xs font-black text-white">{step.label || `Step ${idx + 1}`}</span>
+                                                                    <span className="px-2 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-[9px] font-bold text-indigo-300 uppercase">
+                                                                        {step.source === 'laxprime' ? 'LaxPrime' : 'LaxSniper XV'}
+                                                                    </span>
+                                                                    <span className="px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-[9px] font-mono font-bold text-gray-300">
+                                                                        ⏱️ {step.delayMinutes > 0 ? `${step.delayMinutes}m delay` : 'Immediate'}
+                                                                    </span>
+                                                                    {step.marketOverride && (
+                                                                        <span className="px-1.5 py-0.5 rounded bg-teal-500/10 text-teal-400 text-[9px] font-mono">
+                                                                            {step.marketOverride}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+
+                                                                {/* Status Result Preview */}
+                                                                {stepResult && (
+                                                                    <div className="flex items-center gap-2 mt-1 text-[10px]">
+                                                                        <span className={`font-black ${stepResult.result === 'WIN' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                                            {stepResult.result === 'WIN' ? '✓ WON' : '✗ LOST'}
+                                                                        </span>
+                                                                        <span className="font-mono text-gray-300">
+                                                                            {stepResult.profit >= 0 ? '+' : ''}${stepResult.profit.toFixed(2)}
+                                                                        </span>
+                                                                        {stepResult.exitSpot && (
+                                                                            <span className="text-gray-500">· Exit: {stepResult.exitSpot}</span>
+                                                                        )}
+                                                                        <span className="text-gray-600">· {stepResult.time}</span>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Step Actions */}
+                                                        <div className="flex items-center gap-1.5 self-end md:self-auto">
+                                                            {/* Delay Input */}
+                                                            <div className="flex items-center gap-1 bg-white/5 border border-white/8 rounded-xl px-2 py-1">
+                                                                <span className="text-[9px] font-bold text-gray-500 uppercase">Delay</span>
+                                                                <input
+                                                                    type="number"
+                                                                    min={0}
+                                                                    max={120}
+                                                                    value={step.delayMinutes}
+                                                                    onChange={e => updatePlaylistStep(step.id, { delayMinutes: Math.max(0, Number(e.target.value)) })}
+                                                                    disabled={isRunningAuto}
+                                                                    className="w-10 text-center bg-transparent text-xs font-black font-mono text-white focus:outline-none"
+                                                                />
+                                                                <span className="text-[9px] text-gray-500">m</span>
+                                                            </div>
+
+                                                            {/* Engine Source Selector */}
+                                                            <select
+                                                                value={step.source}
+                                                                onChange={e => updatePlaylistStep(step.id, { source: e.target.value as any })}
+                                                                disabled={isRunningAuto}
+                                                                className="bg-white/5 border border-white/8 rounded-xl px-2 py-1 text-xs font-bold text-white focus:outline-none"
+                                                            >
+                                                                <option value="laxprime">LaxPrime</option>
+                                                                <option value="laxsniper-xv">LaxSniper XV</option>
+                                                            </select>
+
+                                                            {/* Move up / down */}
+                                                            <button
+                                                                onClick={() => movePlaylistStep(idx, -1)}
+                                                                disabled={isRunningAuto || idx === 0}
+                                                                title="Move Step Up"
+                                                                className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 disabled:opacity-20 transition-all"
+                                                            >
+                                                                <ArrowUp className="w-3.5 h-3.5" />
+                                                            </button>
+                                                            <button
+                                                                onClick={() => movePlaylistStep(idx, 1)}
+                                                                disabled={isRunningAuto || idx === playlistSteps.length - 1}
+                                                                title="Move Step Down"
+                                                                className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 disabled:opacity-20 transition-all"
+                                                            >
+                                                                <ArrowDown className="w-3.5 h-3.5" />
+                                                            </button>
+
+                                                            {/* Clone / Duplicate */}
+                                                            <button
+                                                                onClick={() => duplicatePlaylistStep(step.id)}
+                                                                disabled={isRunningAuto}
+                                                                title="Duplicate Step"
+                                                                className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-300 hover:bg-indigo-500/10 disabled:opacity-20 transition-all"
+                                                            >
+                                                                <Copy className="w-3.5 h-3.5" />
+                                                            </button>
+
+                                                            {/* Toggle Expand fine-tune */}
+                                                            <button
+                                                                onClick={() => setExpandedStepId(isExpanded ? null : step.id)}
+                                                                title="Fine-tune Step Overrides"
+                                                                className={`p-1.5 rounded-lg transition-all ${isExpanded ? 'text-indigo-400 bg-indigo-500/10' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
+                                                            >
+                                                                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                                                            </button>
+
+                                                            {/* Delete */}
+                                                            <button
+                                                                onClick={() => deletePlaylistStep(step.id)}
+                                                                disabled={isRunningAuto || playlistSteps.length <= 1}
+                                                                title="Delete Step"
+                                                                className="p-1.5 rounded-lg text-gray-500 hover:text-rose-400 hover:bg-rose-500/10 disabled:opacity-20 transition-all"
+                                                            >
+                                                                <Trash2 className="w-3.5 h-3.5" />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Optional Expandable Overrides */}
+                                                    {isExpanded && (
+                                                        <div className="p-4 pt-0 border-t border-white/5 grid grid-cols-1 sm:grid-cols-3 gap-3 mt-2">
+                                                            <div>
+                                                                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Market Override</span>
+                                                                <select
+                                                                    value={step.marketOverride || ''}
+                                                                    onChange={e => updatePlaylistStep(step.id, { marketOverride: e.target.value })}
+                                                                    disabled={isRunningAuto}
+                                                                    className="w-full bg-white/5 border border-white/8 rounded-xl px-2.5 py-1.5 text-xs text-white"
+                                                                >
+                                                                    <option value="">(Inherit from {step.source})</option>
+                                                                    {TARGET_MARKETS.map(m => (
+                                                                        <option key={m.value} value={m.value}>{m.label}</option>
+                                                                    ))}
+                                                                </select>
+                                                            </div>
+                                                            <div>
+                                                                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Contract Override</span>
+                                                                <select
+                                                                    value={step.contractOverride || ''}
+                                                                    onChange={e => updatePlaylistStep(step.id, { contractOverride: e.target.value as any })}
+                                                                    disabled={isRunningAuto}
+                                                                    className="w-full bg-white/5 border border-white/8 rounded-xl px-2.5 py-1.5 text-xs text-white"
+                                                                >
+                                                                    <option value="">(Inherit from {step.source})</option>
+                                                                    {CONTRACT_OPTIONS.map(c => (
+                                                                        <option key={c.value} value={c.value}>{c.label}</option>
+                                                                    ))}
+                                                                </select>
+                                                            </div>
+                                                            <div>
+                                                                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Digit Prediction</span>
+                                                                <input
+                                                                    type="number"
+                                                                    min={0}
+                                                                    max={9}
+                                                                    placeholder="(Inherit)"
+                                                                    value={step.digitOverride !== undefined && step.digitOverride !== null ? step.digitOverride : ''}
+                                                                    onChange={e => updatePlaylistStep(step.id, { digitOverride: e.target.value === '' ? null : Number(e.target.value) })}
+                                                                    disabled={isRunningAuto}
+                                                                    className="w-full bg-white/5 border border-white/8 rounded-xl px-2.5 py-1.5 text-xs text-white"
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+
+                                    {/* Add Step Button */}
+                                    <button
+                                        onClick={() => addPlaylistStep(5)}
+                                        disabled={isRunningAuto}
+                                        className="w-full py-3 rounded-2xl border-2 border-dashed border-white/10 hover:border-indigo-500/40 text-gray-400 hover:text-indigo-300 text-xs font-black flex items-center justify-center gap-2 transition-all hover:bg-indigo-500/5 disabled:opacity-30"
+                                    >
+                                        <Plus className="w-4 h-4" /> Add Custom Trade Step (+5m delay)
+                                    </button>
                                 </div>
-                                {adaptiveSwitch && (
-                                    <div className="mt-3 flex gap-2 text-[10px]">
-                                        {[['OVER → UNDER', 'text-purple-400'], ['RISE → FALL', 'text-amber-400']].map(([label, cls]) => (
-                                            <div key={label} className="flex items-center gap-1.5 bg-white/5 rounded-lg px-2.5 py-1.5 border border-white/5">
-                                                <ArrowLeftRight className={`w-3 h-3 ${cls}`} />
-                                                <span className="text-gray-400 font-bold">{label}</span>
+                            ) : (
+                                <>
+                                    {/* Pipeline Sequence */}
+                                    <div className="bg-white/2 rounded-2xl border border-white/8 p-5">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <div className="flex items-center gap-2">
+                                                <div className="p-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20">
+                                                    <Layers className="w-4 h-4 text-indigo-400" />
+                                                </div>
+                                                <div>
+                                                    <p className="text-sm font-bold text-white">Pipeline Sequence</p>
+                                                    <p className="text-[10px] text-gray-500">{pipelineSteps.length} active steps · {pipelineMode}</p>
+                                                </div>
                                             </div>
-                                        ))}
+                                            {/* Mode Switcher */}
+                                            <div className="flex bg-white/5 rounded-xl p-0.5 gap-0.5">
+                                                {(['sequential', 'simultaneous'] as TriggerMode[]).map(m => (
+                                                    <button key={m} onClick={() => setPipelineMode(m)} disabled={isRunningAuto}
+                                                        className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wide transition-all ${pipelineMode === m ? 'bg-indigo-500 text-white shadow' : 'text-gray-500 hover:text-white'}`}>
+                                                        {m === 'sequential' ? 'Sequential' : 'Simultaneous'}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {/* Steps */}
+                                        <div className="space-y-2.5">
+                                            {pipelineSteps.map((step, idx) => {
+                                                const isActive = isRunningAuto && pipelineMode === 'sequential' && curStep === idx;
+                                                return (
+                                                    <div key={step.id}
+                                                        className={`flex items-center gap-3 p-3.5 rounded-xl border transition-all ${isActive ? 'border-teal-500/40 bg-teal-500/5 shadow-sm shadow-teal-500/10' : 'border-white/5 bg-white/2 hover:border-white/10'}`}>
+                                                        {/* Step number */}
+                                                        <div className={`shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-black transition-all ${isActive ? 'bg-teal-500 text-[#0a0a10]' : 'bg-white/8 text-gray-400'}`}>
+                                                            {idx + 1}
+                                                        </div>
+
+                                                        {/* Contract Type */}
+                                                        <div className="flex-1 min-w-0">
+                                                            <Select
+                                                                options={CONTRACT_OPTIONS}
+                                                                value={step.contractType}
+                                                                onChange={v => updPipelineStep(step.id, 'contractType', v as ContractTypeKey)}
+                                                                disabled={isRunningAuto}
+                                                            />
+                                                        </div>
+
+                                                        {/* Digit */}
+                                                        <div className="flex items-center gap-1.5 shrink-0">
+                                                            <span className="text-[9px] text-gray-500 font-bold uppercase">Digit</span>
+                                                            <input type="number" min={0} max={9} value={step.prediction}
+                                                                onChange={e => updPipelineStep(step.id, 'prediction', Number(e.target.value))}
+                                                                disabled={isRunningAuto}
+                                                                className="w-12 text-center bg-white/5 border border-white/10 rounded-lg text-xs font-black text-white py-1.5 focus:outline-none focus:border-teal-500/50 disabled:opacity-40" />
+                                                        </div>
+
+                                                        {/* Reps */}
+                                                        <div className="flex items-center gap-1.5 shrink-0">
+                                                            <span className="text-[9px] text-gray-500 font-bold uppercase">Reps</span>
+                                                            <input type="number" min={1} value={step.reps}
+                                                                onChange={e => updPipelineStep(step.id, 'reps', Number(e.target.value))}
+                                                                disabled={isRunningAuto}
+                                                                className="w-12 text-center bg-white/5 border border-white/10 rounded-lg text-xs font-black text-white py-1.5 focus:outline-none focus:border-teal-500/50 disabled:opacity-40" />
+                                                        </div>
+
+                                                        {/* LIVE badge */}
+                                                        {isActive && (
+                                                            <span className="shrink-0 text-[9px] font-black bg-teal-500/20 text-teal-400 px-2 py-0.5 rounded-md">
+                                                                {curRep + 1}/{step.reps}
+                                                            </span>
+                                                        )}
+
+                                                        {/* Delete */}
+                                                        <button onClick={() => delPipelineStep(step.id)}
+                                                            disabled={isRunningAuto || pipelineSteps.length <= 1}
+                                                            className="shrink-0 p-1.5 rounded-lg text-gray-600 hover:text-rose-400 hover:bg-rose-500/10 transition-all disabled:opacity-20">
+                                                            <Trash2 className="w-3.5 h-3.5" />
+                                                        </button>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+
+                                        <button onClick={addPipelineStep} disabled={isRunningAuto}
+                                            className="mt-3 w-full py-2.5 rounded-xl border border-dashed border-white/10 hover:border-white/20 text-gray-500 hover:text-white text-xs font-bold flex items-center justify-center gap-2 transition-all disabled:opacity-30">
+                                            <Plus className="w-3.5 h-3.5" /> Add Step
+                                        </button>
                                     </div>
-                                )}
-                            </div>
+
+                                    {/* Adaptive Switch */}
+                                    <div className={`rounded-2xl border p-4 transition-all ${adaptiveSwitch ? 'border-amber-500/25 bg-amber-500/5' : 'border-white/5 bg-white/2'}`}>
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2.5">
+                                                <div className={`p-1.5 rounded-lg ${adaptiveSwitch ? 'bg-amber-500/15 border border-amber-500/25' : 'bg-white/5'}`}>
+                                                    <Shuffle className={`w-4 h-4 ${adaptiveSwitch ? 'text-amber-400' : 'text-gray-500'}`} />
+                                                </div>
+                                                <div>
+                                                    <p className="text-sm font-bold text-white">Adaptive Switch</p>
+                                                    <p className="text-[10px] text-gray-500 mt-0.5">On loss → auto-swap Over↔Under · Rise↔Fall</p>
+                                                </div>
+                                            </div>
+                                            <Toggle enabled={adaptiveSwitch} onChange={setAdaptiveSwitch} disabled={isRunningAuto} />
+                                        </div>
+                                        {adaptiveSwitch && (
+                                            <div className="mt-3 flex gap-2 text-[10px]">
+                                                {[['OVER → UNDER', 'text-purple-400'], ['RISE → FALL', 'text-amber-400']].map(([label, cls]) => (
+                                                    <div key={label} className="flex items-center gap-1.5 bg-white/5 rounded-lg px-2.5 py-1.5 border border-white/5">
+                                                        <ArrowLeftRight className={`w-3 h-3 ${cls}`} />
+                                                        <span className="text-gray-400 font-bold">{label}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </>
+                            )}
                         </div>
                     )}
 
                     {/* ─── TRIGGERS TAB ──────────────────────────────────── */}
                     {activeTab === 'triggers' && (
                         <div className="space-y-4">
+                            {selectedPreset === 'trade_playlist' && (
+                                <div className="p-4 rounded-2xl border border-indigo-500/30 bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-transparent flex items-center gap-3">
+                                    <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-400">
+                                        <Sparkles className="w-5 h-5" />
+                                    </div>
+                                    <div className="text-xs text-indigo-200 leading-relaxed">
+                                        <span className="font-bold text-white">Autonomous Trade Playlist Active: </span>
+                                        Triggers and entry conditions are dynamically inherited per step from each step's configured engine (<span className="font-semibold text-indigo-300">LaxPrime</span> or <span className="font-semibold text-indigo-300">LaxSniper XV</span>).
+                                    </div>
+                                </div>
+                            )}
 
                             {/* Entry Digit Detection */}
                             <div className="bg-white/2 rounded-2xl border border-white/8 p-5">
@@ -2296,61 +3064,88 @@ export default function AutoTradePage() {
 
                     {/* ─── MARKETS TAB ─────────────────────────────────────── */}
                     {activeTab === 'markets' && (
-                        <div className="bg-white/2 rounded-2xl border border-white/8 overflow-hidden">
-                            <div className="flex items-center gap-2 p-4 border-b border-white/5">
-                                <Search className="w-4 h-4 text-teal-400" />
-                                <span className="text-sm font-bold text-white">Live Market Scanner</span>
-                                <span className="ml-auto text-[10px] text-gray-500 font-mono">{marketRatings.length} markets ranked</span>
-                            </div>
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-xs">
-                                    <thead>
-                                        <tr className="border-b border-white/5 bg-white/2">
-                                            {['Market', 'Score', 'Gap %', 'Rationale', 'Rating'].map((h, i) => (
-                                                <th key={h} className={`px-4 py-3 text-[9px] font-black uppercase tracking-widest text-gray-500 ${i > 0 ? 'text-center' : 'text-left'}`}>{h}</th>
-                                            ))}
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-white/3">
-                                        {marketRatings.map(m => (
-                                            <tr key={m.symbol} className={`hover:bg-white/2 transition-colors ${m.symbol === selectedMarket ? 'bg-teal-500/5' : ''}`}>
-                                                <td className="px-4 py-3">
-                                                    <div className="flex items-center gap-2">
-                                                        {m.symbol === selectedMarket && <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />}
-                                                        <span className="font-medium text-white">{m.label}</span>
-                                                    </div>
-                                                </td>
-                                                <td className="px-4 py-3 text-center font-mono font-black text-white">{m.score}</td>
-                                                <td className="px-4 py-3 text-center font-mono text-gray-400">{(m.gap * 100).toFixed(1)}%</td>
-                                                <td className="px-4 py-3 text-gray-400 italic text-[10px] max-w-[180px] truncate">{m.rationale}</td>
-                                                <td className="px-4 py-3 text-center">
-                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md border text-[9px] font-black uppercase tracking-wide ${RATING_CLS[m.rating]}`}>
-                                                        {m.rating}
-                                                    </span>
-                                                </td>
+                        <div className="space-y-4">
+                            {selectedPreset === 'trade_playlist' && (
+                                <div className="p-4 rounded-2xl border border-indigo-500/30 bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-transparent flex items-center gap-3">
+                                    <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-400">
+                                        <BarChart3 className="w-5 h-5" />
+                                    </div>
+                                    <div className="text-xs text-indigo-200 leading-relaxed">
+                                        <span className="font-bold text-white">Autonomous Trade Playlist Active: </span>
+                                        Target markets are loaded from each step's settings (or fine-tuned per step via the Market Override dropdown in the Playlist tab).
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="bg-white/2 rounded-2xl border border-white/8 overflow-hidden">
+                                <div className="flex items-center gap-2 p-4 border-b border-white/5">
+                                    <Search className="w-4 h-4 text-teal-400" />
+                                    <span className="text-sm font-bold text-white">Live Market Scanner</span>
+                                    <span className="ml-auto text-[10px] text-gray-500 font-mono">{marketRatings.length} markets ranked</span>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-xs">
+                                        <thead>
+                                            <tr className="border-b border-white/5 bg-white/2">
+                                                {['Market', 'Score', 'Gap %', 'Rationale', 'Rating'].map((h, i) => (
+                                                    <th key={h} className={`px-4 py-3 text-[9px] font-black uppercase tracking-widest text-gray-500 ${i > 0 ? 'text-center' : 'text-left'}`}>{h}</th>
+                                                ))}
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                                        </thead>
+                                        <tbody className="divide-y divide-white/3">
+                                            {marketRatings.map(m => (
+                                                <tr key={m.symbol} className={`hover:bg-white/2 transition-colors ${m.symbol === selectedMarket ? 'bg-teal-500/5' : ''}`}>
+                                                    <td className="px-4 py-3">
+                                                        <div className="flex items-center gap-2">
+                                                            {m.symbol === selectedMarket && <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />}
+                                                            <span className="font-medium text-white">{m.label}</span>
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-center font-mono font-black text-white">{m.score}</td>
+                                                    <td className="px-4 py-3 text-center font-mono text-gray-400">{(m.gap * 100).toFixed(1)}%</td>
+                                                    <td className="px-4 py-3 text-gray-400 italic text-[10px] max-w-[180px] truncate">{m.rationale}</td>
+                                                    <td className="px-4 py-3 text-center">
+                                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-md border text-[9px] font-black uppercase tracking-wide ${RATING_CLS[m.rating]}`}>
+                                                            {m.rating}
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                         </div>
                     )}
 
                     {/* ─── VIRTUAL TAB ─────────────────────────────────────── */}
                     {activeTab === 'virtual' && (
-                        <div className="bg-white/2 rounded-2xl border border-white/8 p-5 space-y-6">
-                            {/* Start Virtual -> Switch to Real */}
-                            <div className="space-y-4">
-                                <div className="flex items-center justify-between">
-                                    <div className="space-y-0.5">
-                                        <span className="text-sm font-bold text-white">Start Virtual → Switch to Real</span>
-                                        <p className="text-[10px] text-gray-500">Begin with simulated trades, switch to real execution after target hits</p>
+                        <div className="space-y-4">
+                            {selectedPreset === 'trade_playlist' && (
+                                <div className="p-4 rounded-2xl border border-indigo-500/30 bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-transparent flex items-center gap-3">
+                                    <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-400">
+                                        <FlaskConical className="w-5 h-5" />
                                     </div>
-                                    <Toggle
-                                        enabled={virtualSettings.startVirtualToReal}
-                                        onChange={(val: boolean) => setVirtualSettings({ startVirtualToReal: val })}
-                                    />
+                                    <div className="text-xs text-indigo-200 leading-relaxed">
+                                        <span className="font-bold text-white">Autonomous Trade Playlist Active: </span>
+                                        Virtual trading and validation rules are dynamically loaded and executed according to each step's configured engine settings.
+                                    </div>
                                 </div>
+                            )}
+
+                            <div className="bg-white/2 rounded-2xl border border-white/8 p-5 space-y-6">
+                                {/* Start Virtual -> Switch to Real */}
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <div className="space-y-0.5">
+                                            <span className="text-sm font-bold text-white">Start Virtual → Switch to Real</span>
+                                            <p className="text-[10px] text-gray-500">Begin with simulated trades, switch to real execution after target hits</p>
+                                        </div>
+                                        <Toggle
+                                            enabled={virtualSettings.startVirtualToReal}
+                                            onChange={(val: boolean) => setVirtualSettings({ startVirtualToReal: val })}
+                                        />
+                                    </div>
 
                                 {virtualSettings.startVirtualToReal && (
                                     <div className="space-y-3 pt-2">
@@ -2543,6 +3338,7 @@ export default function AutoTradePage() {
                                 </div>
                             </div>
                         </div>
+                    </div>
                     )}
                 </div>
 
