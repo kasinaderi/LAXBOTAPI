@@ -286,7 +286,7 @@ export default function AutoTradePage() {
     const [cycleTradesCount,    setCycleTradesCount]    = useState(0);
 
     // ── Risk ───────────────────────────────────────────────────────────────
-    const [baseStake,           setBaseStake]           = useState('1.00');
+    const [baseStake,           setBaseStake]           = useState('0.50');
     const [isMartingaleEnabled, setIsMartingaleEnabled] = useState(true);
     const [martingaleMul,       setMartingaleMul]       = useState('2.0');
     const [maxMartSteps,        setMaxMartSteps]        = useState('5');
@@ -314,7 +314,7 @@ export default function AutoTradePage() {
     const [sessionTrades,       setSessionTrades]       = useState(0);
     const [mktTrades,           setMktTrades]           = useState(0);
     const [selectedMarket,      setSelectedMarket]      = useState('R_100');
-    const [currentStake,        setCurrentStake]        = useState('1.00');
+    const [currentStake,        setCurrentStake]        = useState('0.50');
     const [nextExecCd,          setNextExecCd]          = useState<string | null>(null);
     const [triggersFired,       setTriggersFired]       = useState(0);
     const [isScannerWarmup,     setIsScannerWarmup]     = useState(false);
@@ -570,9 +570,8 @@ export default function AutoTradePage() {
     // ── Persist settings to localStorage ──────────────────────────────────
     const STORAGE_KEY = 'autolx_settings_v1';
 
-    // Load on mount — memory only restores when last-saved preset was 'custom'
+    // Load on initial mount
     useEffect(() => {
-        if (!isAuthorized) return;
         try {
             const raw = localStorage.getItem(STORAGE_KEY);
             if (!raw) {
@@ -601,12 +600,19 @@ export default function AutoTradePage() {
                 if (s.noContradiction      !== undefined) setNoContradiction(s.noContradiction);
                 if (s.tradePattern)        setTradePattern(s.tradePattern);
                 if (s.continuousMode)      setContinuousMode(s.continuousMode);
+            } else if (savedPreset === 'trade_playlist') {
+                // Keep Autonomous Trade Playlist configured
+                setIsCompounding(true);
             } else {
                 // Re-apply the named preset so all controls match the preset's defaults
                 handlePresetChange(savedPreset);
             }
 
-            // Risk & session settings are always restored regardless of preset
+            // Stake, Risk & session settings are always restored regardless of preset
+            if (s.baseStake) {
+                setBaseStake(s.baseStake);
+                setCurrentStake(s.baseStake);
+            }
             if (s.isMartingaleEnabled  !== undefined) setIsMartingaleEnabled(s.isMartingaleEnabled);
             if (s.martingaleMul)       setMartingaleMul(s.martingaleMul);
             if (s.maxMartSteps)        setMaxMartSteps(s.maxMartSteps);
@@ -621,18 +627,19 @@ export default function AutoTradePage() {
             if (s.compoundPct)         setCompoundPct(s.compoundPct);
             if (s.isCapitalCompound    !== undefined) setIsCapitalCompound(s.isCapitalCompound);
             if (s.capitalPct)          setCapitalPct(s.capitalPct);
-            // Autonomous Trade Playlist settings
-            if (s.playlistSteps && Array.isArray(s.playlistSteps)) setPlaylistSteps(s.playlistSteps);
-            if (s.playlistLoop !== undefined)                      setPlaylistLoop(s.playlistLoop);
+            // Autonomous Trade Playlist settings — restore all custom steps and delays on reload
+            if (s.playlistSteps && Array.isArray(s.playlistSteps) && s.playlistSteps.length > 0) {
+                setPlaylistSteps(s.playlistSteps);
+            }
+            if (s.playlistLoop !== undefined) setPlaylistLoop(s.playlistLoop);
         } catch (e) {
             console.warn('AUTO-LX: failed to restore settings', e);
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isAuthorized]);
+    }, []);
 
     // Save on every change (debounced via useEffect deps)
     useEffect(() => {
-        if (!isAuthorized) return;
         try {
             localStorage.setItem(STORAGE_KEY, JSON.stringify({
                 selectedPreset, tradesPerCycle,
@@ -640,6 +647,7 @@ export default function AutoTradePage() {
                 entryDigitEnabled, entryDigits, instantTrigger,
                 digitPatternEnabled, patternBoxes, compareDigit, useCustomContracts, noContradiction,
                 tradePattern, continuousMode,
+                baseStake,
                 isMartingaleEnabled, martingaleMul, maxMartSteps, stopOnMaxSteps, takeProfit, stopLoss,
                 maxWinsCap, maxTradesCap, maxTradesPerMarket, cycleInterval,
                 isCompounding, compoundPct, isCapitalCompound, capitalPct,
@@ -652,11 +660,11 @@ export default function AutoTradePage() {
         entryDigitEnabled, entryDigits, instantTrigger,
         digitPatternEnabled, patternBoxes, compareDigit, useCustomContracts, noContradiction,
         tradePattern, continuousMode,
+        baseStake,
         isMartingaleEnabled, martingaleMul, maxMartSteps, stopOnMaxSteps, takeProfit, stopLoss,
         maxWinsCap, maxTradesCap, maxTradesPerMarket, cycleInterval,
         isCompounding, compoundPct, isCapitalCompound, capitalPct,
         playlistSteps, playlistLoop,
-        isAuthorized,
     ]);
 
     // ── Uptime ─────────────────────────────────────────────────────────────
@@ -684,7 +692,7 @@ export default function AutoTradePage() {
 
     // ── Stake calculator ──────────────────────────────────────────────────
     const calcStake = useCallback((): string => {
-        const base = parseFloat(baseStake) || 1.0;
+        const base = parseFloat(baseStake) || 0.50;
         if (isCapitalCompound) {
             const bal = account?.balance || 0;
             if (bal > 0) return Math.max(0.35, bal * (parseFloat(capitalPct) / 100)).toFixed(2);
@@ -763,7 +771,7 @@ export default function AutoTradePage() {
         }
 
         // Calculate compounded stake
-        const base = parseFloat(baseStake) || 1.0;
+        const base = parseFloat(baseStake) || 0.50;
         let nextStakeVal = base;
         if (isCapitalCompound) {
             const bal = account?.balance || 0;
@@ -1042,7 +1050,7 @@ export default function AutoTradePage() {
         }
         
         // Calculate the next compounded stake immediately to prevent lag on the next execution
-        const base = parseFloat(baseStake) || 1.0;
+        const base = parseFloat(baseStake) || 0.50;
         let nextStakeVal = base;
         if (isCapitalCompound) {
             const bal = account?.balance || 0;
@@ -1389,7 +1397,7 @@ export default function AutoTradePage() {
         setSessionProfit(nextProfit);
 
         // Update compounded stake immediately for next step
-        const base = parseFloat(baseStake) || 1.0;
+        const base = parseFloat(baseStake) || 0.50;
         let nextStakeVal = base;
         if (isCapitalCompound) {
             const bal = account?.balance || 0;
@@ -2294,14 +2302,17 @@ export default function AutoTradePage() {
 
                     {/* Tab Bar */}
                     <div className="flex gap-1 bg-white/3 rounded-2xl p-1 border border-white/5">
-                        {([
-                            { id: 'strategy', label: selectedPreset === 'trade_playlist' ? 'Playlist' : 'Strategy',   icon: <Layers className="w-3.5 h-3.5" /> },
+                        {(selectedPreset === 'trade_playlist' ? [
+                            { id: 'strategy', label: 'Playlist Roadmap Studio', icon: <Layers className="w-3.5 h-3.5" /> },
+                            { id: 'risk',     label: 'Risk & Compounding',     icon: <Settings2 className="w-3.5 h-3.5" /> },
+                        ] : [
+                            { id: 'strategy', label: 'Strategy',   icon: <Layers className="w-3.5 h-3.5" /> },
                             { id: 'triggers', label: 'Triggers',   icon: <Target className="w-3.5 h-3.5" /> },
                             { id: 'risk',     label: 'Risk',       icon: <Settings2 className="w-3.5 h-3.5" /> },
                             { id: 'markets',  label: 'Markets',    icon: <BarChart3 className="w-3.5 h-3.5" /> },
                             { id: 'virtual',  label: 'Virtual',    icon: <FlaskConical className="w-3.5 h-3.5" /> },
                         ] as const).map(tab => (
-                            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+                            <button key={tab.id} onClick={() => setActiveTab(tab.id as any)}
                                 className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-[11px] font-bold transition-all ${
                                     activeTab === tab.id
                                         ? 'bg-teal-500 text-[#0a0a10] shadow-md shadow-teal-500/25'
@@ -2366,25 +2377,53 @@ export default function AutoTradePage() {
                                         </div>
 
                                         {/* Loop & Compounding Settings Bar */}
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                                            {/* Loop Toggle */}
                                             <div className="flex items-center justify-between p-3 rounded-xl bg-white/3 border border-white/5">
                                                 <div className="space-y-0.5">
                                                     <span className="text-xs font-bold text-white flex items-center gap-1.5">
                                                         <Repeat className="w-3.5 h-3.5 text-indigo-400" />
-                                                        Continuous Playlist Loop
+                                                        Continuous Loop
                                                     </span>
-                                                    <p className="text-[9px] text-gray-400">Restart from Step 1 after last step until TP or SL is hit</p>
+                                                    <p className="text-[9px] text-gray-400">Restart sequence until TP/SL</p>
                                                 </div>
                                                 <Toggle enabled={playlistLoop} onChange={setPlaylistLoop} disabled={isRunningAuto} />
                                             </div>
 
+                                            {/* Base Starting Stake Input */}
+                                            <div className="flex items-center justify-between p-3 rounded-xl bg-white/3 border border-white/5">
+                                                <div className="space-y-0.5 pr-2">
+                                                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                                                        <Zap className="w-3.5 h-3.5 text-cyan-400" />
+                                                        Base Stake ($)
+                                                    </span>
+                                                    <p className="text-[9px] text-gray-400">Starting base amount</p>
+                                                </div>
+                                                <input
+                                                    type="number"
+                                                    step="0.05"
+                                                    min="0.35"
+                                                    value={baseStake}
+                                                    onChange={e => {
+                                                        const val = e.target.value;
+                                                        setBaseStake(val);
+                                                        if (!isRunningAuto || sessionProfit <= 0) {
+                                                            setCurrentStake(val);
+                                                        }
+                                                    }}
+                                                    disabled={isRunningAuto}
+                                                    className="w-20 px-2 py-1 text-right bg-black/40 border border-white/10 rounded-lg text-xs font-mono font-bold text-white focus:outline-none focus:border-cyan-500/50 disabled:opacity-50"
+                                                />
+                                            </div>
+
+                                            {/* Next Compounded Stake Display */}
                                             <div className="flex items-center justify-between p-3 rounded-xl bg-white/3 border border-white/5">
                                                 <div className="space-y-0.5">
                                                     <span className="text-xs font-bold text-white flex items-center gap-1.5">
                                                         <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                                                        Next Stake (Compounded)
+                                                        Running Stake
                                                     </span>
-                                                    <p className="text-[9px] text-gray-400">Current running stake: <span className="font-mono text-emerald-400 font-bold">${currentStake}</span></p>
+                                                    <p className="text-[9px] text-gray-400">Compounded value</p>
                                                 </div>
                                                 <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs font-black font-mono text-emerald-400">
                                                     ${currentStake}
@@ -2993,97 +3032,175 @@ export default function AutoTradePage() {
                     {/* ─── RISK TAB ────────────────────────────────────────── */}
                     {activeTab === 'risk' && (
                         <div className="bg-white/2 rounded-2xl border border-white/8 p-5 space-y-5">
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3.5">
-                                <Input label="Base Stake ($)" type="number" value={baseStake} onChange={e => setBaseStake(e.target.value)} disabled={isRunningAuto} />
-                                <Input label="Take Profit ($)" type="number" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} disabled={isRunningAuto} />
-                                <Input label="Stop Loss ($)" type="number" value={stopLoss} onChange={e => setStopLoss(e.target.value)} disabled={isRunningAuto} />
-                                <Input label="Max Trades / Market" type="number" value={maxTradesPerMarket} onChange={e => setMaxTradesPerMarket(e.target.value)} disabled={isRunningAuto} />
-                                <Input label="Session Win Cap" type="number" value={maxWinsCap} onChange={e => setMaxWinsCap(e.target.value)} disabled={isRunningAuto} />
-                                <Input label="Session Max Trades" type="number" value={maxTradesCap} onChange={e => setMaxTradesCap(e.target.value)} disabled={isRunningAuto} />
-                                <Input label="Trades Per Cycle" type="number" value={tradesPerCycle} onChange={e => setTradesPerCycle(e.target.value)} disabled={isRunningAuto} />
-                                <Select label="Cycle Interval" value={cycleInterval} onChange={setCycleInterval} disabled={isRunningAuto}
-                                    options={[
-                                        { value: 'continuous', label: 'Continuous' },
-                                        { value: '15m', label: 'Every 15 min' },
-                                        { value: '30m', label: 'Every 30 min' },
-                                        { value: '1h',  label: 'Every 1 hour' },
-                                        { value: '2h',  label: 'Every 2 hours' },
-                                    ]} />
-                            </div>
-
-                            {/* Martingale System */}
-                            <div className="p-4 rounded-xl border border-white/8 bg-white/2 space-y-4">
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        <p className="text-sm font-bold text-white">Martingale System</p>
-                                        <p className="text-[10px] text-gray-500">Multiply stake on consecutive losses to recover deficits</p>
+                            {selectedPreset === 'trade_playlist' ? (
+                                <div className="space-y-5">
+                                    {/* Playlist Risk Controls Header Banner */}
+                                    <div className="p-4 rounded-xl bg-gradient-to-r from-indigo-500/10 to-teal-500/10 border border-indigo-500/20 flex items-center gap-3">
+                                        <div className="p-2 rounded-lg bg-indigo-500/20 border border-indigo-500/30">
+                                            <ShieldAlert className="w-5 h-5 text-indigo-400" />
+                                        </div>
+                                        <div>
+                                            <p className="text-xs font-bold text-white">Autonomous Trade Playlist Risk Controls</p>
+                                            <p className="text-[10px] text-gray-400">Total Take Profit & Stop Loss govern the entire compounding playlist session globally across all steps.</p>
+                                        </div>
                                     </div>
-                                    <Toggle enabled={isMartingaleEnabled} onChange={setIsMartingaleEnabled} disabled={isRunningAuto} />
-                                </div>
 
-                                {isMartingaleEnabled && (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-white/5">
-                                        <Input label="Martingale Multiplier" type="number" value={martingaleMul} onChange={e => setMartingaleMul(e.target.value)} disabled={isRunningAuto} />
-                                        <Input label="Max Martingale Steps" type="number" value={maxMartSteps} onChange={e => setMaxMartSteps(e.target.value)} disabled={isRunningAuto} />
-                                        
-                                        <div className="md:col-span-2 flex items-center justify-between p-3 bg-rose-500/5 border border-rose-500/10 rounded-xl">
-                                            <div className="flex items-center gap-2">
-                                                <AlertTriangle className="w-4 h-4 text-rose-400" />
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                                        <Input
+                                            label="Base Starting Stake ($)"
+                                            type="number"
+                                            value={baseStake}
+                                            onChange={e => {
+                                                const val = e.target.value;
+                                                setBaseStake(val);
+                                                if (!isRunningAuto || sessionProfit <= 0) setCurrentStake(val);
+                                            }}
+                                            disabled={isRunningAuto}
+                                        />
+                                        <Input label="Global Take Profit ($)" type="number" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} disabled={isRunningAuto} />
+                                        <Input label="Global Stop Loss ($)" type="number" value={stopLoss} onChange={e => setStopLoss(e.target.value)} disabled={isRunningAuto} />
+                                    </div>
+
+                                    {/* Profit Compounding */}
+                                    <div className={`p-4 rounded-xl border transition-all ${isCompounding && !isCapitalCompound ? 'border-teal-500/25 bg-teal-500/5' : 'border-white/8 bg-white/2'}`}>
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div>
+                                                <p className="text-sm font-bold text-white">Profit Compounding (Default)</p>
+                                                <p className="text-[10px] text-gray-500">Adds X% of accumulated session profit to the base stake for upcoming playlist steps</p>
+                                            </div>
+                                            <Toggle enabled={isCompounding && !isCapitalCompound} onChange={v => { setIsCompounding(v); if (v) setIsCapitalCompound(false); }} disabled={isRunningAuto || isCapitalCompound} />
+                                        </div>
+                                        {isCompounding && !isCapitalCompound && (
+                                            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-white/5">
+                                                <input type="number" value={compoundPct} onChange={e => setCompoundPct(e.target.value)} disabled={isRunningAuto}
+                                                    className="w-20 text-center bg-white/5 border border-white/10 rounded-lg text-sm font-black text-white py-1.5 focus:outline-none focus:border-teal-500/50 disabled:opacity-40" />
+                                                <span className="text-xs text-gray-500 font-bold">% of session profit added to base stake</span>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Capital-Based Scaling */}
+                                    <div className={`p-4 rounded-xl border transition-all ${isCapitalCompound ? 'border-indigo-500/30 bg-indigo-500/5' : 'border-white/8 bg-white/2'}`}>
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div>
+                                                <p className="text-sm font-bold text-white">Capital-Based Stake Scaling</p>
+                                                <p className="text-[10px] text-gray-500">Stake = X% of live account balance · auto-scales as balance grows</p>
+                                            </div>
+                                            <Toggle enabled={isCapitalCompound} onChange={v => { setIsCapitalCompound(v); if (v) setIsCompounding(false); }} disabled={isRunningAuto} />
+                                        </div>
+                                        {isCapitalCompound && (
+                                            <div className="grid grid-cols-2 gap-4 mt-3 pt-3 border-t border-white/5">
                                                 <div>
-                                                    <p className="text-xs font-bold text-white">Stop on Max Steps</p>
-                                                    <p className="text-[10px] text-gray-500">Stop bot execution completely when max steps threshold is hit</p>
+                                                    <p className="text-[10px] text-gray-500 font-bold mb-1.5">Capital % Per Trade</p>
+                                                    <input type="number" min={0.01} max={100} step={0.1} value={capitalPct}
+                                                        onChange={e => setCapitalPct(e.target.value)} disabled={isRunningAuto}
+                                                        className="w-24 text-center bg-white/5 border border-white/10 rounded-xl text-sm font-black text-white py-2 focus:outline-none focus:border-indigo-500/50 disabled:opacity-40" />
+                                                    <p className="text-[9px] text-gray-600 mt-1">e.g. 1% of $500 = $5.00 stake</p>
+                                                </div>
+                                                <div className="flex flex-col justify-center p-3.5 bg-white/5 rounded-xl border border-white/10">
+                                                    <p className="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-1">Calculated Stake Now</p>
+                                                    <p className="text-2xl font-black font-mono text-teal-400">${capitalPreview ?? '—'}</p>
+                                                    <p className="text-[9px] text-gray-600 mt-0.5">Balance: ${(account?.balance || 0).toFixed(2)} × {capitalPct}%</p>
                                                 </div>
                                             </div>
-                                            <Toggle enabled={stopOnMaxSteps} onChange={setStopOnMaxSteps} disabled={isRunningAuto} />
-                                        </div>
+                                        )}
                                     </div>
-                                )}
-                            </div>
-
-                            {/* Profit Compounding */}
-                            <div className={`p-4 rounded-xl border transition-all ${isCompounding && !isCapitalCompound ? 'border-teal-500/25 bg-teal-500/5' : 'border-white/8 bg-white/2'}`}>
-                                <div className="flex items-center justify-between mb-2">
-                                    <div>
-                                        <p className="text-sm font-bold text-white">Profit Compounding</p>
-                                        <p className="text-[10px] text-gray-500">Adds X% of session profit to the base stake</p>
-                                    </div>
-                                    <Toggle enabled={isCompounding && !isCapitalCompound} onChange={v => { setIsCompounding(v); if (v) setIsCapitalCompound(false); }} disabled={isRunningAuto || isCapitalCompound} />
                                 </div>
-                                {isCompounding && !isCapitalCompound && (
-                                    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-white/5">
-                                        <input type="number" value={compoundPct} onChange={e => setCompoundPct(e.target.value)} disabled={isRunningAuto}
-                                            className="w-20 text-center bg-white/5 border border-white/10 rounded-lg text-sm font-black text-white py-1.5 focus:outline-none focus:border-teal-500/50 disabled:opacity-40" />
-                                        <span className="text-xs text-gray-500 font-bold">% of session profit added to stake</span>
+                            ) : (
+                                <>
+                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3.5">
+                                        <Input label="Base Stake ($)" type="number" value={baseStake} onChange={e => setBaseStake(e.target.value)} disabled={isRunningAuto} />
+                                        <Input label="Take Profit ($)" type="number" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} disabled={isRunningAuto} />
+                                        <Input label="Stop Loss ($)" type="number" value={stopLoss} onChange={e => setStopLoss(e.target.value)} disabled={isRunningAuto} />
+                                        <Input label="Max Trades / Market" type="number" value={maxTradesPerMarket} onChange={e => setMaxTradesPerMarket(e.target.value)} disabled={isRunningAuto} />
+                                        <Input label="Session Win Cap" type="number" value={maxWinsCap} onChange={e => setMaxWinsCap(e.target.value)} disabled={isRunningAuto} />
+                                        <Input label="Session Max Trades" type="number" value={maxTradesCap} onChange={e => setMaxTradesCap(e.target.value)} disabled={isRunningAuto} />
+                                        <Input label="Trades Per Cycle" type="number" value={tradesPerCycle} onChange={e => setTradesPerCycle(e.target.value)} disabled={isRunningAuto} />
+                                        <Select label="Cycle Interval" value={cycleInterval} onChange={setCycleInterval} disabled={isRunningAuto}
+                                            options={[
+                                                { value: 'continuous', label: 'Continuous' },
+                                                { value: '15m', label: 'Every 15 min' },
+                                                { value: '30m', label: 'Every 30 min' },
+                                                { value: '1h',  label: 'Every 1 hour' },
+                                                { value: '2h',  label: 'Every 2 hours' },
+                                            ]} />
                                     </div>
-                                )}
-                            </div>
 
-                            {/* Capital-Based Scaling */}
-                            <div className={`p-4 rounded-xl border transition-all ${isCapitalCompound ? 'border-indigo-500/30 bg-indigo-500/5' : 'border-white/8 bg-white/2'}`}>
-                                <div className="flex items-center justify-between mb-2">
-                                    <div>
-                                        <p className="text-sm font-bold text-white">Capital-Based Stake Scaling</p>
-                                        <p className="text-[10px] text-gray-500">Stake = X% of live account balance · auto-scales as balance grows</p>
-                                    </div>
-                                    <Toggle enabled={isCapitalCompound} onChange={v => { setIsCapitalCompound(v); if (v) setIsCompounding(false); }} disabled={isRunningAuto} />
-                                </div>
-                                {isCapitalCompound && (
-                                    <div className="grid grid-cols-2 gap-4 mt-3 pt-3 border-t border-white/5">
-                                        <div>
-                                            <p className="text-[10px] text-gray-500 font-bold mb-1.5">Capital % Per Trade</p>
-                                            <input type="number" min={0.01} max={100} step={0.1} value={capitalPct}
-                                                onChange={e => setCapitalPct(e.target.value)} disabled={isRunningAuto}
-                                                className="w-24 text-center bg-white/5 border border-white/10 rounded-xl text-sm font-black text-white py-2 focus:outline-none focus:border-indigo-500/50 disabled:opacity-40" />
-                                            <p className="text-[9px] text-gray-600 mt-1">e.g. 1% of $500 = $5.00 stake</p>
+                                    {/* Martingale System */}
+                                    <div className="p-4 rounded-xl border border-white/8 bg-white/2 space-y-4">
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <p className="text-sm font-bold text-white">Martingale System</p>
+                                                <p className="text-[10px] text-gray-500">Multiply stake on consecutive losses to recover deficits</p>
+                                            </div>
+                                            <Toggle enabled={isMartingaleEnabled} onChange={setIsMartingaleEnabled} disabled={isRunningAuto} />
                                         </div>
-                                        <div className="flex flex-col justify-center p-3.5 bg-white/5 rounded-xl border border-white/10">
-                                            <p className="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-1">Calculated Stake Now</p>
-                                            <p className="text-2xl font-black font-mono text-teal-400">${capitalPreview ?? '—'}</p>
-                                            <p className="text-[9px] text-gray-600 mt-0.5">Balance: ${(account?.balance || 0).toFixed(2)} × {capitalPct}%</p>
-                                        </div>
+
+                                        {isMartingaleEnabled && (
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-white/5">
+                                                <Input label="Martingale Multiplier" type="number" value={martingaleMul} onChange={e => setMartingaleMul(e.target.value)} disabled={isRunningAuto} />
+                                                <Input label="Max Martingale Steps" type="number" value={maxMartSteps} onChange={e => setMaxMartSteps(e.target.value)} disabled={isRunningAuto} />
+                                                
+                                                <div className="md:col-span-2 flex items-center justify-between p-3 bg-rose-500/5 border border-rose-500/10 rounded-xl">
+                                                    <div className="flex items-center gap-2">
+                                                        <AlertTriangle className="w-4 h-4 text-rose-400" />
+                                                        <div>
+                                                            <p className="text-xs font-bold text-white">Stop on Max Steps</p>
+                                                            <p className="text-[10px] text-gray-500">Stop bot execution completely when max steps threshold is hit</p>
+                                                        </div>
+                                                    </div>
+                                                    <Toggle enabled={stopOnMaxSteps} onChange={setStopOnMaxSteps} disabled={isRunningAuto} />
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
-                                )}
-                            </div>
+
+                                    {/* Profit Compounding */}
+                                    <div className={`p-4 rounded-xl border transition-all ${isCompounding && !isCapitalCompound ? 'border-teal-500/25 bg-teal-500/5' : 'border-white/8 bg-white/2'}`}>
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div>
+                                                <p className="text-sm font-bold text-white">Profit Compounding</p>
+                                                <p className="text-[10px] text-gray-500">Adds X% of session profit to the base stake</p>
+                                            </div>
+                                            <Toggle enabled={isCompounding && !isCapitalCompound} onChange={v => { setIsCompounding(v); if (v) setIsCapitalCompound(false); }} disabled={isRunningAuto || isCapitalCompound} />
+                                        </div>
+                                        {isCompounding && !isCapitalCompound && (
+                                            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-white/5">
+                                                <input type="number" value={compoundPct} onChange={e => setCompoundPct(e.target.value)} disabled={isRunningAuto}
+                                                    className="w-20 text-center bg-white/5 border border-white/10 rounded-lg text-sm font-black text-white py-1.5 focus:outline-none focus:border-teal-500/50 disabled:opacity-40" />
+                                                <span className="text-xs text-gray-500 font-bold">% of session profit added to stake</span>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Capital-Based Scaling */}
+                                    <div className={`p-4 rounded-xl border transition-all ${isCapitalCompound ? 'border-indigo-500/30 bg-indigo-500/5' : 'border-white/8 bg-white/2'}`}>
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div>
+                                                <p className="text-sm font-bold text-white">Capital-Based Stake Scaling</p>
+                                                <p className="text-[10px] text-gray-500">Stake = X% of live account balance · auto-scales as balance grows</p>
+                                            </div>
+                                            <Toggle enabled={isCapitalCompound} onChange={v => { setIsCapitalCompound(v); if (v) setIsCompounding(false); }} disabled={isRunningAuto} />
+                                        </div>
+                                        {isCapitalCompound && (
+                                            <div className="grid grid-cols-2 gap-4 mt-3 pt-3 border-t border-white/5">
+                                                <div>
+                                                    <p className="text-[10px] text-gray-500 font-bold mb-1.5">Capital % Per Trade</p>
+                                                    <input type="number" min={0.01} max={100} step={0.1} value={capitalPct}
+                                                        onChange={e => setCapitalPct(e.target.value)} disabled={isRunningAuto}
+                                                        className="w-24 text-center bg-white/5 border border-white/10 rounded-xl text-sm font-black text-white py-2 focus:outline-none focus:border-indigo-500/50 disabled:opacity-40" />
+                                                    <p className="text-[9px] text-gray-600 mt-1">e.g. 1% of $500 = $5.00 stake</p>
+                                                </div>
+                                                <div className="flex flex-col justify-center p-3.5 bg-white/5 rounded-xl border border-white/10">
+                                                    <p className="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-1">Calculated Stake Now</p>
+                                                    <p className="text-2xl font-black font-mono text-teal-400">${capitalPreview ?? '—'}</p>
+                                                    <p className="text-[9px] text-gray-600 mt-0.5">Balance: ${(account?.balance || 0).toFixed(2)} × {capitalPct}%</p>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </>
+                            )}
                         </div>
                     )}
 
