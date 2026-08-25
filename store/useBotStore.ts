@@ -1148,8 +1148,24 @@ export const useBotStore = create<BotStoreState>()(
                   if (currentRes === step2Req) vSmartCount++;
                   if (vSmartCount >= seq.step2Qty) step2Met = true;
                 }
-                if (step2Met) { smartMatched = true; vSmartStage = 1; vSmartCount = 0; }
-                else if (step2Failed) { vSmartStage = 1; vSmartCount = 0; }
+                if (step2Met) {
+                  smartMatched = true;
+                  vSmartStage = 1;
+                  vSmartCount = 0;
+                } else if (step2Failed) {
+                  vSmartStage = 1;
+                  if (seq.step1Mode === 'consecutive') {
+                    const streak = step1Req === 'W' ? vConsecWins : vConsecLosses;
+                    if (streak >= seq.step1Qty) {
+                      vSmartStage = 2;
+                      vSmartCount = 0;
+                    } else {
+                      vSmartCount = 0;
+                    }
+                  } else {
+                    vSmartCount = (currentRes === step1Req) ? 1 : 0;
+                  }
+                }
               }
               useDerivStore.getState().setVirtualSettings({ vSmartStage, vSmartCount });
             } else if (smart.type === 'alternating' && smart.alternating) {
@@ -1175,16 +1191,18 @@ export const useBotStore = create<BotStoreState>()(
             if (!vsV.isDoubleVirtual) {
               const streak = vsV.vTriggerType === 'losses' ? vConsecLosses : vConsecWins;
               const val = vsV.vTriggerMode === 'total' ? (vsV.vTriggerType === 'losses' ? virtualLosses : virtualWins) : streak;
-              if (smartMatched || val >= vsV.vThreshold) {
+              const thresholdPassed = vsV.startVirtualToReal && val >= vsV.vThreshold;
+              if (smartMatched || thresholdPassed) {
                 newVirtMode = false;
-                set({ botStatusMsg: `Virtual threshold [${vsV.vThreshold}] or Smart Pattern hit! Switching to REAL.` });
+                set({ botStatusMsg: `Virtual condition met (${smartMatched ? 'Smart Pattern' : `Threshold [${vsV.vThreshold}]`})! Switching to REAL.` });
               }
             } else {
               // ── Double Virtual Mode (2-Stage Cascade) ─────────────────────
               if (vDoubleStage === 'A') {
                 const streak = vsV.vTriggerType === 'losses' ? vConsecLosses : vConsecWins;
                 const valA = vsV.vTriggerMode === 'total' ? (vsV.vTriggerType === 'losses' ? virtualLosses : virtualWins) : streak;
-                if (smartMatched || valA >= vsV.vThreshold) {
+                const thresholdPassedA = vsV.startVirtualToReal && valA >= vsV.vThreshold;
+                if (smartMatched || thresholdPassedA) {
                   vDoubleStage = 'B';
                   vConsecWinsB = 0; vConsecLossesB = 0; vVirtualWinsB = 0; vVirtualLossesB = 0;
                   vStageBCompletedReps = 0;

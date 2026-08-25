@@ -1330,47 +1330,14 @@ export const useDerivStore = create<DerivState>()(
             }),
 
             updateAdaptiveState: (isWin: boolean) => set((state: DerivState) => {
-                const config = state.triggers.adaptiveEvenOdd;
-                if (!config.enabled) return {};
+                const config = state.triggers?.adaptiveEvenOdd;
+                if (!config || !config.enabled) return {};
 
-                if (!config.advancedEnabled) {
-                    if (isWin) return {};
-                    const { currentSide } = config;
-                    let nextSide = currentSide;
-                    if (currentSide === 'Even') nextSide = 'Odd';
-                    else if (currentSide === 'Odd') nextSide = 'Even';
-                    else if (currentSide === 'Over') nextSide = 'Under';
-                    else if (currentSide === 'Under') nextSide = 'Over';
-                    return {
-                        triggers: {
-                            ...state.triggers,
-                            adaptiveEvenOdd: {
-                                ...config,
-                                currentSide: nextSide
-                            }
-                        }
-                    };
-                }
+                const isCustomPattern = config.mode === 'custom_pattern';
+                const isAdaptiveContracts = config.mode === 'adaptive_contracts' || (config.advancedEnabled && !isCustomPattern);
 
-                if (config.mode === 'adaptive_contracts') {
-                    if (isWin) return {};
-                    const activeSide = config.adaptiveContracts?.activeSide || 'A';
-                    const nextActiveSide = activeSide === 'A' ? 'B' : 'A';
-                    return {
-                        triggers: {
-                            ...state.triggers,
-                            adaptiveEvenOdd: {
-                                ...config,
-                                adaptiveContracts: {
-                                    ...config.adaptiveContracts,
-                                    activeSide: nextActiveSide
-                                }
-                            }
-                        }
-                    };
-                }
-
-                if (config.mode === 'custom_pattern') {
+                // 1. Custom Pattern Mode (Advances through sequence steps on every trade)
+                if (isCustomPattern) {
                     const pattern = config.customPattern || { steps: [], currentStepIndex: 0, currentRepeatCount: 0 };
                     const steps = pattern.steps || [];
                     if (steps.length === 0) return {};
@@ -1399,7 +1366,53 @@ export const useDerivStore = create<DerivState>()(
                     };
                 }
 
-                return {};
+                // 2. Adaptive Contracts Mode (A/B Pair switching on loss)
+                if (isAdaptiveContracts) {
+                    if (isWin) return {};
+                    const activeSide = config.adaptiveContracts?.activeSide || 'A';
+                    const nextActiveSide = activeSide === 'A' ? 'B' : 'A';
+                    return {
+                        triggers: {
+                            ...state.triggers,
+                            adaptiveEvenOdd: {
+                                ...config,
+                                adaptiveContracts: {
+                                    ...config.adaptiveContracts,
+                                    activeSide: nextActiveSide
+                                }
+                            }
+                        }
+                    };
+                }
+
+                // 3. Simple Even/Odd, Over/Under, or Rise/Fall switching on loss
+                if (isWin) return {};
+                const s = (config.currentSide || '').toUpperCase();
+                let nextSide: 'Even' | 'Odd' | 'Over' | 'Under' | 'Rise' | 'Fall' = 'Even';
+
+                if (s === 'EVEN') nextSide = 'Odd';
+                else if (s === 'ODD') nextSide = 'Even';
+                else if (s === 'OVER') nextSide = 'Under';
+                else if (s === 'UNDER') nextSide = 'Over';
+                else if (s === 'RISE') nextSide = 'Fall';
+                else if (s === 'FALL') nextSide = 'Rise';
+                else {
+                    const baseType = state.contractType || 'DIGITEVEN';
+                    if (baseType === 'DIGITOVER') nextSide = 'Under';
+                    else if (baseType === 'DIGITUNDER') nextSide = 'Over';
+                    else if (baseType === 'DIGITEVEN') nextSide = 'Odd';
+                    else if (baseType === 'DIGITODD') nextSide = 'Even';
+                }
+
+                return {
+                    triggers: {
+                        ...state.triggers,
+                        adaptiveEvenOdd: {
+                            ...config,
+                            currentSide: nextSide
+                        }
+                    }
+                };
             }),
 
             getActiveAdaptiveContract: () => {
@@ -1413,42 +1426,44 @@ export const useDerivStore = create<DerivState>()(
                     return { type: baseContractType, prediction: basePrediction };
                 }
 
-                if (!config.advancedEnabled) {
-                    const side = config.currentSide;
-                    let type = baseContractType;
-                    if (['CALL', 'PUT'].includes(type)) {
-                        if (side === 'Over' || side === 'Even') type = 'CALL';
-                        else if (side === 'Under' || side === 'Odd') type = 'PUT';
-                    } else {
-                        if (side === 'Even') type = 'DIGITEVEN';
-                        else if (side === 'Odd') type = 'DIGITODD';
-                        else if (side === 'Over') type = 'DIGITOVER';
-                        else if (side === 'Under') type = 'DIGITUNDER';
-                        else if (side === 'Rise') type = 'CALL';
-                        else if (side === 'Fall') type = 'PUT';
-                        else if (side === 'Higher') type = 'CALL_HIGHER';
-                        else if (side === 'Lower') type = 'CALL_LOWER';
-                    }
-                    return { type, prediction: basePrediction };
-                }
+                const isCustomPattern = config.mode === 'custom_pattern';
+                const isAdaptiveContracts = config.mode === 'adaptive_contracts' || (config.advancedEnabled && !isCustomPattern);
 
-                if (config.mode === 'adaptive_contracts') {
-                    const activeSide = config.adaptiveContracts?.activeSide || 'A';
-                    const contract = activeSide === 'A' ? config.adaptiveContracts?.contractA : config.adaptiveContracts?.contractB;
-                    return {
-                        type: contract?.type || 'DIGITUNDER',
-                        prediction: contract?.prediction !== undefined ? contract.prediction : 4
-                    };
-                }
-
-                if (config.mode === 'custom_pattern') {
+                if (isCustomPattern) {
                     const steps = config.customPattern?.steps || [];
                     const stepIndex = config.customPattern?.currentStepIndex || 0;
                     const step = steps[stepIndex] || { type: 'DIGITEVEN', prediction: 0 };
                     return { type: step.type, prediction: step.prediction };
                 }
 
-                return { type: baseContractType, prediction: basePrediction };
+                if (isAdaptiveContracts) {
+                    const activeSide = config.adaptiveContracts?.activeSide || 'A';
+                    const contract = activeSide === 'A' ? config.adaptiveContracts?.contractA : config.adaptiveContracts?.contractB;
+                    const resType = contract?.type || (activeSide === 'A' ? 'DIGITUNDER' : 'DIGITOVER');
+                    const resPred = contract?.prediction !== undefined ? contract.prediction : (activeSide === 'A' ? 4 : 5);
+                    return {
+                        type: resType,
+                        prediction: resPred
+                    };
+                }
+
+                const s = (config.currentSide || '').toUpperCase();
+                let type = baseContractType;
+                if (['CALL', 'PUT'].includes(baseContractType)) {
+                    if (s === 'OVER' || s === 'EVEN' || s === 'RISE') type = 'CALL';
+                    else if (s === 'UNDER' || s === 'ODD' || s === 'FALL') type = 'PUT';
+                } else if (['DIGITOVER', 'DIGITUNDER'].includes(baseContractType) || s === 'OVER' || s === 'UNDER') {
+                    if (s === 'OVER') type = 'DIGITOVER';
+                    else if (s === 'UNDER') type = 'DIGITUNDER';
+                    else if (baseContractType === 'DIGITOVER') type = 'DIGITOVER';
+                    else if (baseContractType === 'DIGITUNDER') type = 'DIGITUNDER';
+                } else {
+                    if (s === 'EVEN') type = 'DIGITEVEN';
+                    else if (s === 'ODD') type = 'DIGITODD';
+                    else if (s === 'OVER') type = 'DIGITOVER';
+                    else if (s === 'UNDER') type = 'DIGITUNDER';
+                }
+                return { type, prediction: basePrediction };
             },
 
             updateTriggers: (updates: Partial<DerivState['triggers']>) => set((state: DerivState) => ({

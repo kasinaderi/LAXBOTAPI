@@ -340,15 +340,16 @@ export function SettingsTabs() {
                                             <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest pl-1">{virtual.isDoubleVirtual ? 'Stage A Thresh' : 'Threshold'}</span>
                                             <input
                                                 type="number"
-                                                value={virtual.vThreshold}
-                                                onChange={(e) => settings.setVirtualSettings({ vThreshold: parseInt(e.target.value) || 0 })}
+                                                min={1}
+                                                value={virtual.vThreshold ?? ''}
+                                                onChange={(e) => settings.setVirtualSettings({ vThreshold: e.target.value === '' ? ('' as any) : Math.max(1, parseInt(e.target.value) || 1) })}
                                                 className="w-full bg-dark border-2 border-dark-hover rounded-xl px-4 py-2 text-sm font-bold text-indigo-400 focus:border-indigo-500/50 outline-none"
                                             />
                                         </div>
                                         <div className="space-y-1">
                                             <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest pl-1">Mode</span>
                                             <select
-                                                value={virtual.vTriggerMode}
+                                                value={virtual.vTriggerMode ?? 'consec'}
                                                 onChange={(e) => settings.setVirtualSettings({ vTriggerMode: e.target.value as any })}
                                                 className="w-full bg-dark border-2 border-dark-hover rounded-xl px-4 py-2 text-sm font-bold text-indigo-400 focus:border-indigo-500/50 outline-none"
                                             >
@@ -406,19 +407,25 @@ export function SettingsTabs() {
                                             </div>
                                         </div>
                                     )}
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <button
-                                            onClick={() => settings.setVirtualSettings({ vTriggerType: 'wins' })}
-                                            className={`py-2 rounded-xl text-[10px] font-black uppercase border-2 transition-all ${virtual.vTriggerType === 'wins' ? 'bg-teal-500/10 border-teal-500/50 text-teal-400' : 'bg-dark border-dark-hover text-gray-500'}`}
-                                        >
-                                            Wins
-                                        </button>
-                                        <button
-                                            onClick={() => settings.setVirtualSettings({ vTriggerType: 'losses' })}
-                                            className={`py-2 rounded-xl text-[10px] font-black uppercase border-2 transition-all ${virtual.vTriggerType === 'losses' ? 'bg-red-500/10 border-red-500/50 text-red-400' : 'bg-dark border-dark-hover text-gray-500'}`}
-                                        >
-                                            Losses
-                                        </button>
+                                    {/* Wins/Losses trigger type selector */}
+                                    <div className="space-y-1">
+                                        <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest pl-1">
+                                            Switch to Real on Virtual: <span className={virtual.vTriggerType === 'wins' ? 'text-teal-400' : 'text-red-400'}>{virtual.vTriggerType === 'wins' ? '✅ Wins' : '❌ Losses'}</span>
+                                        </span>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <button
+                                                onClick={() => settings.setVirtualSettings({ vTriggerType: 'wins' })}
+                                                className={`py-2 rounded-xl text-[10px] font-black uppercase border-2 transition-all ${(virtual.vTriggerType ?? 'wins') === 'wins' ? 'bg-teal-500/20 border-teal-500/60 text-teal-400 shadow-teal-500/10 shadow-md' : 'bg-dark border-dark-hover text-gray-500 hover:text-gray-300'}`}
+                                            >
+                                                Wins
+                                            </button>
+                                            <button
+                                                onClick={() => settings.setVirtualSettings({ vTriggerType: 'losses' })}
+                                                className={`py-2 rounded-xl text-[10px] font-black uppercase border-2 transition-all ${(virtual.vTriggerType ?? 'wins') === 'losses' ? 'bg-red-500/20 border-red-500/60 text-red-400 shadow-red-500/10 shadow-md' : 'bg-dark border-dark-hover text-gray-500 hover:text-gray-300'}`}
+                                            >
+                                                Losses
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             )}

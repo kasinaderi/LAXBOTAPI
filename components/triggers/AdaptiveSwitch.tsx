@@ -148,6 +148,7 @@ export function AdaptiveSwitch() {
                                         updateTriggers({
                                             adaptiveEvenOdd: {
                                                 ...config,
+                                                advancedEnabled: true,
                                                 mode: 'adaptive_contracts'
                                             }
                                         });
@@ -161,6 +162,7 @@ export function AdaptiveSwitch() {
                                         updateTriggers({
                                             adaptiveEvenOdd: {
                                                 ...config,
+                                                advancedEnabled: true,
                                                 mode: 'custom_pattern'
                                             }
                                         });

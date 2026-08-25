@@ -613,10 +613,12 @@ class TradeEngine {
             // Calculate Stake
             if (this.currentStake === 0) this.currentStake = initialStake;
 
-            // Override with recovery stake if active (unless configured to use martingale stake)
-            let tradeStake = (state.isRecoveryActive && !state.recoverySettings.useMartingaleStake)
-                ? state.recoverySettings.recoveryStake
-                : sanitizeStake(this.currentStake);
+            // Virtual trades strictly use initial base stake (e.g. $1.00); Real trades use real Martingale / Recovery stake
+            let tradeStake = state.virtualSettings.isVirtualMode
+                ? sanitizeStake(initialStake)
+                : ((state.isRecoveryActive && !state.recoverySettings.useMartingaleStake)
+                    ? state.recoverySettings.recoveryStake
+                    : sanitizeStake(this.currentStake));
 
             // Execute — pass trigger tick epoch so the local RF tracker can correctly
             // identify Tick 1 (entry) and Tick 2 (exit/determinant)
@@ -696,8 +698,11 @@ class TradeEngine {
         }
 
         // Adaptive Switching logic (with null guard)
-        if (!overrideContractType && state.triggers?.adaptiveEvenOdd?.enabled) {
-            const activeContract = state.getActiveAdaptiveContract();
+        // Always re-fetch from live store so that the adaptive side updated by the
+        // previous virtual trade result (via updateAdaptiveState) is reflected here.
+        const liveState = this.getState ? this.getState() : state;
+        if (!overrideContractType && liveState.triggers?.adaptiveEvenOdd?.enabled) {
+            const activeContract = liveState.getActiveAdaptiveContract();
             tradeContractType = activeContract.type;
             tradePrediction = activeContract.prediction;
         }
@@ -1157,19 +1162,32 @@ class TradeEngine {
                     if (isAlternating) shouldSwitch = true;
                 }
             }
-        const isVirtActive = virtualSettings.startVirtualToReal || virtualSettings.isDoubleVirtual || virtualSettings.smartSettings?.enabled;
-        if (isVirtActive) {
+        }
+
+        // ── Update Adaptive Switch side on every virtual result ──────────────────
+        if (this.getState) {
+            const liveStoreState = this.getState();
+            if (liveStoreState && typeof liveStoreState.updateAdaptiveState === 'function') {
+                liveStoreState.updateAdaptiveState(isWin);
+            }
+        }
+
+        if (virtualSettings.startVirtualToReal) {
             if (!virtualSettings.isDoubleVirtual) {
                 if (!shouldSwitch) {
-                    const threshold = virtualSettings.vThreshold;
-                    const mode = virtualSettings.vTriggerMode;
-                    const type = virtualSettings.vTriggerType;
+                    const threshold = virtualSettings.vThreshold ?? 1;
+                    const mode = virtualSettings.vTriggerMode ?? 'consec';
+                    const type = virtualSettings.vTriggerType ?? 'losses';
                     const val = (type === 'wins')
                         ? ((mode === 'consec') ? vConsecWins : virtualWins)
                         : ((mode === 'consec') ? vConsecLosses : virtualLosses);
+                    console.log(`[TradeEngine] Threshold eval (startVirtualToReal): val=${val} >= threshold=${threshold} ? ${val >= threshold}`);
                     if (val >= threshold) shouldSwitch = true;
                 }
-            } else {
+            }
+        }
+        
+        if (virtualSettings.isDoubleVirtual) {
                 // ── Double Virtual Mode (2-Stage Cascade) ─────────────────────
                 const stage = virtualSettings.vDoubleStage || 'A';
                 if (stage === 'A') {
@@ -1220,7 +1238,6 @@ class TradeEngine {
                     }
                 }
             }
-        } // end if (virtualSettings.startVirtualToReal)
 
         // Update state including transient matcher progress
         setVirtualSettings({ 
@@ -1233,13 +1250,9 @@ class TradeEngine {
             vSmartCount
         });
 
-        if (state.triggers?.adaptiveEvenOdd?.enabled) {
-            state.updateAdaptiveState(isWin);
-        }
-
         // Check Switch to Real
         if (shouldSwitch && virtualSettings.isVirtualMode) {
-            console.log(`[TradeEngine] 🚀 SMART SWITCH TRIGGERED: Switching to REAL Mode.`);
+            console.log(`[TradeEngine] 🚀 SMART SWITCH TRIGGERED: Switching to REAL Mode (Resuming Real Martingale Stake: USD ${this.currentStake || state.initialStake || 1}, Real Loss Count: ${this.lossCount}).`);
             setVirtualSettings({
                 isVirtualMode: false,
                 realWins: 0,
@@ -1275,8 +1288,6 @@ class TradeEngine {
                 // to allow seamless transition between Virtual and Real tracking.
             }
         }
-    } // end handleVirtualResult
-
 
     public handleTradeResult(isWin: boolean, actualProfit: number) {
         if (!this.getState || !this.setState) return;
@@ -1405,10 +1416,11 @@ class TradeEngine {
         const isConsecutiveLossesHit = stopAfterConsecutiveLosses.enabled && this.lossCount >= stopAfterConsecutiveLosses.value;
 
         // Adaptive Switching (Handle BEFORE instant stop to ensure next start is on correct side)
-        // Null guard required: triggers may not be fully hydrated from old localStorage
-        if (finalState.triggers?.adaptiveEvenOdd?.enabled) {
-            console.log(`[TradeEngine] Adaptive Switch: Updating adaptive state with result (Win: ${isTradeWin}).`);
-            finalState.updateAdaptiveState(isTradeWin);
+        if (this.getState) {
+            const liveStoreState = this.getState();
+            if (liveStoreState && typeof liveStoreState.updateAdaptiveState === 'function') {
+                liveStoreState.updateAdaptiveState(isTradeWin);
+            }
         }
 
         if (isStopLossHit || isTakeProfitHit || isTotalWinsHit || isTotalLossesHit || isConsecutiveLossesHit) {

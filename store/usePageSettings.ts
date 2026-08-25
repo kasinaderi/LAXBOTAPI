@@ -86,16 +86,11 @@ function captureSnapshot(pageId: string): Snap {
   for (const f of DERIV_SETTINGS_FIELDS) {
     if (dState[f] !== undefined) snap[`deriv_${f}`] = dState[f];
   }
-  const dLogs = dState.tradeLogs as any[] | undefined;
-  snap.deriv_tradeLogs = (dLogs || []).filter((l: any) => !l.pageId || l.pageId === pageId).slice(0, 50);
-  snap.deriv_stats = dState.stats;
 
   // 2. Capture Bot Store fields
   for (const f of BOT_SETTINGS_FIELDS) {
     if (bState[f] !== undefined) snap[`bot_${f}`] = bState[f];
   }
-  const bLogs = bState.tradeLogs as any[] | undefined;
-  snap.bot_tradeLogs = (bLogs || []).filter((l: any) => !l.pageId || l.pageId === pageId).slice(0, 50);
 
   return snap;
 }
@@ -130,8 +125,6 @@ export function usePageSettings(pageId: string): void {
       for (const f of DERIV_SETTINGS_FIELDS) {
         if (snap[`deriv_${f}`] !== undefined) derivPatch[f] = snap[`deriv_${f}`];
       }
-      if (snap.deriv_tradeLogs !== undefined) derivPatch.tradeLogs = snap.deriv_tradeLogs;
-      if (snap.deriv_stats !== undefined) derivPatch.stats = snap.deriv_stats;
       if (Object.keys(derivPatch).length > 0) {
         useDerivStore.setState(derivPatch as any);
       }
@@ -141,7 +134,6 @@ export function usePageSettings(pageId: string): void {
       for (const f of BOT_SETTINGS_FIELDS) {
         if (snap[`bot_${f}`] !== undefined) botPatch[f] = snap[`bot_${f}`];
       }
-      if (snap.bot_tradeLogs !== undefined) botPatch.tradeLogs = snap.bot_tradeLogs;
       if (Object.keys(botPatch).length > 0) {
         useBotStore.setState(botPatch as any);
       }
