@@ -1340,7 +1340,10 @@ class TradeEngine {
             }
         } else {
             this.lossCount++;
-            if (this.lossCount > maxMartingaleSteps) {
+            if (compoundProfits) {
+                this.currentStake = initialStake;
+                this.lossCount = 0;
+            } else if (this.lossCount > maxMartingaleSteps) {
                 if (stopOnMaxSteps) {
                     console.log(`[TradeEngine] 🛑 HALTING BOT: Max Martingale Steps [${maxMartingaleSteps}] reached.`);
                     state.stopBot();

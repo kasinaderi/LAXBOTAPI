@@ -591,21 +591,33 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
   // If exactly one wins and one loses it's a push — no martingale, no win/loss stat.
   const isDualPush = dualMode && wonCount > 0 && lostCount > 0;
 
-  // 1. Martingale update (only once per round!)
+  // 1. Martingale / Compounding update (only once per round!)
   const ss = eng.strategyState['__global__'];
+  const isCompounding = useDerivStore.getState().compoundProfits;
   if (ss) {
     if (isDualPush) {
-      // Push (1W+1L): one contract offset the other — treat as a win for martingale.
-      // Reset stake to base and clear loss counter, same as a clean win.
+      // Push (1W+1L): one contract offset the other — treat as a win for martingale/compounding.
       ss.totalProfit += netProfit;
       if (!isVirtual) {
         ss.lossCount = 0;
-        ss.currentStake = Math.round(baseStake * 100) / 100;
+        if (isCompounding) {
+          // Compound: add profit to current stake
+          const raw = ss.currentStake + netProfit;
+          ss.currentStake = Math.max(baseStake, Math.round(raw * 100) / 100);
+        } else {
+          ss.currentStake = Math.round(baseStake * 100) / 100;
+        }
       }
     } else if (isRoundWin) {
       if (!isVirtual) {
         ss.won++; ss.totalProfit += netProfit; ss.lossCount = 0;
-        ss.currentStake = Math.round(baseStake * 100) / 100;
+        if (isCompounding) {
+          // Compound: current stake + profit earned becomes next stake
+          const raw = ss.currentStake + netProfit;
+          ss.currentStake = Math.max(baseStake, Math.round(raw * 100) / 100);
+        } else {
+          ss.currentStake = Math.round(baseStake * 100) / 100;
+        }
         get().strategies.forEach((strat: Strategy) => { eng.patternPos[strat.id] = 0; });
       } else {
         ss.won++; ss.totalProfit += netProfit;
@@ -614,7 +626,11 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
     } else {
       if (!isVirtual) {
         ss.lost++; ss.totalProfit += netProfit; ss.lossCount++;
-        if (get().tradingMode === 'continuous') {
+        if (isCompounding) {
+          // On loss in compounding mode: reset stake to baseStake and reset loss count
+          ss.currentStake = Math.round(baseStake * 100) / 100;
+          ss.lossCount = 0;
+        } else if (get().tradingMode === 'continuous') {
           const rawNextStake = ss.currentStake * parseFloat(get().martingale || '2.1');
           ss.currentStake = Math.round(Math.min(
             rawNextStake,
@@ -1511,8 +1527,8 @@ export const useBotStore = create<BotStoreState>()(
 
 
 
-          // Enforce 2 decimal places strictly on the stake
-          const rawStake = Math.max(0.35, ss.currentStake);
+          // Enforce 2 decimal places strictly on the stake (Virtual strictly uses baseStake; Real uses ss.currentStake)
+          const rawStake = isVirtual ? baseStake : Math.max(0.35, ss.currentStake);
           const tradeStake = Math.round(rawStake * 100) / 100;
 
 
@@ -1884,13 +1900,22 @@ export const useBotStore = create<BotStoreState>()(
           }
 
           if (ss) {
+            const isCompounding = useDerivStore.getState().compoundProfits;
             if (isWin) {
               ss.won++; ss.totalProfit += resultProfit; ss.lossCount = 0;
-              ss.currentStake = Math.round(baseStake * 100) / 100;
+              if (isCompounding) {
+                const raw = ss.currentStake + resultProfit;
+                ss.currentStake = Math.max(baseStake, Math.round(raw * 100) / 100);
+              } else {
+                ss.currentStake = Math.round(baseStake * 100) / 100;
+              }
               state.strategies.forEach(strat => { eng.patternPos[strat.id] = 0; });
             } else {
               ss.lost++; ss.totalProfit += resultProfit; ss.lossCount++;
-              if (state.tradingMode === 'continuous') {
+              if (isCompounding) {
+                ss.currentStake = Math.round(baseStake * 100) / 100;
+                ss.lossCount = 0;
+              } else if (state.tradingMode === 'continuous') {
                 const rawNextStake = ss.currentStake * parseFloat(state.martingale || '2.1');
                 ss.currentStake = Math.round(Math.min(
                   rawNextStake,

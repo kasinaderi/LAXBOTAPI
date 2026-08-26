@@ -1489,11 +1489,14 @@ export default function LaxPrimePage() {
               <div className="lp-sl-row">
                 <label
                   className="lp-sl"
-                  title="Double-tap to switch between Martingale and Compounding"
-                  style={{ cursor: 'pointer', userSelect: 'none', transition: 'color 0.2s' }}
+                  title="Double-tap / double-click to switch between Martingale and Compounding"
+                  style={{ cursor: 'pointer', userSelect: 'none', transition: 'all 0.2s', color: compoundProfits ? '#22c55e' : undefined }}
+                  onDoubleClick={() => {
+                    setRiskSettings({ compoundProfits: !compoundProfits });
+                  }}
                   onClick={() => {
                     const now = Date.now();
-                    if (now - mgLabelTapRef.current < 350) {
+                    if (now - mgLabelTapRef.current < 400) {
                       // Double-tap detected — toggle compounding
                       setRiskSettings({ compoundProfits: !compoundProfits });
                       mgLabelTapRef.current = 0;
@@ -1507,8 +1510,9 @@ export default function LaxPrimePage() {
                 {compoundProfits && (
                   <span
                     className="lp-mg-dot"
-                    title="Compounding active"
-                    style={{ background: '#22c55e' }}
+                    title="Compounding active: Stake adds profit on real wins"
+                    style={{ background: '#22c55e', boxShadow: '0 0 8px #22c55e' }}
+                    onClick={() => setRiskSettings({ compoundProfits: !compoundProfits })}
                   />
                 )}
                 {!compoundProfits && tradingMode === 'continuous' && (
