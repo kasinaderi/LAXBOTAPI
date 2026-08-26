@@ -1334,7 +1334,7 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function LaxPrimePage() {
-  const { status, account, isTradeAuthorized, virtualSettings, setVirtualSettings } = useDerivStore();
+  const { status, account, isTradeAuthorized, virtualSettings, setVirtualSettings, compoundProfits, setRiskSettings } = useDerivStore();
   const { startScanning, stopScanning, ensureScanner } = useScannerStore();
 
   // Isolate this page's useDerivStore settings (virtual settings, trade logs, etc.)
@@ -1369,6 +1369,7 @@ export default function LaxPrimePage() {
   const [showSwitcherPanel,  setShowSwitcherPanel]  = useState(false);
   const [isModeDropdownOpen, setIsModeDropdownOpen] = useState(false);
   const modeDropdownRef = useRef<HTMLDivElement>(null);
+  const mgLabelTapRef   = useRef<number>(0); // double-tap timer for martingale/compounding toggle
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -1486,8 +1487,31 @@ export default function LaxPrimePage() {
             </div>
             <div className="lp-sg">
               <div className="lp-sl-row">
-                <label className="lp-sl">MARTINGALE</label>
-                {tradingMode === 'continuous' && (
+                <label
+                  className="lp-sl"
+                  title="Double-tap to switch between Martingale and Compounding"
+                  style={{ cursor: 'pointer', userSelect: 'none', transition: 'color 0.2s' }}
+                  onClick={() => {
+                    const now = Date.now();
+                    if (now - mgLabelTapRef.current < 350) {
+                      // Double-tap detected — toggle compounding
+                      setRiskSettings({ compoundProfits: !compoundProfits });
+                      mgLabelTapRef.current = 0;
+                    } else {
+                      mgLabelTapRef.current = now;
+                    }
+                  }}
+                >
+                  {compoundProfits ? 'COMPOUNDING' : 'MARTINGALE'}
+                </label>
+                {compoundProfits && (
+                  <span
+                    className="lp-mg-dot"
+                    title="Compounding active"
+                    style={{ background: '#22c55e' }}
+                  />
+                )}
+                {!compoundProfits && tradingMode === 'continuous' && (
                   <span className="lp-mg-dot" title="Martingale active" />
                 )}
               </div>
