@@ -197,6 +197,8 @@ interface DerivState {
         vThreshold: number;
         vTriggerMode: 'consec' | 'total';
         vTriggerType: 'wins' | 'losses';
+        vInEnabled?: boolean;
+        vInTrades?: number;
 
         // Double Virtual Mode (2-Stage Cascade)
         isDoubleVirtual?: boolean;
@@ -204,12 +206,15 @@ interface DerivState {
         vTriggerTypeB?: 'wins' | 'losses';
         vTriggerModeB?: 'consec' | 'total';
         vThresholdB?: number;
+        vInEnabledB?: boolean;
+        vInTradesB?: number;
         vStageBReps?: number;
         vStageBCompletedReps?: number;
         vConsecWinsB?: number;
         vConsecLossesB?: number;
         vVirtualWinsB?: number;
         vVirtualLossesB?: number;
+        vResultHistoryB?: ('W' | 'L')[];
 
         // Real -> Virtual
         startRealToVirtual: boolean;
@@ -422,18 +427,23 @@ export const useDerivStore = create<DerivState>()(
                 vThreshold: 3,
                 vTriggerMode: 'consec',
                 vTriggerType: 'wins',
+                vInEnabled: false,
+                vInTrades: 5,
 
                 isDoubleVirtual: false,
                 vDoubleStage: 'A',
                 vTriggerTypeB: 'wins',
                 vTriggerModeB: 'consec',
                 vThresholdB: 1,
+                vInEnabledB: false,
+                vInTradesB: 5,
                 vStageBReps: 1,
                 vStageBCompletedReps: 0,
                 vConsecWinsB: 0,
                 vConsecLossesB: 0,
                 vVirtualWinsB: 0,
                 vVirtualLossesB: 0,
+                vResultHistoryB: [],
 
                 startRealToVirtual: false,
                 rThreshold: 2,

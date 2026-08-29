@@ -1065,7 +1065,7 @@ class TradeEngine {
         }
 
         const currentRes = isWin ? 'W' : 'L';
-        const newHistory = [...(vResultHistory || []), currentRes].slice(-20);
+        const newHistory = [...(vResultHistory || []), currentRes].slice(-50);
 
         console.log(`[TradeEngine] Virtual Result: ${isWin ? 'WIN' : 'LOSS'}. Streak: W:${vConsecWins} L:${vConsecLosses}`);
 
@@ -1100,8 +1100,9 @@ class TradeEngine {
                     if (step1Met) {
                         vSmartStage = 2;
                         vSmartCount = 0;
+                        console.log(`[TradeEngine] 🧠 Smart Sequence: Step 1 Met! Advanced to Step 2 (${seq.step2Qty} ${seq.step2Type} (${step2Mode})).`);
                     }
-                } else {
+                } else if (vSmartStage === 2) {
                     // Stage 2
                     let step2Met = false;
                     let step2Failed = false;
@@ -1116,15 +1117,16 @@ class TradeEngine {
                             step2Failed = true;
                         }
                     } else {
-                        // Total Mode in Stage 2
+                        // Total Mode
                         if (currentRes === step2Req) {
                             vSmartCount++;
-                        }
-                        if (vSmartCount >= seq.step2Qty) {
-                            step2Met = true;
-                        }
-                        if (currentRes === step1Req) {
-                            step2Failed = true;
+                            if (vSmartCount >= seq.step2Qty) {
+                                step2Met = true;
+                            }
+                        } else {
+                            if (currentRes === step1Req) {
+                                step2Failed = true;
+                            }
                         }
                     }
 
@@ -1132,6 +1134,7 @@ class TradeEngine {
                         shouldSwitch = true;
                         vSmartStage = 1;
                         vSmartCount = 0;
+                        console.log(`[TradeEngine] 🧠 Smart Sequence: Step 2 Met! Triggering switch to REAL.`);
                     } else if (step2Failed) {
                         vSmartStage = 1;
                         if (step1Mode === 'consecutive') {
@@ -1145,6 +1148,7 @@ class TradeEngine {
                         } else {
                             vSmartCount = (currentRes === step1Req) ? 1 : 0;
                         }
+                        console.log(`[TradeEngine] 🧠 Smart Sequence: Step 2 Failed! Seamless reset to Step ${vSmartStage}.`);
                     }
                 }
             } else if (smart.type === 'alternating' && smart.alternating) {
@@ -1152,14 +1156,17 @@ class TradeEngine {
                 const reqLength = count * 2;
                 if (newHistory.length >= reqLength) {
                     const pattern = newHistory.slice(-reqLength);
-                    let isAlternating = true;
+                    let isAlt = true;
                     for (let i = 0; i < pattern.length - 1; i++) {
-                        if (pattern[i] === pattern[i+1]) {
-                            isAlternating = false;
+                        if (pattern[i] === pattern[i + 1]) {
+                            isAlt = false;
                             break;
                         }
                     }
-                    if (isAlternating) shouldSwitch = true;
+                    if (isAlt) {
+                        shouldSwitch = true;
+                        console.log(`[TradeEngine] 🧠 Smart Alternating: Pattern [${pattern.join('-')}] Met! Triggering switch to REAL.`);
+                    }
                 }
             }
         }
@@ -1175,14 +1182,40 @@ class TradeEngine {
         if (virtualSettings.startVirtualToReal) {
             if (!virtualSettings.isDoubleVirtual) {
                 if (!shouldSwitch) {
-                    const threshold = virtualSettings.vThreshold ?? 1;
+                    const threshold = Math.max(1, Number(virtualSettings.vThreshold) || 1);
                     const mode = virtualSettings.vTriggerMode ?? 'consec';
                     const type = virtualSettings.vTriggerType ?? 'losses';
-                    const val = (type === 'wins')
-                        ? ((mode === 'consec') ? vConsecWins : virtualWins)
-                        : ((mode === 'consec') ? vConsecLosses : virtualLosses);
-                    console.log(`[TradeEngine] Threshold eval (startVirtualToReal): val=${val} >= threshold=${threshold} ? ${val >= threshold}`);
-                    if (val >= threshold) shouldSwitch = true;
+                    const isWindowEnabled = Boolean(virtualSettings.vInEnabled);
+                    
+                    if (isWindowEnabled) {
+                        const windowSize = Math.max(1, Number(virtualSettings.vInTrades) || 5);
+                        const windowHistory = newHistory.slice(-windowSize);
+                        if (mode === 'total') {
+                            const matchCount = windowHistory.filter(r => (type === 'wins' ? r === 'W' : r === 'L')).length;
+                            console.log(`[TradeEngine] 🔍 IN Window Check (last ${windowHistory.length}/${windowSize} trades): ${matchCount}/${threshold} ${type} in [${windowHistory.join(',')}] -> Switch: ${matchCount >= threshold}`);
+                            if (matchCount >= threshold) shouldSwitch = true;
+                        } else {
+                            // Consecutive matches strictly within window
+                            let maxConsec = 0;
+                            let curConsec = 0;
+                            for (const res of windowHistory) {
+                                if ((type === 'wins' && res === 'W') || (type === 'losses' && res === 'L')) {
+                                    curConsec++;
+                                    if (curConsec > maxConsec) maxConsec = curConsec;
+                                } else {
+                                    curConsec = 0;
+                                }
+                            }
+                            console.log(`[TradeEngine] 🔍 IN Window Check (last ${windowHistory.length}/${windowSize} trades): maxConsec=${maxConsec}/${threshold} ${type} in [${windowHistory.join(',')}] -> Switch: ${maxConsec >= threshold}`);
+                            if (maxConsec >= threshold) shouldSwitch = true;
+                        }
+                    } else {
+                        const val = (type === 'wins')
+                            ? ((mode === 'consec') ? vConsecWins : virtualWins)
+                            : ((mode === 'consec') ? vConsecLosses : virtualLosses);
+                        console.log(`[TradeEngine] Threshold eval (unbounded cumulative): val=${val} >= threshold=${threshold} ? ${val >= threshold}`);
+                        if (val >= threshold) shouldSwitch = true;
+                    }
                 }
             }
         }
@@ -1193,13 +1226,37 @@ class TradeEngine {
                 if (stage === 'A') {
                     let stageAPassed = shouldSwitch;
                     if (!stageAPassed) {
-                        const thresholdA = virtualSettings.vThreshold;
-                        const modeA = virtualSettings.vTriggerMode;
-                        const typeA = virtualSettings.vTriggerType;
-                        const valA = (typeA === 'wins')
-                            ? ((modeA === 'consec') ? vConsecWins : virtualWins)
-                            : ((modeA === 'consec') ? vConsecLosses : virtualLosses);
-                        if (valA >= thresholdA) stageAPassed = true;
+                        const thresholdA = Math.max(1, Number(virtualSettings.vThreshold) || 1);
+                        const modeA = virtualSettings.vTriggerMode ?? 'consec';
+                        const typeA = virtualSettings.vTriggerType ?? 'losses';
+                        const isWindowEnabledA = Boolean(virtualSettings.vInEnabled);
+                        if (isWindowEnabledA) {
+                            const windowSizeA = Math.max(1, Number(virtualSettings.vInTrades) || 5);
+                            const windowHistoryA = newHistory.slice(-windowSizeA);
+                            if (modeA === 'total') {
+                                const matchCountA = windowHistoryA.filter(r => (typeA === 'wins' ? r === 'W' : r === 'L')).length;
+                                console.log(`[TradeEngine] 🔍 Stage A IN Window Check (${windowHistoryA.length}/${windowSizeA} trades): ${matchCountA}/${thresholdA} ${typeA} in [${windowHistoryA.join(',')}] -> Passed: ${matchCountA >= thresholdA}`);
+                                if (matchCountA >= thresholdA) stageAPassed = true;
+                            } else {
+                                let maxConsecA = 0;
+                                let curConsecA = 0;
+                                for (const res of windowHistoryA) {
+                                    if ((typeA === 'wins' && res === 'W') || (typeA === 'losses' && res === 'L')) {
+                                        curConsecA++;
+                                        if (curConsecA > maxConsecA) maxConsecA = curConsecA;
+                                    } else {
+                                        curConsecA = 0;
+                                    }
+                                }
+                                console.log(`[TradeEngine] 🔍 Stage A IN Window Check (${windowHistoryA.length}/${windowSizeA} trades): maxConsec=${maxConsecA}/${thresholdA} ${typeA} in [${windowHistoryA.join(',')}] -> Passed: ${maxConsecA >= thresholdA}`);
+                                if (maxConsecA >= thresholdA) stageAPassed = true;
+                            }
+                        } else {
+                            const valA = (typeA === 'wins')
+                                ? ((modeA === 'consec') ? vConsecWins : virtualWins)
+                                : ((modeA === 'consec') ? vConsecLosses : virtualLosses);
+                            if (valA >= thresholdA) stageAPassed = true;
+                        }
                     }
                     if (stageAPassed) {
                         shouldSwitch = false; // Stay virtual for Stage B gate
@@ -1209,30 +1266,61 @@ class TradeEngine {
                             vConsecLossesB: 0,
                             vVirtualWinsB: 0,
                             vVirtualLossesB: 0,
-                            vStageBCompletedReps: 0
+                            vStageBCompletedReps: 0,
+                            vResultHistoryB: []
                         });
                         console.log(`[TradeEngine] ⚡ Double Virt: Stage A Gate Passed! Advanced to Stage B Gate.`);
                     } else {
                         shouldSwitch = false;
                     }
                 } else if (stage === 'B') {
-                    let { vConsecWinsB = 0, vConsecLossesB = 0, vVirtualWinsB = 0, vVirtualLossesB = 0 } = virtualSettings;
+                    let { vConsecWinsB = 0, vConsecLossesB = 0, vVirtualWinsB = 0, vVirtualLossesB = 0, vResultHistoryB = [] } = virtualSettings;
                     if (isWin) {
                         vConsecWinsB++; vConsecLossesB = 0; vVirtualWinsB++;
                     } else {
                         vConsecWinsB = 0; vConsecLossesB++; vVirtualLossesB++;
                     }
+                    const currentResB: 'W' | 'L' = isWin ? 'W' : 'L';
+                    const newHistoryB = [...(vResultHistoryB || []), currentResB].slice(-50);
+
                     const targetTypeB = virtualSettings.vTriggerTypeB || 'wins';
                     const targetModeB = virtualSettings.vTriggerModeB || 'consec';
-                    const valB = targetTypeB === 'wins'
-                        ? (targetModeB === 'consec' ? vConsecWinsB : vVirtualWinsB)
-                        : (targetModeB === 'consec' ? vConsecLossesB : vVirtualLossesB);
-                    const targetB = virtualSettings.vThresholdB || 1;
+                    const targetB = Math.max(1, Number(virtualSettings.vThresholdB) || 1);
+                    const isWindowEnabledB = Boolean(virtualSettings.vInEnabledB);
 
-                    setVirtualSettings({ vConsecWinsB, vConsecLossesB, vVirtualWinsB, vVirtualLossesB });
-                    if (valB >= targetB) {
+                    let stageBPassed = false;
+                    if (isWindowEnabledB) {
+                        const windowSizeB = Math.max(1, Number(virtualSettings.vInTradesB) || 5);
+                        const windowHistoryB = newHistoryB.slice(-windowSizeB);
+                        if (targetModeB === 'total') {
+                            const matchCountB = windowHistoryB.filter(r => (targetTypeB === 'wins' ? r === 'W' : r === 'L')).length;
+                            console.log(`[TradeEngine] 🔍 Stage B IN Window (${windowHistoryB.length}/${windowSizeB} trades): ${matchCountB}/${targetB} ${targetTypeB} in [${windowHistoryB.join(',')}] -> Passed: ${matchCountB >= targetB}`);
+                            if (matchCountB >= targetB) stageBPassed = true;
+                        } else {
+                            let maxConsecB = 0;
+                            let curConsecB = 0;
+                            for (const res of windowHistoryB) {
+                                if ((targetTypeB === 'wins' && res === 'W') || (targetTypeB === 'losses' && res === 'L')) {
+                                    curConsecB++;
+                                    if (curConsecB > maxConsecB) maxConsecB = curConsecB;
+                                } else {
+                                    curConsecB = 0;
+                                }
+                            }
+                            console.log(`[TradeEngine] 🔍 Stage B IN Window (${windowHistoryB.length}/${windowSizeB} trades): maxConsecB=${maxConsecB}/${targetB} ${targetTypeB} in [${windowHistoryB.join(',')}] -> Passed: ${maxConsecB >= targetB}`);
+                            if (maxConsecB >= targetB) stageBPassed = true;
+                        }
+                    } else {
+                        const valB = targetTypeB === 'wins'
+                            ? (targetModeB === 'consec' ? vConsecWinsB : vVirtualWinsB)
+                            : (targetModeB === 'consec' ? vConsecLossesB : vVirtualLossesB);
+                        if (valB >= targetB) stageBPassed = true;
+                    }
+
+                    setVirtualSettings({ vConsecWinsB, vConsecLossesB, vVirtualWinsB, vVirtualLossesB, vResultHistoryB: newHistoryB });
+                    if (stageBPassed) {
                         shouldSwitch = true;
-                        console.log(`[TradeEngine] ⚡ Double Virt: Stage B Gate Passed [${valB}/${targetB}]! Switching to REAL.`);
+                        console.log(`[TradeEngine] ⚡ Double Virt: Stage B Gate Passed! Switching to REAL.`);
                     } else {
                         shouldSwitch = false;
                     }
@@ -1461,6 +1549,10 @@ class TradeEngine {
                         isVirtualMode: true,
                         vStageBCompletedReps: completedReps,
                         vConsecWinsB: 0,
+                        vConsecLossesB: 0,
+                        vVirtualWinsB: 0,
+                        vVirtualLossesB: 0,
+                        vResultHistoryB: [],
                     });
                     console.log(`[TradeEngine] ⚡ Double Virt: Real Trade (${completedReps}/${targetReps}) finished. Returning to Virtual for Stage B.`);
                 } else {
@@ -1472,6 +1564,7 @@ class TradeEngine {
                         vConsecLossesB: 0,
                         vVirtualWinsB: 0,
                         vVirtualLossesB: 0,
+                        vResultHistoryB: [],
                     });
                     console.log(`[TradeEngine] ⚡ Double Virt: Stage B Reps (${completedReps}/${targetReps}) finished. Remaining in Stage B execution cycle.`);
                 }

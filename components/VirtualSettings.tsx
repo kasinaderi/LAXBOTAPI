@@ -68,16 +68,45 @@ export function VirtualSettings() {
                     </div>
 
                     <div className="space-y-1.5 px-4 py-3 bg-dark-secondary rounded-xl border border-dark shadow-inner">
-                        <span className="text-[10px] font-black text-indigo-400 uppercase tracking-tighter">
-                            {virtualSettings.isDoubleVirtual ? 'Stage A Gate Threshold' : 'Consecutive Wins Threshold'}
-                        </span>
+                        <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-black text-indigo-400 uppercase tracking-tighter">
+                                {virtualSettings.isDoubleVirtual ? 'Stage A Gate Threshold' : 'Threshold'}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => setVirtualSettings({ vInEnabled: !virtualSettings.vInEnabled })}
+                                className={`px-2 py-0.5 rounded text-[9px] font-black transition-all ${
+                                    virtualSettings.vInEnabled
+                                        ? 'bg-indigo-500 text-white shadow-sm shadow-indigo-500/50'
+                                        : 'bg-dark text-gray-400 hover:text-gray-200 border border-gray-700/50'
+                                }`}
+                                title="Evaluate threshold within last N virtual trades"
+                            >
+                                IN
+                            </button>
+                        </div>
                         <div className="flex items-center gap-2">
                             <Input
                                 type="number"
-                                value={virtualSettings.vThreshold?.toString() || '0'}
-                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVirtualSettings({ vThreshold: parseInt(e.target.value) || 0 })}
+                                min={1}
+                                value={virtualSettings.vThreshold ?? ''}
+                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVirtualSettings({ vThreshold: e.target.value === '' ? ('' as any) : Math.max(1, parseInt(e.target.value) || 1) })}
                                 className="bg-transparent border-none p-0 h-auto text-2xl font-black text-white focus:ring-0 w-full"
                             />
+                            {virtualSettings.vInEnabled && (
+                                <div className="flex items-center gap-1.5 shrink-0 pl-2 border-l border-gray-700/60 animate-in fade-in zoom-in-95 duration-200">
+                                    <span className="text-[10px] font-black text-indigo-400">IN</span>
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        value={virtualSettings.vInTrades ?? 5}
+                                        onChange={(e) => setVirtualSettings({ vInTrades: Math.max(1, parseInt(e.target.value) || 1) })}
+                                        className="w-14 bg-dark/80 border border-indigo-500/60 rounded-lg px-2 py-1 text-sm font-black text-indigo-300 focus:border-indigo-400 outline-none text-center"
+                                        title="Number of virtual trades window"
+                                    />
+                                    <span className="text-[9px] font-bold text-gray-400">TRADES</span>
+                                </div>
+                            )}
                         </div>
                     </div>
 
@@ -123,14 +152,43 @@ export function VirtualSettings() {
                                     </div>
                                     <div className="grid grid-cols-2 gap-2">
                                         <div className="space-y-1">
-                                            <span className="text-[9px] font-bold text-gray-400">Target Value</span>
-                                            <Input
-                                                type="number"
-                                                min={1}
-                                                value={virtualSettings.vThresholdB ?? ''}
-                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVirtualSettings({ vThresholdB: e.target.value === '' ? ('' as any) : Math.max(1, parseInt(e.target.value) || 1) })}
-                                                className="bg-dark/60 border-dark/60 h-8 text-xs font-bold"
-                                            />
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-[9px] font-bold text-gray-400">Target Value</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setVirtualSettings({ vInEnabledB: !virtualSettings.vInEnabledB })}
+                                                    className={`px-1.5 py-0.5 rounded text-[7px] font-black transition-all ${
+                                                        virtualSettings.vInEnabledB
+                                                            ? 'bg-purple-500 text-white shadow-sm shadow-purple-500/50'
+                                                            : 'bg-dark border border-gray-700/50 text-gray-400 hover:text-gray-200'
+                                                    }`}
+                                                    title="Evaluate Stage B threshold within last N virtual trades"
+                                                >
+                                                    IN
+                                                </button>
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                                <Input
+                                                    type="number"
+                                                    min={1}
+                                                    value={virtualSettings.vThresholdB ?? ''}
+                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVirtualSettings({ vThresholdB: e.target.value === '' ? ('' as any) : Math.max(1, parseInt(e.target.value) || 1) })}
+                                                    className="bg-dark/60 border-dark/60 h-8 text-xs font-bold"
+                                                />
+                                                {virtualSettings.vInEnabledB && (
+                                                    <div className="flex items-center gap-0.5 shrink-0 animate-in fade-in zoom-in-95 duration-200">
+                                                        <span className="text-[8px] font-black text-purple-400">IN</span>
+                                                        <input
+                                                            type="number"
+                                                            min={1}
+                                                            value={virtualSettings.vInTradesB ?? 5}
+                                                            onChange={(e) => setVirtualSettings({ vInTradesB: Math.max(1, parseInt(e.target.value) || 1) })}
+                                                            className="w-10 bg-dark border border-purple-500/60 rounded-lg px-1 py-1 text-xs font-bold text-purple-300 outline-none text-center"
+                                                            title="Number of Stage B virtual trades window"
+                                                        />
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
                                         <div className="space-y-1">
                                             <span className="text-[9px] font-bold text-gray-400">Real Reps</span>

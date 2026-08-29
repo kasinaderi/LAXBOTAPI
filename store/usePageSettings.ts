@@ -125,6 +125,13 @@ export function usePageSettings(pageId: string): void {
       for (const f of DERIV_SETTINGS_FIELDS) {
         if (snap[`deriv_${f}`] !== undefined) derivPatch[f] = snap[`deriv_${f}`];
       }
+      if (derivPatch.virtualSettings) {
+        const currentVS = useDerivStore.getState().virtualSettings;
+        derivPatch.virtualSettings = {
+          ...currentVS,
+          ...(derivPatch.virtualSettings as object),
+        };
+      }
       if (Object.keys(derivPatch).length > 0) {
         useDerivStore.setState(derivPatch as any);
       }

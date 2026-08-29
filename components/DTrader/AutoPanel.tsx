@@ -975,9 +975,38 @@ function VirtualSection() {
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <div className="text-[8px] text-gray-500 uppercase mb-1">{v.isDoubleVirtual ? 'Stage A Thresh' : 'Threshold'}</div>
-              <input type="number" value={v.vThreshold} onChange={e => setVirtualSettings({ vThreshold: parseInt(e.target.value) || 0 })}
-                className="w-full bg-black/30 border border-white/10 rounded px-1.5 py-1 text-[10px] font-bold text-indigo-400 outline-none text-center" />
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-[8px] text-gray-500 uppercase">{v.isDoubleVirtual ? 'Stage A Thresh' : 'Threshold'}</div>
+                <button
+                  type="button"
+                  onClick={() => setVirtualSettings({ vInEnabled: !v.vInEnabled })}
+                  className={`px-1.5 py-0.2 rounded text-[7px] font-black transition-all ${
+                    v.vInEnabled
+                      ? 'bg-indigo-500 text-white shadow-sm shadow-indigo-500/50'
+                      : 'bg-white/10 text-gray-400 hover:text-gray-200'
+                  }`}
+                  title="Evaluate threshold within last N virtual trades"
+                >
+                  IN
+                </button>
+              </div>
+              <div className="flex items-center gap-1">
+                <input type="number" min={1} value={v.vThreshold ?? ''} onChange={e => setVirtualSettings({ vThreshold: e.target.value === '' ? ('' as any) : Math.max(1, parseInt(e.target.value) || 1) })}
+                  className="w-full bg-black/30 border border-white/10 rounded px-1.5 py-1 text-[10px] font-bold text-indigo-400 outline-none text-center" />
+                {v.vInEnabled && (
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <span className="text-[8px] font-bold text-indigo-400">IN</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={v.vInTrades ?? 5}
+                      onChange={e => setVirtualSettings({ vInTrades: Math.max(1, parseInt(e.target.value) || 1) })}
+                      className="w-9 bg-black/40 border border-indigo-500/50 rounded px-0.5 py-1 text-[9px] font-bold text-indigo-300 outline-none text-center"
+                      title="Number of virtual trades window"
+                    />
+                  </div>
+                )}
+              </div>
             </div>
             <div>
               <div className="text-[8px] text-gray-500 uppercase mb-1">Mode</div>
@@ -1001,12 +1030,41 @@ function VirtualSection() {
               <div className="text-[8px] font-bold text-purple-400">Stage B Settings</div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <div className="text-[8px] text-gray-500">Virt Wins B</div>
-                  <input type="number" min={1} value={v.vThresholdB || 1} onChange={e => setVirtualSettings({ vThresholdB: Math.max(1, parseInt(e.target.value) || 1) })}
-                    className="w-full bg-black/40 border border-white/10 rounded px-1 py-0.5 text-[9px] font-bold text-purple-300 text-center" />
+                  <div className="flex items-center justify-between mb-0.5">
+                    <div className="text-[8px] text-gray-500">Target B</div>
+                    <button
+                      type="button"
+                      onClick={() => setVirtualSettings({ vInEnabledB: !v.vInEnabledB })}
+                      className={`px-1 py-0.2 rounded text-[7px] font-black transition-all ${
+                        v.vInEnabledB
+                          ? 'bg-purple-500 text-white shadow-sm shadow-purple-500/50'
+                          : 'bg-white/10 text-gray-400 hover:text-gray-200'
+                      }`}
+                      title="Evaluate Stage B threshold within last N virtual trades"
+                    >
+                      IN
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-0.5">
+                    <input type="number" min={1} value={v.vThresholdB || 1} onChange={e => setVirtualSettings({ vThresholdB: Math.max(1, parseInt(e.target.value) || 1) })}
+                      className="w-full bg-black/40 border border-white/10 rounded px-1 py-0.5 text-[9px] font-bold text-purple-300 text-center" />
+                    {v.vInEnabledB && (
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <span className="text-[7px] font-bold text-purple-400">IN</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={v.vInTradesB ?? 5}
+                          onChange={e => setVirtualSettings({ vInTradesB: Math.max(1, parseInt(e.target.value) || 1) })}
+                          className="w-8 bg-black/50 border border-purple-500/50 rounded px-0.5 py-0.5 text-[8px] font-bold text-purple-300 outline-none text-center"
+                          title="Number of Stage B virtual trades window"
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div>
-                  <div className="text-[8px] text-gray-500">Real Reps</div>
+                  <div className="text-[8px] text-gray-500 mb-0.5">Real Reps</div>
                   <input type="number" min={1} value={v.vStageBReps || 1} onChange={e => setVirtualSettings({ vStageBReps: Math.max(1, parseInt(e.target.value) || 1) })}
                     className="w-full bg-black/40 border border-white/10 rounded px-1 py-0.5 text-[9px] font-bold text-purple-300 text-center" />
                 </div>

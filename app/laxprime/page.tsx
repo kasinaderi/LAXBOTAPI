@@ -1746,7 +1746,7 @@ export default function LaxPrimePage() {
                         </div>
 
                         {/* Stage A Controls */}
-                        <div className="lp-vp-sub">
+                        <div className="lp-vp-sub" style={{ flexWrap: 'wrap', gap: '5px', alignItems: 'center' }}>
                           <span className="lp-vp-sub-lbl">{virtualSettings.isDoubleVirtual ? 'Stage A Gate:' : 'Trigger on:'}</span>
                           <select className="lp-sel" value={virtualSettings.vTriggerType}
                             onChange={e => setVirtualSettings({ vTriggerType: e.target.value as any })}>
@@ -1761,6 +1761,39 @@ export default function LaxPrimePage() {
                           <span className="lp-vp-sub-lbl">Threshold:</span>
                           <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.vThreshold ?? ''}
                             onChange={e => setVirtualSettings({ vThreshold: e.target.value === '' ? ('' as any) : (+e.target.value || 0) })} />
+                          
+                          <button
+                            type="button"
+                            onClick={() => setVirtualSettings({ vInEnabled: !virtualSettings.vInEnabled })}
+                            style={{
+                              padding: '2px 7px',
+                              borderRadius: '5px',
+                              fontSize: '9px',
+                              fontWeight: 800,
+                              cursor: 'pointer',
+                              border: virtualSettings.vInEnabled ? '1px solid #818cf8' : '1px solid rgba(255,255,255,0.15)',
+                              background: virtualSettings.vInEnabled ? '#6366f1' : 'rgba(255,255,255,0.06)',
+                              color: virtualSettings.vInEnabled ? '#ffffff' : '#9ca3af',
+                              transition: 'all 0.2s',
+                            }}
+                            title="Evaluate threshold within last N virtual trades"
+                          >
+                            IN
+                          </button>
+                          {virtualSettings.vInEnabled && (
+                            <>
+                              <input
+                                className="lp-num lp-sm"
+                                type="number"
+                                min={1}
+                                value={virtualSettings.vInTrades ?? 5}
+                                onChange={e => setVirtualSettings({ vInTrades: Math.max(1, parseInt(e.target.value) || 1) })}
+                                style={{ width: '45px', borderColor: '#818cf8', textAlign: 'center' }}
+                                title="Number of virtual trades window"
+                              />
+                              <span className="lp-vp-sub-lbl">trades</span>
+                            </>
+                          )}
                         </div>
 
                         {/* Stage B Controls (Double Virtual) */}
@@ -1772,7 +1805,7 @@ export default function LaxPrimePage() {
                                 {virtualSettings.vDoubleStage === 'B' ? `ACTIVE [Rep ${(virtualSettings.vStageBCompletedReps || 0) + 1}/${virtualSettings.vStageBReps || 1}]` : 'WAITING FOR STAGE A'}
                               </span>
                             </div>
-                            <div className="lp-vp-sub" style={{ flexWrap: 'wrap', gap: '4px' }}>
+                            <div className="lp-vp-sub" style={{ flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
                               <span className="lp-vp-sub-lbl">Gate B:</span>
                               <select className="lp-sel" value={virtualSettings.vTriggerTypeB || 'wins'}
                                 onChange={e => setVirtualSettings({ vTriggerTypeB: e.target.value as any })}>
@@ -1787,6 +1820,38 @@ export default function LaxPrimePage() {
                               <span className="lp-vp-sub-lbl">Target:</span>
                               <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.vThresholdB ?? ''}
                                 onChange={e => setVirtualSettings({ vThresholdB: e.target.value === '' ? ('' as any) : (+e.target.value || 1) })} title="Virtual Target in Stage B" />
+                              <button
+                                type="button"
+                                onClick={() => setVirtualSettings({ vInEnabledB: !virtualSettings.vInEnabledB })}
+                                style={{
+                                  padding: '2px 6px',
+                                  borderRadius: '5px',
+                                  fontSize: '9px',
+                                  fontWeight: 800,
+                                  cursor: 'pointer',
+                                  border: virtualSettings.vInEnabledB ? '1px solid #c084fc' : '1px solid rgba(255,255,255,0.15)',
+                                  background: virtualSettings.vInEnabledB ? '#9333ea' : 'rgba(255,255,255,0.06)',
+                                  color: virtualSettings.vInEnabledB ? '#ffffff' : '#9ca3af',
+                                  transition: 'all 0.2s',
+                                }}
+                                title="Evaluate Stage B threshold within last N virtual trades"
+                              >
+                                IN
+                              </button>
+                              {virtualSettings.vInEnabledB && (
+                                <>
+                                  <input
+                                    className="lp-num lp-sm"
+                                    type="number"
+                                    min={1}
+                                    value={virtualSettings.vInTradesB ?? 5}
+                                    onChange={e => setVirtualSettings({ vInTradesB: Math.max(1, parseInt(e.target.value) || 1) })}
+                                    style={{ width: '40px', borderColor: '#c084fc', textAlign: 'center' }}
+                                    title="Number of Stage B virtual trades window"
+                                  />
+                                  <span className="lp-vp-sub-lbl">trades</span>
+                                </>
+                              )}
                               <span className="lp-vp-sub-lbl">→ Real Reps:</span>
                               <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.vStageBReps ?? ''}
                                 onChange={e => setVirtualSettings({ vStageBReps: e.target.value === '' ? ('' as any) : (+e.target.value || 1) })} title="Real trades to run in Stage B before recycling back to Stage A" />

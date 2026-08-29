@@ -3355,12 +3355,43 @@ export default function AutoTradePage() {
                                         </div>
 
                                         <div className="md:col-span-2">
-                                            <Input
-                                                label="Threshold Amount (Wins/Losses before Real)"
-                                                type="number"
-                                                value={virtualSettings.vThreshold?.toString() || '0'}
-                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVirtualSettings({ vThreshold: parseInt(e.target.value) || 0 })}
-                                            />
+                                            <div className="flex items-center justify-between mb-1">
+                                                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Threshold Amount</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setVirtualSettings({ vInEnabled: !virtualSettings.vInEnabled })}
+                                                    className={`px-2 py-0.5 rounded text-[8px] font-black transition-all ${
+                                                        virtualSettings.vInEnabled
+                                                            ? 'bg-indigo-500 text-white shadow-sm shadow-indigo-500/50'
+                                                            : 'bg-white/10 text-gray-400 hover:text-gray-200 border border-gray-700/50'
+                                                    }`}
+                                                    title="Evaluate threshold within last N virtual trades"
+                                                >
+                                                    IN
+                                                </button>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <Input
+                                                    type="number"
+                                                    min={1}
+                                                    value={virtualSettings.vThreshold ?? ''}
+                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVirtualSettings({ vThreshold: e.target.value === '' ? ('' as any) : Math.max(1, parseInt(e.target.value) || 1) })}
+                                                />
+                                                {virtualSettings.vInEnabled && (
+                                                    <div className="flex items-center gap-1 shrink-0 animate-in fade-in zoom-in-95 duration-200">
+                                                        <span className="text-[10px] font-black text-indigo-400">IN</span>
+                                                        <input
+                                                            type="number"
+                                                            min={1}
+                                                            value={virtualSettings.vInTrades ?? 5}
+                                                            onChange={(e) => setVirtualSettings({ vInTrades: Math.max(1, parseInt(e.target.value) || 1) })}
+                                                            className="w-14 bg-dark border border-indigo-500/60 rounded-lg px-2 py-2 text-xs font-bold text-indigo-300 outline-none text-center"
+                                                            title="Number of virtual trades window"
+                                                        />
+                                                        <span className="text-[9px] font-bold text-gray-400">TRADES</span>
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
                                      </div>
