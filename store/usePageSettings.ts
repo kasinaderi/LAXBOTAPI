@@ -141,11 +141,11 @@ export function usePageSettings(pageId: string): void {
       // First visit to this page — reset logs & stats so no spillover occurs
       useDerivStore.setState({
         tradeLogs: [],
-        stats: { wins: 0, losses: 0, winRate: 0, totalProfit: 0, maxStake: 0, currentStep: 1 },
+        stats: { totalTrades: 0, won: 0, lost: 0, winRate: 0, totalProfit: 0, maxStake: 0, currentStep: 1 },
       } as any);
       useBotStore.setState({
         tradeLogs: [],
-        globalStats: { won: 0, lost: 0, netProfit: 0, currentConsecutiveWins: 0, currentConsecutiveLosses: 0 },
+        globalStats: { won: 0, lost: 0, totalProfit: 0, totalTrades: 0 },
       } as any);
       persistSnapshot(pageId);
     }

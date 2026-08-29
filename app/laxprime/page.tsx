@@ -1267,23 +1267,23 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
                       {log.step > 1 && <span style={{ fontSize: 8, color: '#f59e0b', fontWeight: 'bold' }}>Step {log.step}</span>}
                     </div>
 
-                    <span style={{ fontWeight: '500', color: '#4b5563' }}>USD {log.stake.toFixed(2)}</span>
+                    <span style={{ fontWeight: '500', color: '#4b5563' }}>USD {(log.stake ?? 0).toFixed(2)}</span>
 
                     <span style={{ fontFamily: 'monospace', fontWeight: '700', color: '#1f2937' }}>
                       {getExitDisplay(log)}
                     </span>
 
-                    <div className={`lp-tx-pnl ${isVirt ? 'virt' : log.profit >= 0 ? 'pos' : 'neg'}`}>
+                    <div className={`lp-tx-pnl ${isVirt ? 'virt' : (log.profit ?? 0) >= 0 ? 'pos' : 'neg'}`}>
                       {virtLive ? (
                         <span style={{ fontSize: 9, color: '#818cf8', fontStyle: 'italic' }}>VIRT…</span>
                       ) : live ? (
                         <Loader2 size={10} className="lp-spin" />
                       ) : isVirt ? (
                         <span style={{ fontSize: 9, color: (virtWon ? '#818cf8' : '#a78bfa'), fontStyle: 'italic' }}>
-                          {virtWon ? '+' : ''}{log.profit.toFixed(2)}
+                          {virtWon ? '+' : ''}{(log.profit ?? 0).toFixed(2)}
                         </span>
                       ) : (
-                        `${log.profit >= 0 ? '+' : ''}${log.profit.toFixed(2)}`
+                        `${(log.profit ?? 0) >= 0 ? '+' : ''}${(log.profit ?? 0).toFixed(2)}`
                       )}
                     </div>
                   </div>
@@ -1297,7 +1297,7 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
       {tab === 'summary' && (
         <div className="lp-tx-empty" style={{ paddingTop: 24 }}>
           <span style={{ fontSize: 12, color: '#9ca3af' }}>
-            {rawLogs.length === 0 ? 'No summary data yet.' : `${stats.totalTrades} trades completed.`}
+            {rawLogs.length === 0 ? 'No summary data yet.' : `${stats?.totalTrades ?? (stats?.won ?? 0) + (stats?.lost ?? 0)} trades completed.`}
           </span>
         </div>      )}
 
@@ -1311,15 +1311,15 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
         <div className="lp-tx-stat-row">
           <div className="lp-tx-stat"><span className="lp-tsl">Total stake</span><span className="lp-tsv">0.00 USD</span></div>
           <div className="lp-tx-stat"><span className="lp-tsl">Total payout</span><span className="lp-tsv">0.00 USD</span></div>
-          <div className="lp-tx-stat"><span className="lp-tsl">No. of runs</span><span className="lp-tsv">{stats.totalTrades}</span></div>
+          <div className="lp-tx-stat"><span className="lp-tsl">No. of runs</span><span className="lp-tsv">{stats?.totalTrades ?? (stats?.won ?? 0) + (stats?.lost ?? 0)}</span></div>
         </div>
         <div className="lp-tx-stat-row" style={{ marginTop: 8 }}>
-          <div className="lp-tx-stat"><span className="lp-tsl">Contracts lost</span><span className="lp-tsv">{stats.lost}</span></div>
-          <div className="lp-tx-stat"><span className="lp-tsl">Contracts won</span><span className="lp-tsv">{stats.won}</span></div>
+          <div className="lp-tx-stat"><span className="lp-tsl">Contracts lost</span><span className="lp-tsv">{stats?.lost ?? 0}</span></div>
+          <div className="lp-tx-stat"><span className="lp-tsl">Contracts won</span><span className="lp-tsv">{stats?.won ?? 0}</span></div>
           <div className="lp-tx-stat">
             <span className="lp-tsl">Total profit/loss</span>
-            <span className={`lp-tsv ${stats.totalProfit >= 0 ? 'pos' : 'neg'}`}>
-              {stats.totalProfit >= 0 ? '+' : ''}{stats.totalProfit.toFixed(2)} USD
+            <span className={`lp-tsv ${(stats?.totalProfit ?? 0) >= 0 ? 'pos' : 'neg'}`}>
+              {(stats?.totalProfit ?? 0) >= 0 ? '+' : ''}{(stats?.totalProfit ?? 0).toFixed(2)} USD
             </span>
           </div>
         </div>
@@ -1370,6 +1370,11 @@ export default function LaxPrimePage() {
   const [isModeDropdownOpen, setIsModeDropdownOpen] = useState(false);
   const modeDropdownRef = useRef<HTMLDivElement>(null);
   const mgLabelTapRef   = useRef<number>(0); // double-tap timer for martingale/compounding toggle
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -2738,24 +2743,26 @@ export default function LaxPrimePage() {
           {/* Quick stats row */}
           {isRunning && (
             <div className="lp-quick-stats">
-              <div className="lp-qs"><span className="lp-qs-l">W</span><span className="lp-qs-v green">{globalStats.won}</span></div>
-              <div className="lp-qs"><span className="lp-qs-l">L</span><span className="lp-qs-v red">{globalStats.lost}</span></div>
+              <div className="lp-qs"><span className="lp-qs-l">W</span><span className="lp-qs-v green">{globalStats?.won ?? 0}</span></div>
+              <div className="lp-qs"><span className="lp-qs-l">L</span><span className="lp-qs-v red">{globalStats?.lost ?? 0}</span></div>
               <div className="lp-qs">
                 <span className="lp-qs-l">P/L</span>
-                <span className={`lp-qs-v ${globalStats.totalProfit >= 0 ? 'green' : 'red'}`}>
-                  {globalStats.totalProfit >= 0 ? '+' : ''}{globalStats.totalProfit.toFixed(2)}
+                <span className={`lp-qs-v ${(globalStats?.totalProfit ?? 0) >= 0 ? 'green' : 'red'}`}>
+                  {(globalStats?.totalProfit ?? 0) >= 0 ? '+' : ''}{(globalStats?.totalProfit ?? 0).toFixed(2)}
                 </span>
               </div>
             </div>
           )}
 
           {/* Trade Log Panel */}
-          <TradeLogPanel logs={tradeLogs} stats={globalStats} onReset={resetAll} />
+          <TradeLogPanel logs={tradeLogs || []} stats={globalStats || { won: 0, lost: 0, totalProfit: 0, totalTrades: 0 }} onReset={resetAll} />
 
           {/* Footer */}
           <div className="lp-right-footer">
             <span className={`lp-dot ${status === 'connected' ? 'connected' : ''}`} />
-            <span className="lp-time">{new Date().toLocaleString('en-GB', { hour12: false }).replace(',', '')}</span>
+            <span className="lp-time" suppressHydrationWarning>
+              {mounted ? new Date().toLocaleString('en-GB', { hour12: false }).replace(',', '') : ''}
+            </span>
           </div>
         </div>
       </div>
