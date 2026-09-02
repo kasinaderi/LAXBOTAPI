@@ -1,4 +1,4 @@
-﻿/**
+/**
  * rsi-signal.ts
  * ─────────────────────────────────────────────────────────────────────────────
  * Pure numerical port of the "RSI Signal [trade_lexx]" TradingView indicator.
@@ -50,6 +50,8 @@ export interface RsiSignalConfig {
   waitForOpposite: boolean;
   /** Require >= 2 sub-engines to agree simultaneously (default false) */
   andMode: boolean;
+  /** Ticks to keep a triggered signal armed/active for collaborating conditions like pullbacks (default 10) */
+  signalHoldTicks?: number;
 }
 
 export interface RsiSignalResult {
@@ -58,6 +60,7 @@ export interface RsiSignalResult {
   rsi:        number;
   candleCount: number;
   ticksInCurrentCandle: number;
+  isFreshSignal?: boolean; // true on the exact tick the crossover/signal sealed
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -95,6 +98,9 @@ interface EngineState {
   lastBuyCandle:  number;
   lastSellCandle: number;
   lastSignal:     1 | -1 | 0;
+  // Armed signal memory (for collaboration with follower conditions like F-F)
+  armedSignal:         'BUY' | 'SELL' | null;
+  armedRemainingTicks: number;
 }
 
 const MAX_HIST = 120;
@@ -109,11 +115,21 @@ function mkState(): EngineState {
     prevRsi: NaN, prevMa: NaN, prevBbLower: NaN, prevBbUpper: NaN,
     pivotLows: [], pivotHighs: [],
     lastBuyCandle: -9999, lastSellCandle: -9999, lastSignal: 0,
+    armedSignal: null, armedRemainingTicks: 0,
   };
 }
 
 export function resetRsiSignalState(stateKey: string): void {
   stateMap.delete(stateKey);
+}
+
+/** Disarm / consume the active signal after a trade has successfully fired */
+export function consumeRsiSignal(stateKey: string): void {
+  const st = stateMap.get(stateKey);
+  if (st) {
+    st.armedSignal = null;
+    st.armedRemainingTicks = 0;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -309,9 +325,21 @@ export function feedRsiSignal(
   let st = stateMap.get(stateKey);
   if (!st) { st = mkState(); stateMap.set(stateKey, st); }
 
+  // Tick countdown for armed signal memory window
+  if (st.armedRemainingTicks > 0) {
+    st.armedRemainingTicks--;
+    if (st.armedRemainingTicks <= 0) {
+      st.armedSignal = null;
+    }
+  }
+
   const NO_SIG: RsiSignalResult = {
-    buySignal: false, sellSignal: false, rsi: NaN,
-    candleCount: st.candleIdx, ticksInCurrentCandle: st.candleBuf.length + 1,
+    buySignal: st.armedSignal === 'BUY',
+    sellSignal: st.armedSignal === 'SELL',
+    rsi: st.rsiHistory.length > 0 ? st.rsiHistory[st.rsiHistory.length - 1] : NaN,
+    candleCount: st.candleIdx,
+    ticksInCurrentCandle: st.candleBuf.length + 1,
+    isFreshSignal: false,
   };
 
   // ── Accumulate tick ─────────────────────────────────────────────────────────
@@ -420,16 +448,36 @@ export function feedRsiSignal(
     finalBuy = bN >= 2; finalSell = sN >= 2;
   }
 
-  // ── Update tracking ────────────────────────────────────────────────────────
-  if (finalBuy)  { st.lastBuyCandle  = st.candleIdx; st.lastSignal =  1; }
-  if (finalSell) { st.lastSellCandle = st.candleIdx; st.lastSignal = -1; }
+  // ── Update tracking & arming ───────────────────────────────────────────────
+  const holdTicks = Math.max(1, cfg.signalHoldTicks ?? 10);
+  if (finalBuy) {
+    st.lastBuyCandle  = st.candleIdx;
+    st.lastSignal     = 1;
+    st.armedSignal    = 'BUY';
+    st.armedRemainingTicks = holdTicks;
+  } else if (finalSell) {
+    st.lastSellCandle = st.candleIdx;
+    st.lastSignal     = -1;
+    st.armedSignal    = 'SELL';
+    st.armedRemainingTicks = holdTicks;
+  }
 
   st.prevRsi     = rsi;
   if (!isNaN(maVal))   st.prevMa      = maVal;
   if (!isNaN(bbLower)) st.prevBbLower = bbLower;
   if (!isNaN(bbUpper)) st.prevBbUpper = bbUpper;
 
-  return { buySignal: finalBuy, sellSignal: finalSell, rsi, candleCount: st.candleIdx, ticksInCurrentCandle: 0 };
+  const isBuyActive  = st.armedSignal === 'BUY' || finalBuy;
+  const isSellActive = st.armedSignal === 'SELL' || finalSell;
+
+  return {
+    buySignal: isBuyActive,
+    sellSignal: isSellActive,
+    rsi,
+    candleCount: st.candleIdx,
+    ticksInCurrentCandle: 0,
+    isFreshSignal: finalBuy || finalSell,
+  };
 }
 
 export const DEFAULT_RSI_CONFIG: RsiSignalConfig = {
@@ -440,4 +488,5 @@ export const DEFAULT_RSI_CONFIG: RsiSignalConfig = {
   rsiFilterEnabled: true,
   oversoldLow: 20, oversoldHigh: 40, overboughtLow: 60, overboughtHigh: 80,
   reentryPause: 5, waitForOpposite: false, andMode: false,
+  signalHoldTicks: 10,
 };

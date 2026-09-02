@@ -787,8 +787,23 @@ function RsiSignalBuilder({ cond, onChange }: { cond: Condition; onChange: (c: C
             )}
           </div>
 
-          {/* Mode & Wait Opposite */}
+          {/* Mode, Wait Opposite & Signal Hold Window */}
           <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ color: '#a5b4fc', fontWeight: 'bold' }}>Signal Hold Window:</span>
+              <input
+                className="lp-num lp-sm"
+                type="number"
+                min={1}
+                max={50}
+                value={cond.rsiSignalHoldTicks ?? 10}
+                onChange={e => u({ rsiSignalHoldTicks: Math.max(1, +e.target.value || 10) })}
+                title="How many ticks the signal stays active waiting for collaborating conditions (like [F, F] pullbacks)"
+                style={{ width: '38px', borderColor: '#818cf8' }}
+              />
+              <span style={{ color: '#94a3b8', fontSize: '10px' }}>ticks (for AND pullback conditions)</span>
+            </div>
+
             <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
               <input
                 type="checkbox"
@@ -856,6 +871,7 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
             patch.rsiTicksPerCandle = 5;
             patch.rsiLength = 14;
             patch.rsiSignalAction = 'AUTO';
+            patch.rsiSignalHoldTicks = 10;
             patch.rsiMaMode = true;
             patch.rsiMaType = 'SMA';
             patch.rsiMaLength = 14;

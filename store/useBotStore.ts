@@ -16,7 +16,7 @@ import { useScannerStore } from './useScannerStore';
 import { useDerivStore } from './useDerivStore';
 import { getActivePageId } from './usePageSettings';
 import { tradeWS } from '../lib/deriv/trade-ws';
-import { feedRsiSignal, RsiSignalConfig, MaType, resetRsiSignalState } from '../lib/indicators/rsi-signal';
+import { feedRsiSignal, RsiSignalConfig, MaType, resetRsiSignalState, consumeRsiSignal } from '../lib/indicators/rsi-signal';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES (exported so page.tsx can import them)
@@ -57,6 +57,7 @@ export interface Condition {
   rsiTicksPerCandle?: number;   // default 5
   rsiLength?: number;           // default 14
   rsiSignalAction?: 'AUTO' | 'BUY' | 'SELL'; // default 'AUTO'
+  rsiSignalHoldTicks?: number;  // default 10 (ticks to keep signal armed for collaborating conditions like F-F)
   rsiMaMode?: boolean;          // default true
   rsiMaType?: 'SMA' | 'EMA' | 'WMA' | 'HMA' | 'KAMA' | 'VWMA' | 'ALMA' | 'TEMA' | 'ZLEMA' | 'LSMA';
   rsiMaLength?: number;         // default 14
@@ -568,15 +569,19 @@ function evaluateCondition(
         reentryPause: cond.rsiReentryPause ?? 5,
         waitForOpposite: cond.rsiWaitForOpposite ?? false,
         andMode: cond.rsiAndMode ?? false,
+        signalHoldTicks: cond.rsiSignalHoldTicks ?? 10,
       };
 
       const result = feedRsiSignal(stateKey, latestPrice, cfg);
       const action = cond.rsiSignalAction || 'AUTO';
       if (action === 'BUY') return result.buySignal;
       if (action === 'SELL') return result.sellSignal;
-      // AUTO mode: matches strategy trade direction
-      if (tradeType === 'PUT' || tradeType === 'FALL') {
+      // AUTO mode: matches strategy trade direction (Rise / Only Ups vs Fall / Only Downs)
+      if (tradeType === 'PUT' || tradeType === 'FALL' || tradeType === 'RUNLOW') {
         return result.sellSignal;
+      }
+      if (tradeType === 'CALL' || tradeType === 'RISE' || tradeType === 'RUNHIGH') {
+        return result.buySignal;
       }
       return result.buySignal;
     }
@@ -1687,6 +1692,13 @@ export const useBotStore = create<BotStoreState>()(
 
           // ── TRIGGER FIRED ─────────────────────────────────────────────────
           get()._flashSignal(symbol);
+
+          // Disarm/consume any RSI_SIGNAL conditions for this strategy & symbol so it trades once per signal
+          s.conditions.forEach(c => {
+            if (c.type === 'RSI_SIGNAL') {
+              consumeRsiSignal(`${symbol}__${c.id}`);
+            }
+          });
 
 
 
