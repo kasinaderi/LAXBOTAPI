@@ -16,6 +16,7 @@ import { useScannerStore } from './useScannerStore';
 import { useDerivStore } from './useDerivStore';
 import { getActivePageId } from './usePageSettings';
 import { tradeWS } from '../lib/deriv/trade-ws';
+import { feedRsiSignal, RsiSignalConfig, MaType, resetRsiSignalState } from '../lib/indicators/rsi-signal';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES (exported so page.tsx can import them)
@@ -32,7 +33,7 @@ export interface PatternBox {
 
 export interface Condition {
   id: string;
-  type: 'EVEN_PCT' | 'ODD_PCT' | 'LAST_DIGITS' | 'GREEN_BAR' | 'DIGIT_PATTERN' | 'FALL_PCT' | 'RISE_PCT' | 'OVER_PCT' | 'UNDER_PCT' | 'DIGIT_APPEARS';
+  type: 'EVEN_PCT' | 'ODD_PCT' | 'LAST_DIGITS' | 'GREEN_BAR' | 'DIGIT_PATTERN' | 'FALL_PCT' | 'RISE_PCT' | 'OVER_PCT' | 'UNDER_PCT' | 'DIGIT_APPEARS' | 'RSI_SIGNAL';
   comparator: string;
   value: number;
   lastN: number;
@@ -51,6 +52,27 @@ export interface Condition {
   thenMaxTrades?: number;             // THENALL: max trades Box2 fires per round (default 3)
   useCustomContracts?: boolean;        // DIGIT_PATTERN only: override trade contracts per loss step
   customContracts?: { type: string; barrier: number }[]; // Trade contract per loss step
+
+  // RSI_SIGNAL parameters (TradingView "RSI Signal [trade_lexx]")
+  rsiTicksPerCandle?: number;   // default 5
+  rsiLength?: number;           // default 14
+  rsiSignalAction?: 'AUTO' | 'BUY' | 'SELL'; // default 'AUTO'
+  rsiMaMode?: boolean;          // default true
+  rsiMaType?: 'SMA' | 'EMA' | 'WMA' | 'HMA' | 'KAMA' | 'VWMA' | 'ALMA' | 'TEMA' | 'ZLEMA' | 'LSMA';
+  rsiMaLength?: number;         // default 14
+  rsiBbMode?: boolean;          // default true
+  rsiBbType?: 'SMA' | 'EMA' | 'WMA' | 'HMA' | 'VWMA' | 'ALMA' | 'TEMA' | 'ZLEMA' | 'LSMA';
+  rsiBbLength?: number;         // default 14
+  rsiBbMult?: number;           // default 2.0
+  rsiDivergenceMode?: boolean;  // default true
+  rsiFilterEnabled?: boolean;   // default true
+  rsiOversoldLow?: number;      // default 20
+  rsiOversoldHigh?: number;     // default 40
+  rsiOverboughtLow?: number;    // default 60
+  rsiOverboughtHigh?: number;   // default 80
+  rsiReentryPause?: number;     // default 5
+  rsiWaitForOpposite?: boolean; // default false
+  rsiAndMode?: boolean;         // default false
 }
 
 export interface Strategy {
@@ -432,7 +454,13 @@ function evaluateOneBox(cond: Condition, boxIndex: number, digits: number[], quo
 }
 
 
-function evaluateCondition(cond: Condition, digits: number[], quotes: number[]): boolean {
+function evaluateCondition(
+  cond: Condition,
+  digits: number[],
+  quotes: number[],
+  symbol?: string,
+  tradeType?: string
+): boolean {
   const period = Math.max(1, cond.period || 100);
   switch (cond.type) {
     case 'EVEN_PCT': {
@@ -517,18 +545,53 @@ function evaluateCondition(cond: Condition, digits: number[], quotes: number[]):
       const count = sub.filter(d => targetDigits.includes(d)).length;
       return compare(count, cond.comparator || '>', targetCount);
     }
+    case 'RSI_SIGNAL': {
+      if (quotes.length < 2) return false;
+      const latestPrice = quotes[quotes.length - 1];
+      const stateKey = `${symbol || 'default'}__${cond.id}`;
+      const cfg: RsiSignalConfig = {
+        ticksPerCandle: cond.rsiTicksPerCandle ?? 5,
+        rsiLength: cond.rsiLength ?? 14,
+        maMode: cond.rsiMaMode ?? true,
+        maType: (cond.rsiMaType as MaType) ?? 'SMA',
+        maLength: cond.rsiMaLength ?? 14,
+        bbMode: cond.rsiBbMode ?? true,
+        bbType: (cond.rsiBbType as MaType) ?? 'SMA',
+        bbLength: cond.rsiBbLength ?? 14,
+        bbMult: cond.rsiBbMult ?? 2.0,
+        divergenceMode: cond.rsiDivergenceMode ?? true,
+        rsiFilterEnabled: cond.rsiFilterEnabled ?? true,
+        oversoldLow: cond.rsiOversoldLow ?? 20,
+        oversoldHigh: cond.rsiOversoldHigh ?? 40,
+        overboughtLow: cond.rsiOverboughtLow ?? 60,
+        overboughtHigh: cond.rsiOverboughtHigh ?? 80,
+        reentryPause: cond.rsiReentryPause ?? 5,
+        waitForOpposite: cond.rsiWaitForOpposite ?? false,
+        andMode: cond.rsiAndMode ?? false,
+      };
+
+      const result = feedRsiSignal(stateKey, latestPrice, cfg);
+      const action = cond.rsiSignalAction || 'AUTO';
+      if (action === 'BUY') return result.buySignal;
+      if (action === 'SELL') return result.sellSignal;
+      // AUTO mode: matches strategy trade direction
+      if (tradeType === 'PUT' || tradeType === 'FALL') {
+        return result.sellSignal;
+      }
+      return result.buySignal;
+    }
     default:
       return false;
   }
 }
 
-function evalStrategy(s: Strategy, digits: number[], quotes: number[]): boolean {
+function evalStrategy(s: Strategy, digits: number[], quotes: number[], symbol?: string): boolean {
   if (digits.length < 5) return false;
   if (!s.conditions.length) return false;
-  let result = evaluateCondition(s.conditions[0], digits, quotes);
+  let result = evaluateCondition(s.conditions[0], digits, quotes, symbol, s.tradeType);
   for (let i = 1; i < s.conditions.length; i++) {
     const c = s.conditions[i];
-    const v = evaluateCondition(c, digits, quotes);
+    const v = evaluateCondition(c, digits, quotes, symbol, s.tradeType);
     result = c.join === 'AND' ? result && v : result || v;
   }
   return result;
@@ -922,6 +985,18 @@ export const useBotStore = create<BotStoreState>()(
         }
 
         set({ isRunning: true, botStatusMsg: 'Running. Waiting for conditions...', lastSignal: '' });
+
+        // Clear RSI Signal engine state so each bot run starts with fresh candle history
+        const strats = get().strategies;
+        strats.forEach(s => {
+          s.conditions.forEach(c => {
+            if (c.type === 'RSI_SIGNAL') {
+              get().selectedMarkets.forEach((sym: string) => {
+                resetRsiSignalState(`${sym}__${c.id}`);
+              });
+            }
+          });
+        });
 
         // Register the onTick listener ONCE (idempotent across navigation)
         if (!_onTickUnsub) {
@@ -1497,7 +1572,7 @@ export const useBotStore = create<BotStoreState>()(
               // Only evaluate other (non-DIGIT_PATTERN) conditions AND Box 1
               const otherCondsPass = s.conditions
                 .filter(c => c.type !== 'DIGIT_PATTERN')
-                .every(c => evaluateCondition(c, digits, quotes));
+                .every(c => evaluateCondition(c, digits, quotes, symbol, s.tradeType));
 
               const box1Pass = otherCondsPass && evaluateOneBox(dpCondForMode, 0, digits, quotes);
 
@@ -1586,7 +1661,7 @@ export const useBotStore = create<BotStoreState>()(
 
           } else {
             // ── Normal OR mode ─────────────────────────────────────────────
-            if (!evalStrategy(s, digits, quotes)) {
+            if (!evalStrategy(s, digits, quotes, symbol)) {
               // Reset no_contra edge when pattern clears
               if (dpCond && dpCond.patternRetrigger === 'no_contra') {
                 const rtKey = `${stratId}_${symbol}`;

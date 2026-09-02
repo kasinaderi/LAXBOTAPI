@@ -41,6 +41,7 @@ const CONDITION_TYPES = [
   { value: 'GREEN_BAR',     label: 'GREEN BAR IS ON DIGIT' },
   { value: 'DIGIT_PATTERN', label: 'DIGIT PATTERN' },
   { value: 'DIGIT_APPEARS', label: 'IF DIGIT ( ) APPEARS' },
+  { value: 'RSI_SIGNAL',    label: 'RSI SIGNAL [trade_lexx]' },
 ];
 
 // Pattern alphabet tokens (LaxSniper XV)
@@ -109,6 +110,14 @@ function conditionText(c: Condition): string {
     case 'DIGIT_APPEARS': {
       const targetDigits = c.targetDigits && c.targetDigits.length > 0 ? c.targetDigits : [c.digitBarrier ?? 5];
       return `DIGIT ${targetDigits.join(' AND ')} APPEARS ${c.comparator} ${c.value} times in last ${c.period} ticks`;
+    }
+    case 'RSI_SIGNAL': {
+      const act = c.rsiSignalAction || 'AUTO';
+      const parts: string[] = [];
+      if (c.rsiMaMode ?? true) parts.push(`MA(${c.rsiMaType || 'SMA'} ${c.rsiMaLength || 14})`);
+      if (c.rsiBbMode ?? true) parts.push(`BB(${c.rsiBbType || 'SMA'} ${c.rsiBbLength || 14})`);
+      if (c.rsiDivergenceMode ?? true) parts.push('Div');
+      return `RSI(${c.rsiLength || 14}) [${act}] · ${parts.join('+')} · ${c.rsiTicksPerCandle || 5}t/bar`;
     }
     default:              return '';
   }
@@ -524,6 +533,286 @@ function AdvancedPatternBuilder({ cond, onChange }: {
   );
 }
 
+const MA_TYPES = ['SMA', 'EMA', 'WMA', 'HMA', 'KAMA', 'VWMA', 'ALMA', 'TEMA', 'ZLEMA', 'LSMA'];
+
+function RsiSignalBuilder({ cond, onChange }: { cond: Condition; onChange: (c: Condition) => void }) {
+  const u = (p: Partial<Condition>) => onChange({ ...cond, ...p });
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  return (
+    <div className="lp-rsi-builder" style={{
+      background: 'rgba(15, 23, 42, 0.75)',
+      border: '1px solid rgba(99, 102, 241, 0.4)',
+      borderRadius: '8px',
+      padding: '8px 10px',
+      marginTop: '6px',
+      fontSize: '11px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '6px',
+      width: '100%'
+    }}>
+      {/* Header bar */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ fontWeight: 'bold', color: '#a5b4fc' }}>⚡ RSI Signal [trade_lexx]</span>
+          <span style={{ fontSize: '9px', color: '#64748b' }}>(Synthetic Candle Numerical Engine)</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ color: '#94a3b8', fontSize: '10px' }}>Action:</span>
+          <select
+            className="lp-sel"
+            style={{ fontSize: '10px', padding: '2px 6px', borderColor: '#6366f1', background: '#1e1b4b', color: '#c7d2fe' }}
+            value={cond.rsiSignalAction || 'AUTO'}
+            onChange={e => u({ rsiSignalAction: e.target.value as any })}
+          >
+            <option value="AUTO">AUTO (Match Strategy Trade Type)</option>
+            <option value="BUY">BUY Signal (Rise / Call only)</option>
+            <option value="SELL">SELL Signal (Fall / Put only)</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Primary parameters row */}
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <span style={{ color: '#cbd5e1' }}>Ticks/Bar:</span>
+          <input
+            className="lp-num lp-sm"
+            type="number"
+            min={1}
+            max={60}
+            value={cond.rsiTicksPerCandle ?? 5}
+            onChange={e => u({ rsiTicksPerCandle: Math.max(1, +e.target.value || 5) })}
+            title="Number of ticks grouped into one synthetic candle"
+          />
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <span style={{ color: '#cbd5e1' }}>RSI Length:</span>
+          <input
+            className="lp-num lp-sm"
+            type="number"
+            min={2}
+            max={100}
+            value={cond.rsiLength ?? 14}
+            onChange={e => u({ rsiLength: Math.max(2, +e.target.value || 14) })}
+          />
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <span style={{ color: '#cbd5e1' }}>Reentry Pause:</span>
+          <input
+            className="lp-num lp-sm"
+            type="number"
+            min={0}
+            max={50}
+            value={cond.rsiReentryPause ?? 5}
+            onChange={e => u({ rsiReentryPause: Math.max(0, +e.target.value || 0) })}
+            title="Minimum bars between same-direction signals"
+          />
+          <span style={{ color: '#64748b', fontSize: '9px' }}>bars</span>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setShowAdvanced(!showAdvanced)}
+          style={{
+            background: showAdvanced ? 'rgba(99, 102, 241, 0.3)' : 'rgba(255,255,255,0.05)',
+            border: '1px solid rgba(99, 102, 241, 0.4)',
+            color: '#c7d2fe',
+            borderRadius: '4px',
+            padding: '2px 6px',
+            fontSize: '9px',
+            cursor: 'pointer',
+            marginLeft: 'auto'
+          }}
+        >
+          {showAdvanced ? '▴ Less Settings' : '▾ More Settings'}
+        </button>
+      </div>
+
+      {/* Sub-signals checklist row */}
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '10px', padding: '4px 0', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        {/* MA Signal toggle */}
+        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={cond.rsiMaMode ?? true}
+            onChange={e => u({ rsiMaMode: e.target.checked })}
+          />
+          <span style={{ color: (cond.rsiMaMode ?? true) ? '#86efac' : '#64748b', fontWeight: 'bold' }}>MA Cross</span>
+        </label>
+        {(cond.rsiMaMode ?? true) && (
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+            <select
+              className="lp-sel"
+              style={{ fontSize: '9px', padding: '1px 3px' }}
+              value={cond.rsiMaType || 'SMA'}
+              onChange={e => u({ rsiMaType: e.target.value as any })}
+            >
+              {MA_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <input
+              className="lp-num lp-sm"
+              type="number"
+              min={2}
+              max={100}
+              value={cond.rsiMaLength ?? 14}
+              onChange={e => u({ rsiMaLength: Math.max(2, +e.target.value || 14) })}
+              style={{ width: '34px' }}
+              title="MA Length"
+            />
+          </div>
+        )}
+
+        {/* BB Signal toggle */}
+        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={cond.rsiBbMode ?? true}
+            onChange={e => u({ rsiBbMode: e.target.checked })}
+          />
+          <span style={{ color: (cond.rsiBbMode ?? true) ? '#86efac' : '#64748b', fontWeight: 'bold' }}>BB Cross</span>
+        </label>
+        {(cond.rsiBbMode ?? true) && (
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+            <select
+              className="lp-sel"
+              style={{ fontSize: '9px', padding: '1px 3px' }}
+              value={cond.rsiBbType || 'SMA'}
+              onChange={e => u({ rsiBbType: e.target.value as any })}
+            >
+              {MA_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <input
+              className="lp-num lp-sm"
+              type="number"
+              min={2}
+              max={100}
+              value={cond.rsiBbLength ?? 14}
+              onChange={e => u({ rsiBbLength: Math.max(2, +e.target.value || 14) })}
+              style={{ width: '34px' }}
+              title="BB Length"
+            />
+            <span style={{ color: '#94a3b8', fontSize: '9px' }}>σ</span>
+            <input
+              className="lp-num lp-sm"
+              type="number"
+              step={0.1}
+              min={0.1}
+              max={10}
+              value={cond.rsiBbMult ?? 2.0}
+              onChange={e => u({ rsiBbMult: Math.max(0.1, +e.target.value || 2.0) })}
+              style={{ width: '34px' }}
+              title="StdDev Multiplier"
+            />
+          </div>
+        )}
+
+        {/* Divergence toggle */}
+        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={cond.rsiDivergenceMode ?? true}
+            onChange={e => u({ rsiDivergenceMode: e.target.checked })}
+          />
+          <span style={{ color: (cond.rsiDivergenceMode ?? true) ? '#86efac' : '#64748b', fontWeight: 'bold' }}>Divergence</span>
+        </label>
+      </div>
+
+      {/* Advanced expandable section */}
+      {showAdvanced && (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '6px',
+          paddingTop: '6px',
+          borderTop: '1px dashed rgba(255,255,255,0.1)',
+          color: '#cbd5e1'
+        }}>
+          {/* Overbought / Oversold filter */}
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={cond.rsiFilterEnabled ?? true}
+                onChange={e => u({ rsiFilterEnabled: e.target.checked })}
+              />
+              <span style={{ fontWeight: '600' }}>RSI Zone Filter:</span>
+            </label>
+            {(cond.rsiFilterEnabled ?? true) && (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '10px' }}>
+                <span style={{ color: '#22c55e' }}>Buy Zone:</span>
+                <input
+                  className="lp-num lp-sm"
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={cond.rsiOversoldLow ?? 20}
+                  onChange={e => u({ rsiOversoldLow: +e.target.value })}
+                  style={{ width: '32px' }}
+                />
+                <span>-</span>
+                <input
+                  className="lp-num lp-sm"
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={cond.rsiOversoldHigh ?? 40}
+                  onChange={e => u({ rsiOversoldHigh: +e.target.value })}
+                  style={{ width: '32px' }}
+                />
+                <span style={{ color: '#ef4444', marginLeft: '6px' }}>Sell Zone:</span>
+                <input
+                  className="lp-num lp-sm"
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={cond.rsiOverboughtLow ?? 60}
+                  onChange={e => u({ rsiOverboughtLow: +e.target.value })}
+                  style={{ width: '32px' }}
+                />
+                <span>-</span>
+                <input
+                  className="lp-num lp-sm"
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={cond.rsiOverboughtHigh ?? 80}
+                  onChange={e => u({ rsiOverboughtHigh: +e.target.value })}
+                  style={{ width: '32px' }}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Mode & Wait Opposite */}
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={cond.rsiWaitForOpposite ?? false}
+                onChange={e => u({ rsiWaitForOpposite: e.target.checked })}
+              />
+              <span>Wait for Opposite Signal</span>
+            </label>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={cond.rsiAndMode ?? false}
+                onChange={e => u({ rsiAndMode: e.target.checked })}
+              />
+              <span title="Require at least 2 sub-signals simultaneously">AND Mode (Multi-Signal Confluence)</span>
+            </label>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ConditionRow({ cond, isFirst, onChange, onRemove }: {
   cond: Condition;
   isFirst: boolean;
@@ -563,6 +852,26 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
             patch.value = 60;
             patch.digitBarrier = 4;
             patch.comparator = '>';
+          } else if (newType === 'RSI_SIGNAL') {
+            patch.rsiTicksPerCandle = 5;
+            patch.rsiLength = 14;
+            patch.rsiSignalAction = 'AUTO';
+            patch.rsiMaMode = true;
+            patch.rsiMaType = 'SMA';
+            patch.rsiMaLength = 14;
+            patch.rsiBbMode = true;
+            patch.rsiBbType = 'SMA';
+            patch.rsiBbLength = 14;
+            patch.rsiBbMult = 2.0;
+            patch.rsiDivergenceMode = true;
+            patch.rsiFilterEnabled = true;
+            patch.rsiOversoldLow = 20;
+            patch.rsiOversoldHigh = 40;
+            patch.rsiOverboughtLow = 60;
+            patch.rsiOverboughtHigh = 80;
+            patch.rsiReentryPause = 5;
+            patch.rsiWaitForOpposite = false;
+            patch.rsiAndMode = false;
           }
           u(patch);
         }}
@@ -792,6 +1101,12 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
       {cond.type === 'DIGIT_PATTERN' && (
         <div style={{ width: '100%', marginTop: 4 }}>
           <AdvancedPatternBuilder cond={cond} onChange={onChange} />
+        </div>
+      )}
+
+      {cond.type === 'RSI_SIGNAL' && (
+        <div style={{ width: '100%', marginTop: 4 }}>
+          <RsiSignalBuilder cond={cond} onChange={onChange} />
         </div>
       )}
 
