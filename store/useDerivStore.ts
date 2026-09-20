@@ -675,6 +675,13 @@ export const useDerivStore = create<DerivState>()(
                     },
                     virtualSettings: {
                         ...state.virtualSettings,
+                        vDoubleStage: 'A',
+                        vStageBCompletedReps: 0,
+                        vConsecWinsB: 0,
+                        vConsecLossesB: 0,
+                        vVirtualWinsB: 0,
+                        vVirtualLossesB: 0,
+                        vResultHistoryB: [],
                         virtualWins: 0,
                         virtualLosses: 0,
                         vConsecWins: 0,
@@ -718,6 +725,13 @@ export const useDerivStore = create<DerivState>()(
                     },
                     virtualSettings: {
                         ...state.virtualSettings,
+                        vDoubleStage: 'A',
+                        vStageBCompletedReps: 0,
+                        vConsecWinsB: 0,
+                        vConsecLossesB: 0,
+                        vVirtualWinsB: 0,
+                        vVirtualLossesB: 0,
+                        vResultHistoryB: [],
                         virtualWins: 0,
                         virtualLosses: 0,
                         vConsecWins: 0,
@@ -815,10 +829,17 @@ export const useDerivStore = create<DerivState>()(
                 currentPipelineStep: 0,
                 virtualSettings: {
                     ...state.virtualSettings,
-                    // Always restart in virtual mode when startVirtualToReal is on.
-                    // This guarantees each new cycle begins with virtual validation,
-                    // regardless of which mode the previous cycle finished in.
-                    isVirtualMode: state.virtualSettings.startVirtualToReal ? true : state.virtualSettings.isVirtualMode,
+                    // Always restart in virtual mode when startVirtualToReal or isDoubleVirtual is on.
+                    // This guarantees each new session begins with virtual validation,
+                    // regardless of which mode the previous session finished in.
+                    isVirtualMode: (state.virtualSettings.startVirtualToReal || state.virtualSettings.isDoubleVirtual) ? true : state.virtualSettings.isVirtualMode,
+                    vDoubleStage: 'A',
+                    vStageBCompletedReps: 0,
+                    vConsecWinsB: 0,
+                    vConsecLossesB: 0,
+                    vVirtualWinsB: 0,
+                    vVirtualLossesB: 0,
+                    vResultHistoryB: [],
                     virtualWins: 0,
                     virtualLosses: 0,
                     vConsecWins: 0,
@@ -854,7 +875,17 @@ export const useDerivStore = create<DerivState>()(
                     isRunning: false,
                     currentStep: 1,
                     currentPipelineStep: 0,
-                    stats: { ...state.stats, currentStep: 1 }
+                    stats: { ...state.stats, currentStep: 1 },
+                    virtualSettings: {
+                        ...state.virtualSettings,
+                        vDoubleStage: 'A',
+                        vStageBCompletedReps: 0,
+                        vConsecWinsB: 0,
+                        vConsecLossesB: 0,
+                        vVirtualWinsB: 0,
+                        vVirtualLossesB: 0,
+                        vResultHistoryB: [],
+                    }
                 }));
                 tradeEngine.stop(get());
             },

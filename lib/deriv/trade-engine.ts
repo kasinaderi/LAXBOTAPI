@@ -1184,7 +1184,7 @@ class TradeEngine {
                 if (!shouldSwitch) {
                     const threshold = Math.max(1, Number(virtualSettings.vThreshold) || 1);
                     const mode = virtualSettings.vTriggerMode ?? 'consec';
-                    const type = virtualSettings.vTriggerType ?? 'losses';
+                    const type = virtualSettings.vTriggerType ?? 'wins';
                     const isWindowEnabled = Boolean(virtualSettings.vInEnabled);
                     
                     if (isWindowEnabled) {
@@ -1228,7 +1228,7 @@ class TradeEngine {
                     if (!stageAPassed) {
                         const thresholdA = Math.max(1, Number(virtualSettings.vThreshold) || 1);
                         const modeA = virtualSettings.vTriggerMode ?? 'consec';
-                        const typeA = virtualSettings.vTriggerType ?? 'losses';
+                        const typeA = virtualSettings.vTriggerType ?? 'wins';
                         const isWindowEnabledA = Boolean(virtualSettings.vInEnabled);
                         if (isWindowEnabledA) {
                             const windowSizeA = Math.max(1, Number(virtualSettings.vInTrades) || 5);
@@ -1540,52 +1540,61 @@ class TradeEngine {
                 realLosses++;
             }
             setVirtualSettings({ realWins, realLosses, rConsecWins, rConsecLosses });
-            
-            if (virtualSettings.startVirtualToReal && virtualSettings.isDoubleVirtual && virtualSettings.vDoubleStage === 'B') {
-                const completedReps = (virtualSettings.vStageBCompletedReps || 0) + 1;
-                const targetReps = virtualSettings.vStageBReps || 1;
-                if (completedReps < targetReps) {
-                    setVirtualSettings({
-                        isVirtualMode: true,
-                        vStageBCompletedReps: completedReps,
-                        vConsecWinsB: 0,
-                        vConsecLossesB: 0,
-                        vVirtualWinsB: 0,
-                        vVirtualLossesB: 0,
-                        vResultHistoryB: [],
-                    });
-                    console.log(`[TradeEngine] ⚡ Double Virt: Real Trade (${completedReps}/${targetReps}) finished. Returning to Virtual for Stage B.`);
-                } else {
-                    setVirtualSettings({
-                        isVirtualMode: true,
-                        vDoubleStage: 'B', // Perpetual Stage B
-                        vStageBCompletedReps: 0,
-                        vConsecWinsB: 0,
-                        vConsecLossesB: 0,
-                        vVirtualWinsB: 0,
-                        vVirtualLossesB: 0,
-                        vResultHistoryB: [],
-                    });
-                    console.log(`[TradeEngine] ⚡ Double Virt: Stage B Reps (${completedReps}/${targetReps}) finished. Remaining in Stage B execution cycle.`);
-                }
-            }
 
-            // Check Switch to Virtual
+            // ── Real → Virtual Switch Evaluation ──────────────────────────────
+            // In Double Virtual Mode (Stage B):
+            // The bot executes Real trades until the switch-back condition is met.
+            // If startRealToVirtual is enabled, it waits for the set condition (e.g. 2 total wins).
+            // Once met, it returns to VIRTUAL for Stage B gate (retaining vDoubleStage = 'B').
+            // Stage A is ONLY returned to when the bot is stopped, started fresh, or stats/logs are reset.
+            let shouldSwitchToVirtual = false;
+
             if (virtualSettings.startRealToVirtual) {
                 const threshold = virtualSettings.rThreshold;
                 const mode = virtualSettings.rTriggerMode;
                 const type = virtualSettings.rTriggerType;
-                let shouldSwitch = false;
 
                 if (type === 'wins') {
                     const val = (mode === 'consec') ? rConsecWins : realWins;
-                    if (val >= threshold) shouldSwitch = true;
+                    if (val >= threshold) shouldSwitchToVirtual = true;
                 } else {
                     const val = (mode === 'consec') ? rConsecLosses : realLosses;
-                    if (val >= threshold) shouldSwitch = true;
+                    if (val >= threshold) shouldSwitchToVirtual = true;
                 }
+            } else if (virtualSettings.isDoubleVirtual && virtualSettings.vDoubleStage === 'B') {
+                // Fallback for Double Virtual if startRealToVirtual was not explicitly configured:
+                // Return to Stage B virtual gate after vStageBReps real trades (default 1).
+                const targetReps = virtualSettings.vStageBReps || 1;
+                const totalRealTradesThisCycle = realWins + realLosses;
+                if (totalRealTradesThisCycle >= targetReps) {
+                    shouldSwitchToVirtual = true;
+                }
+            }
 
-                if (shouldSwitch) {
+            if (shouldSwitchToVirtual) {
+                if (virtualSettings.isDoubleVirtual) {
+                    const nextCompletedReps = (virtualSettings.vStageBCompletedReps || 0) + 1;
+                    console.log(`[TradeEngine] ⚡ Double Virt (Stage B): Real threshold met! Returning to Stage B gate. (Completed Reps: ${nextCompletedReps})`);
+                    setVirtualSettings({
+                        isVirtualMode: true,
+                        vDoubleStage: 'B', // PERPETUAL Stage B during active run!
+                        vStageBCompletedReps: nextCompletedReps,
+                        vConsecWinsB: 0,
+                        vConsecLossesB: 0,
+                        vVirtualWinsB: 0,
+                        vVirtualLossesB: 0,
+                        vResultHistoryB: [],
+                        realWins: 0,
+                        realLosses: 0,
+                        rConsecWins: 0,
+                        rConsecLosses: 0,
+                        virtualWins: 0,
+                        virtualLosses: 0,
+                        vConsecWins: 0,
+                        vConsecLosses: 0,
+                        vResultHistory: [],
+                    });
+                } else {
                     console.log(`[TradeEngine] 🛸 REAL THRESHOLD MET: Switching back to VIRTUAL Mode.`);
                     setVirtualSettings({
                         isVirtualMode: true,
@@ -1596,15 +1605,16 @@ class TradeEngine {
                         realWins: 0,
                         realLosses: 0,
                         rConsecWins: 0,
-                        rConsecLosses: 0
+                        rConsecLosses: 0,
+                        vResultHistory: [],
                     });
-                    if (state.executionMode === 'standard') {
-                        state.setPipelineStep(0);
-                    }
-                    
-                    // Mode switch complete - we preserve trigger state and current step 
-                    // to allow seamless transition between Real and Virtual tracking.
                 }
+
+                if (state.executionMode === 'standard') {
+                    state.setPipelineStep(0);
+                }
+            } else {
+                console.log(`[TradeEngine] Real Trade Settled (${isWin ? 'WIN' : 'LOSS'}). Real progress: W=${realWins} (streak ${rConsecWins}), L=${realLosses} (streak ${rConsecLosses}). Continuing Real execution until switch threshold.`);
             }
         }
 
