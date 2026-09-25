@@ -127,7 +127,10 @@ function strategySummary(s: Strategy, idx: number): string {
   if (!s.conditions.length) return `Strategy ${idx + 1}: no conditions`;
   const cond = s.conditions.map((c, i) => `${i > 0 ? c.join + ' ' : ''}${conditionText(c)}`).join(' ');
   const label = TRADE_OPTIONS.find(t => t.value === s.tradeType)?.label || s.tradeType;
-  return `If ${cond}, trade ${label} for ${s.ticks} ticks.`;
+  const patternSuffix = s.useTradePattern && s.tradePattern && s.tradePattern.length > 0
+    ? ` [Pattern: ${s.tradePattern.map(t => t ? 'T' : 'S').join('→')}]`
+    : '';
+  return `If ${cond}, trade ${label} for ${s.ticks} ticks${patternSuffix}.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1140,7 +1143,7 @@ function TradePatternBuilder({ pattern, onChange }: {
   onChange: (p: boolean[]) => void;
 }) {
   const toggle = (i: number) => onChange(pattern.map((v, idx) => idx === i ? !v : v));
-  const addTick = () => onChange([...pattern, true]);
+  const addStep = () => onChange([...pattern, true]);
   const removeLast = () => { if (pattern.length > 1) onChange(pattern.slice(0, -1)); };
 
   return (
@@ -1151,21 +1154,21 @@ function TradePatternBuilder({ pattern, onChange }: {
             key={i}
             className={`lp-tpb-cell ${trade ? 'trade' : 'skip'}`}
             onClick={() => toggle(i)}
-            title={`Tick ${i + 1}: ${trade ? 'TRADE (click to SKIP)' : 'SKIP (click to TRADE)'}`}
+            title={`Trade Signal ${i + 1}: ${trade ? 'TRADE (runs for set ticks)' : 'SKIP (skips this trade signal)'}`}
           >
             <span className="lp-tpb-num">{i + 1}</span>
             <span className="lp-tpb-label">{trade ? 'T' : 'S'}</span>
           </button>
         ))}
-        <button className="lp-tpb-add" onClick={addTick} title="Add tick">+</button>
+        <button className="lp-tpb-add" onClick={addStep} title="Add trade step">+</button>
         {pattern.length > 1 && (
-          <button className="lp-tpb-rm" onClick={removeLast} title="Remove last">−</button>
+          <button className="lp-tpb-rm" onClick={removeLast} title="Remove last step">−</button>
         )}
       </div>
       <div className="lp-tpb-legend">
-        <span className="lp-tpb-leg-t">T=TRADE</span>
-        <span className="lp-tpb-leg-s">S=SKIP</span>
-        <span style={{ color: '#9ca3af', fontSize: 10 }}>Click cell to toggle</span>
+        <span className="lp-tpb-leg-t">T=TRADE (places contract for set ticks)</span>
+        <span className="lp-tpb-leg-s">S=SKIP (skips trade signal)</span>
+        <span style={{ color: '#9ca3af', fontSize: 10 }}>Click cell to toggle T ↔ S</span>
       </div>
     </div>
   );

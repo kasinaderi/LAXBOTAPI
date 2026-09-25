@@ -652,6 +652,14 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
   if (!rs) return;
 
   const { wonCount, lostCount, netProfit, baseStake, isVirtual, symbol, dualMode } = rs;
+
+  // If no trades actually settled (e.g. all orders errored or rejected by Deriv),
+  // DO NOT treat as a win and DO NOT reset the martingale ladder!
+  if (wonCount === 0 && lostCount === 0) {
+    delete eng.roundState[roundId];
+    return;
+  }
+
   const isRoundWin = netProfit >= 0;
 
   // ── Dual-mode split result ────────────────────────────────────────────────
@@ -700,10 +708,22 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
           ss.lossCount = 0;
         } else if (get().tradingMode === 'continuous') {
           const rawNextStake = ss.currentStake * parseFloat(get().martingale || '2.1');
-          ss.currentStake = Math.round(Math.min(
-            rawNextStake,
-            baseStake * Math.pow(parseFloat(get().martingale || '2.1'), 10)
-          ) * 100) / 100;
+          const maxMartingaleCap = baseStake * Math.pow(parseFloat(get().martingale || '2.1'), 10);
+          const nextStake = Math.round(Math.min(rawNextStake, maxMartingaleCap) * 100) / 100;
+
+          // Check if balance is available to support the next martingale stake
+          const account = useDerivStore.getState().account;
+          const balance = account?.balance;
+          if (balance !== undefined && balance !== null && !isNaN(balance) && nextStake > balance) {
+            ss.currentStake = nextStake; // Preserve accurate stake, DO NOT reset to base!
+            delete eng.roundState[roundId];
+            get().stopBot(
+              `⛔ Max Martingale / Insufficient Balance: Next stake USD ${nextStake.toFixed(2)} exceeds account balance USD ${balance.toFixed(2)}. Bot stopped to protect remaining funds.`
+            );
+            return;
+          }
+
+          ss.currentStake = nextStake;
         }
       } else {
         ss.lost++; ss.totalProfit += netProfit;
@@ -990,6 +1010,9 @@ export const useBotStore = create<BotStoreState>()(
         }
 
         set({ isRunning: true, botStatusMsg: 'Running. Waiting for conditions...', lastSignal: '' });
+
+        // Reset trade pattern sequence position to step 1 on fresh start
+        eng.patternPos = {};
 
         // Clear RSI Signal engine state so each bot run starts with fresh candle history
         const strats = get().strategies;
@@ -1873,6 +1896,18 @@ export const useBotStore = create<BotStoreState>()(
             });
 
           } else {
+            // Guard: check account balance before attempting to place any real trade
+            const account = useDerivStore.getState().account;
+            const balance = account?.balance;
+            const totalRequiredStake = orders.length * tradeStake;
+            if (balance !== undefined && balance !== null && !isNaN(balance) && (totalRequiredStake > balance || tradeStake > balance)) {
+              delete eng.roundState[roundId];
+              get().stopBot(
+                `⛔ Insufficient Balance: Required stake USD ${tradeStake.toFixed(2)} exceeds account balance USD ${balance.toFixed(2)}. Bot stopped to protect remaining funds.`
+              );
+              return;
+            }
+
             const delayMs = parseFloat(state.crossMarketDelay || '1.5') * 1000;
             if (now - eng.lastTradeTime < delayMs) {
               delete eng.roundState[roundId];
@@ -1954,6 +1989,16 @@ export const useBotStore = create<BotStoreState>()(
           const errTrade = eng.activeTrades.get(data.requestId);
           eng.activeTrades.delete(data.requestId);
           get().updateLog(data.requestId, { result: 'ERROR', profit: 0 });
+
+          const errMsg = String(data?.error || data?.message || '');
+          const isBalanceError = /insufficient|balance|too low|not enough/i.test(errMsg);
+
+          if (isBalanceError) {
+            if (errTrade?.roundId) delete eng.roundState[errTrade.roundId];
+            get().stopBot(`⛔ Insufficient Balance: Deriv rejected trade (${errMsg}). Bot stopped to protect remaining funds.`);
+            return;
+          }
+
           // Clear cooldown for this strategy+market so next signal fires immediately
           if (errTrade) {
             const ck = `${errTrade.stratId}_${errTrade.symbol}`;
@@ -1964,7 +2009,12 @@ export const useBotStore = create<BotStoreState>()(
               const rs = eng.roundState[errTrade.roundId];
               rs.finishedCount++;
               if (rs.finishedCount === rs.totalCount) {
-                resolveRound(errTrade.roundId, errTrade.stratId, get, set);
+                // Only resolve if at least one contract actually won or lost
+                if (rs.wonCount > 0 || rs.lostCount > 0) {
+                  resolveRound(errTrade.roundId, errTrade.stratId, get, set);
+                } else {
+                  delete eng.roundState[errTrade.roundId];
+                }
               }
             }
           }
@@ -2092,10 +2142,20 @@ export const useBotStore = create<BotStoreState>()(
                 ss.lossCount = 0;
               } else if (state.tradingMode === 'continuous') {
                 const rawNextStake = ss.currentStake * parseFloat(state.martingale || '2.1');
-                ss.currentStake = Math.round(Math.min(
-                  rawNextStake,
-                  baseStake * Math.pow(parseFloat(state.martingale || '2.1'), 10)
-                ) * 100) / 100;
+                const maxMartingaleCap = baseStake * Math.pow(parseFloat(state.martingale || '2.1'), 10);
+                const nextStake = Math.round(Math.min(rawNextStake, maxMartingaleCap) * 100) / 100;
+
+                const account = derivState.account;
+                const balance = account?.balance;
+                if (balance !== undefined && balance !== null && !isNaN(balance) && nextStake > balance) {
+                  ss.currentStake = nextStake; // Preserve accurate stake, DO NOT reset to base!
+                  get().stopBot(
+                    `⛔ Max Martingale / Insufficient Balance: Next stake USD ${nextStake.toFixed(2)} exceeds account balance USD ${balance.toFixed(2)}. Bot stopped to protect remaining funds.`
+                  );
+                  return;
+                }
+
+                ss.currentStake = nextStake;
               }
             }
           }
