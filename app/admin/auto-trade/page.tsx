@@ -46,6 +46,8 @@ export interface PlaylistTradeStep {
     delayMinutes: number;           // Delay in minutes to wait AFTER previous trade settles (0 = immediate)
     source: 'laxprime' | 'laxsniper-xv'; // Which engine/rules to load
     label?: string;                 // e.g. "Step 1"
+    duplicateOfStep?: number;       // If set: this step was duplicated from step N (1-indexed), shown as orange "D{N}" badge
+    duplicateOfStepId?: string;     // The id of the source step, used to track origin dynamically across reorders
     marketOverride?: string;        // Optional override (e.g. 'R_100', '1HZ100V', etc.)
     contractOverride?: ContractTypeKey | ''; // Optional override
     digitOverride?: number | null;  // Optional prediction override (0-9)
@@ -87,6 +89,8 @@ interface AutoLXTradeRecord {
     profit: number;
     result: 'WIN' | 'LOSS' | 'PENDING';
     isVirtual?: boolean;
+    stepIdx?: number;       // playlist step index (0-based) — undefined for non-playlist modes
+    stepLabel?: string;     // e.g. "Step 1"
 }
 
 interface AuditLog {
@@ -346,6 +350,7 @@ export default function AutoTradePage() {
 
     // ── Logs ───────────────────────────────────────────────────────────────
     const [tradeLog,  setTradeLog]  = useState<AutoLXTradeRecord[]>([]);
+    const [tradeLogStepFilter, setTradeLogStepFilter] = useState<'all' | number>('all');
     const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
     // ── Refs ───────────────────────────────────────────────────────────────
@@ -700,8 +705,13 @@ export default function AutoTradePage() {
             if (s.capitalPct)          setCapitalPct(s.capitalPct);
             // Autonomous Trade Playlist settings — restore all custom steps and delays on reload
             if (s.playlistSteps && Array.isArray(s.playlistSteps) && s.playlistSteps.length > 0) {
-                setPlaylistSteps(s.playlistSteps);
+                const cleaned = s.playlistSteps.map((step: PlaylistTradeStep) => ({
+                    ...step,
+                    label: step.label ? step.label.replace(/\s*\(\s*copy\s*\)/gi, '').trim() : step.label,
+                }));
+                setPlaylistSteps(cleaned);
             }
+
             if (s.playlistLoop !== undefined) setPlaylistLoop(s.playlistLoop);
             if (s.stepCapitalLossGuard !== undefined) setStepCapitalLossGuard(s.stepCapitalLossGuard);
         } catch (e) {
@@ -1081,43 +1091,133 @@ export default function AutoTradePage() {
     }, [takeProfit, stopLoss, startPlaylistCountdown, addAuditLog, baseStake, isCapitalCompound, isCompounding, capitalPct, compoundPct, account?.balance]);
 
     // ── Playlist Step Management Helpers ────────────────────────────────────
+    // ── Step label auto-renumbering helper ──────────────────────────────────
+    // Call after any mutation that changes step order/count.
+    // Re-assigns "Step N (…)" labels while preserving duplicateOfStep markers.
+    // Dynamically recalculates duplicateOfStep when origin steps move or shift positions.
+    const reorderStepLabels = (steps: PlaylistTradeStep[]): PlaylistTradeStep[] =>
+        steps.map((s, i) => {
+            const num = i + 1;
+            const delayPart = s.delayMinutes > 0 ? `+${s.delayMinutes}m delay` : 'Immediate';
+            // Strip any legacy "(Copy)" from step labels — duplicate status is indicated solely by the orange D{N} badge
+            const cleanLabel = (s.label || '').replace(/\s*\(\s*copy\s*\)/gi, '').trim();
+            let newLabel = `Step ${num} (${delayPart})`;
+            if (cleanLabel && !cleanLabel.match(/^Step\s+\d+(\s*\(.*\))?$/i)) {
+                // User had a custom suffix or title e.g. "Step 3 - Scalp"
+                if (cleanLabel.match(/^Step\s+\d+\s*[-:]\s*(.+)$/i)) {
+                    const customPart = cleanLabel.replace(/^Step\s+\d+\s*[-:]\s*/i, '');
+                    newLabel = `Step ${num}: ${customPart}`;
+                } else {
+                    newLabel = cleanLabel;
+                }
+            }
+            // Update duplicateOfStep if the original step still exists in the playlist
+            let currentDupNum = s.duplicateOfStep;
+            if (s.duplicateOfStepId) {
+                const originIdx = steps.findIndex(x => x.id === s.duplicateOfStepId);
+                if (originIdx !== -1) {
+                    currentDupNum = originIdx + 1;
+                }
+            }
+            return {
+                ...s,
+                label: newLabel,
+                duplicateOfStep: currentDupNum,
+            };
+        });
+
     const addPlaylistStep = (delayMinutes: number = 5, source: 'laxprime' | 'laxsniper-xv' = 'laxprime') => {
-        const newStep: PlaylistTradeStep = {
-            id: uid(),
-            delayMinutes,
-            source,
-            label: `Step ${playlistSteps.length + 1} (+${delayMinutes}m delay)`,
-        };
-        setPlaylistSteps(prev => [...prev, newStep]);
+        setPlaylistSteps(prev => {
+            const nextNum = prev.length + 1;
+            const delayPart = delayMinutes > 0 ? `+${delayMinutes}m delay` : 'Immediate';
+            const newStep: PlaylistTradeStep = {
+                id: uid(),
+                delayMinutes,
+                source,
+                label: `Step ${nextNum} (${delayPart})`,
+            };
+            return [...prev, newStep];
+        });
     };
 
     const duplicatePlaylistStep = (id: string) => {
         setPlaylistSteps(prev => {
-            const idx = prev.findIndex(s => s.id === id);
-            if (idx === -1) return prev;
-            const original = prev[idx];
+            const srcIdx = prev.findIndex(s => s.id === id);
+            if (srcIdx === -1) return prev;
+            const original = prev[srcIdx];
+            const srcStepNum = original.duplicateOfStep ?? (srcIdx + 1); // 1-based step number of origin
+            const nextNum = prev.length + 1; // duplicate goes to the end
+            const delayPart = original.delayMinutes > 0 ? `+${original.delayMinutes}m delay` : 'Immediate';
+
+            // Clean original label of any legacy "(Copy)"
+            let cleanCustomPart = '';
+            if (original.label) {
+                const stripped = original.label.replace(/\s*\(\s*copy\s*\)/gi, '').trim();
+                if (stripped.match(/^Step\s+\d+\s*[-:]\s*(.+)$/i)) {
+                    cleanCustomPart = stripped.replace(/^Step\s+\d+\s*[-:]\s*/i, '');
+                }
+            }
+
+            const newLabel = cleanCustomPart
+                ? `Step ${nextNum}: ${cleanCustomPart}`
+                : `Step ${nextNum} (${delayPart})`;
+
             const clone: PlaylistTradeStep = {
                 ...original,
                 id: uid(),
-                label: `${original.label || `Step ${idx + 1}`} (Copy)`,
+                label: newLabel,
+                duplicateOfStep: srcStepNum,
+                duplicateOfStepId: original.duplicateOfStepId || original.id,
                 laxprimeConfig: original.laxprimeConfig ? JSON.parse(JSON.stringify(original.laxprimeConfig)) : undefined,
             };
-            const updated = [...prev];
-            updated.splice(idx + 1, 0, clone);
-            return updated;
+            return [...prev, clone];
         });
     };
+
+
 
     const deletePlaylistStep = (id: string) => {
         setPlaylistSteps(prev => {
             if (prev.length <= 1) return prev;
-            return prev.filter(s => s.id !== id);
+            const filtered = prev.filter(s => s.id !== id);
+            return reorderStepLabels(filtered);
         });
     };
 
     const updatePlaylistStep = (id: string, patch: Partial<PlaylistTradeStep>) => {
-        setPlaylistSteps(prev => prev.map(s => s.id === id ? { ...s, ...patch } : s));
+        setPlaylistSteps(prev => prev.map(s => {
+            if (s.id !== id) return s;
+
+            // If the user adds or changes any settings/overrides on this step,
+            // it is no longer an exact duplicate: clear duplicateOfStep and duplicateOfStepId
+            // so the orange D{N} duplicate badge automatically disappears.
+            const hasSettingChange = (
+                patch.source !== undefined ||
+                patch.delayMinutes !== undefined ||
+                patch.marketOverride !== undefined ||
+                patch.contractOverride !== undefined ||
+                patch.digitOverride !== undefined ||
+                patch.laxprimeConfig !== undefined ||
+                (patch.label !== undefined && patch.label !== s.label)
+            );
+
+            let nextLabel = patch.label !== undefined ? patch.label : s.label;
+            // If delayMinutes was updated and label is an auto-generated label, keep the delay text in sync
+            if (patch.delayMinutes !== undefined && nextLabel && nextLabel.match(/^Step\s+\d+\s*\(/i)) {
+                const nextDelayPart = patch.delayMinutes > 0 ? `+${patch.delayMinutes}m delay` : 'Immediate';
+                nextLabel = nextLabel.replace(/\(.*\)/, `(${nextDelayPart})`);
+            }
+
+            return {
+                ...s,
+                ...patch,
+                label: nextLabel,
+                duplicateOfStep: hasSettingChange ? undefined : s.duplicateOfStep,
+                duplicateOfStepId: hasSettingChange ? undefined : s.duplicateOfStepId,
+            };
+        }));
     };
+
 
     const movePlaylistStep = (idx: number, dir: -1 | 1) => {
         setPlaylistSteps(prev => {
@@ -1127,7 +1227,8 @@ export default function AutoTradePage() {
             const temp = copy[idx];
             copy[idx] = copy[targetIdx];
             copy[targetIdx] = temp;
-            return copy;
+            // Swap numbers — keep duplicate badges accurate to current positions
+            return reorderStepLabels(copy);
         });
     };
 
@@ -1275,11 +1376,16 @@ export default function AutoTradePage() {
             profit:       isVirtual ? profit : profit,
             result:       isWon ? 'WIN' : 'LOSS',
             isVirtual,
+            stepIdx:      selectedPreset === 'trade_playlist' ? playlistCurrentStepIdxRef.current : undefined,
+            stepLabel:    selectedPreset === 'trade_playlist'
+                ? (playlistStepsRef.current[playlistCurrentStepIdxRef.current]?.label || `Step ${playlistCurrentStepIdxRef.current + 1}`)
+                : undefined,
         };
         setTradeLog(prev => {
             if (prev.some(r => String(r.id) === String(record.id))) return prev;
-            return [record, ...prev].slice(0, 200);
+            return [record, ...prev]; // No cap — user can scroll all trades
         });
+
         addAuditLog(
             `${isVirtual ? '[VIRTUAL] ' : ''}[${cType}] ${isWon ? '✓ WIN' : '✗ LOSS'} | Exit: ${exitDigit ?? '?'} | P/L: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}`,
             isWon ? 'success' : 'error'
@@ -1630,12 +1736,17 @@ export default function AutoTradePage() {
             profit,
             result:       isWon ? 'WIN' : 'LOSS',
             isVirtual:    false,
+            stepIdx:      selectedPreset === 'trade_playlist' ? playlistCurrentStepIdxRef.current : undefined,
+            stepLabel:    selectedPreset === 'trade_playlist'
+                ? (playlistStepsRef.current[playlistCurrentStepIdxRef.current]?.label || `Step ${playlistCurrentStepIdxRef.current + 1}`)
+                : undefined,
         };
 
         setTradeLog(prev => {
             if (prev.some(r => String(r.id) === String(record.id))) return prev;
-            return [record, ...prev].slice(0, 200);
+            return [record, ...prev]; // No cap — user can scroll all trades
         });
+
 
         addAuditLog(
             `[${mktLabel}] [${latest.contract || 'TRADE'}] ${isWon ? '✓ WIN' : '✗ LOSS'} | Exit: ${latest.exitSpot ?? '?'} | P/L: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}`,
@@ -2916,8 +3027,17 @@ export default function AutoTradePage() {
                                                             {/* Step Title, Source Pill, Delay Pill, Badges */}
                                                             <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
                                                                 <span className="text-xs font-bold text-white truncate max-w-[130px] sm:max-w-[200px]">
-                                                                    {step.label || `Step ${idx + 1} (${step.delayMinutes > 0 ? `+${step.delayMinutes}m` : 'Immediate'})`}
+                                                                    {(step.label ? step.label.replace(/\s*\(\s*copy\s*\)/gi, '').trim() : '') || `Step ${idx + 1} (${step.delayMinutes > 0 ? `+${step.delayMinutes}m` : 'Immediate'})`}
                                                                 </span>
+                                                                {/* Orange duplicate-origin badge e.g. "D3" = duplicated from Step 3 */}
+                                                                {step.duplicateOfStep != null && (
+                                                                    <span
+                                                                        className="px-1 py-0.5 rounded bg-orange-500/20 border border-orange-500/40 text-[8px] font-black text-orange-400 shrink-0 leading-none"
+                                                                        title={`Duplicated from Step ${step.duplicateOfStep}`}
+                                                                    >
+                                                                        D{step.duplicateOfStep}
+                                                                    </span>
+                                                                )}
                                                                 <span className="px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/25 text-[9px] font-bold text-indigo-300 uppercase shrink-0">
                                                                     {step.source === 'laxprime' ? 'LaxPrime' : 'LaxSniper XV'}
                                                                 </span>
@@ -2933,6 +3053,7 @@ export default function AutoTradePage() {
                                                                         {step.marketOverride}
                                                                     </span>
                                                                 )}
+
                                                                 {/* Glowing Active Badge */}
                                                                 {isActive && (
                                                                     <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-[9px] font-black text-emerald-400 flex items-center gap-1 animate-pulse shrink-0">
@@ -4325,7 +4446,7 @@ export default function AutoTradePage() {
                     )}
 
                     {/* Log Tabs */}
-                    <div className="bg-white/2 rounded-2xl border border-white/8 overflow-hidden flex flex-col" style={{ minHeight: '440px' }}>
+                    <div className="bg-white/2 rounded-2xl border border-white/8 overflow-hidden flex flex-col" style={{ minHeight: '440px', maxHeight: '640px' }}>
                         <div className="flex items-center border-b border-white/5 shrink-0">
                             {/* Tab buttons */}
                             <div className="flex flex-1">
@@ -4353,6 +4474,7 @@ export default function AutoTradePage() {
                                     setPatternMatchIdx(0); setPatternSlotIdx(0);
                                     // Clear logs
                                     setTradeLog([]); setAuditLogs([]);
+                                    setTradeLogStepFilter('all');
                                     lastIdRef.current = null;
                                 }}
                                 title="Reset session — clears stats & logs, keeps all settings"
@@ -4361,6 +4483,54 @@ export default function AutoTradePage() {
                                 Reset
                             </button>
                         </div>
+
+                        {/* Step Filter Bar for Autonomous Trade Playlist mode */}
+                        {activeLogTab === 'trades' && selectedPreset === 'trade_playlist' && tradeLog.length > 0 && (
+                            <div className="px-3 py-2 border-b border-white/5 bg-black/20 flex items-center gap-1.5 overflow-x-auto scrollbar-none shrink-0">
+                                <span className="text-[9px] font-bold text-gray-500 uppercase tracking-wider shrink-0 mr-1">Steps:</span>
+                                <button
+                                    type="button"
+                                    onClick={() => setTradeLogStepFilter('all')}
+                                    className={`px-2 py-0.5 rounded-full text-[9px] font-bold transition-all shrink-0 cursor-pointer ${
+                                        tradeLogStepFilter === 'all'
+                                            ? 'bg-teal-500/20 text-teal-300 border border-teal-500/30'
+                                            : 'bg-white/5 text-gray-400 hover:text-white border border-white/8'
+                                    }`}
+                                >
+                                    ALL ({tradeLog.length})
+                                </button>
+                                {(() => {
+                                    // Distinct step indices in recorded trades
+                                    const recordedStepIndices = Array.from(
+                                        new Set(tradeLog.map(t => t.stepIdx).filter((idx): idx is number => idx != null))
+                                    ).sort((a, b) => a - b);
+
+                                    return recordedStepIndices.map(sIdx => {
+                                        const stepTrades = tradeLog.filter(t => t.stepIdx === sIdx);
+                                        const stepProf = stepTrades.reduce((acc, t) => acc + (t.profit || 0), 0);
+                                        const isSelected = tradeLogStepFilter === sIdx;
+                                        return (
+                                            <button
+                                                key={sIdx}
+                                                type="button"
+                                                onClick={() => setTradeLogStepFilter(isSelected ? 'all' : sIdx)}
+                                                className={`px-2 py-0.5 rounded-full text-[9px] font-bold transition-all shrink-0 flex items-center gap-1 cursor-pointer ${
+                                                    isSelected
+                                                        ? 'bg-indigo-500/25 text-indigo-300 border border-indigo-500/40'
+                                                        : 'bg-white/5 text-gray-400 hover:text-white border border-white/8'
+                                                }`}
+                                            >
+                                                <span className="font-mono text-white">S{sIdx + 1}</span>
+                                                <span className="text-[8px] opacity-75 font-mono">({stepTrades.length})</span>
+                                                <span className={`font-mono text-[8px] ${stepProf >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                    {stepProf >= 0 ? '+' : ''}${stepProf.toFixed(2)}
+                                                </span>
+                                            </button>
+                                        );
+                                    });
+                                })()}
+                            </div>
+                        )}
 
                         <div className="flex-1 overflow-y-auto">
                             {/* ── Trade Log ── */}
@@ -4374,54 +4544,139 @@ export default function AutoTradePage() {
                                     <table className="w-full text-[10px]">
                                         <thead className="sticky top-0 bg-[#0d0d14]/95 backdrop-blur-sm z-10">
                                             <tr className="border-b border-white/5">
+                                                {/* Step column only shown for playlist mode */}
+                                                {selectedPreset === 'trade_playlist' && (
+                                                    <th className="px-2 py-2.5 text-[9px] font-black uppercase tracking-widest text-gray-600 text-left">Step</th>
+                                                )}
                                                 {['Time', 'Market', 'Type', 'Exit', 'P/L'].map(h => (
                                                     <th key={h} className="px-3 py-2.5 text-[9px] font-black uppercase tracking-widest text-gray-600 text-left first:text-left last:text-right">{h}</th>
                                                 ))}
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-white/3">
-                                            {tradeLog.map(trade => (
-                                                <tr key={trade.id} className={`transition-colors ${
-                                                    trade.isVirtual
-                                                        ? 'hover:bg-indigo-500/5 border-l-2 border-l-indigo-500/30'
-                                                        : 'hover:bg-white/2'
-                                                }`}>
-                                                    <td className="px-3 py-2.5 font-mono text-gray-500">
-                                                        {trade.time}
-                                                        {trade.isVirtual && (
-                                                            <span className="ml-1.5 text-[8px] font-black uppercase tracking-widest px-1 py-0.5 rounded bg-indigo-500/15 text-indigo-400 border border-indigo-500/20">SIM</span>
-                                                        )}
-                                                    </td>
-                                                    <td className="px-3 py-2.5">
-                                                        <div className="font-bold text-white truncate max-w-[80px]">
-                                                            {TARGET_MARKETS.find(m => m.value === trade.market)?.label.replace(' Index', '') || trade.market}
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-3 py-2.5 text-gray-400 font-mono">{trade.contractType}</td>
-                                                    <td className="px-3 py-2.5">
-                                                        <span className={`w-6 h-6 inline-flex items-center justify-center rounded-lg font-black text-xs ${
-                                                            trade.result === 'WIN'  ? 'bg-teal-500/20 text-teal-400' :
-                                                            trade.result === 'LOSS' ? 'bg-rose-500/20 text-rose-400' :
-                                                            'bg-white/5 text-gray-400'
-                                                        }`}>
-                                                            {trade.exitDigit ?? '?'}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-3 py-2.5 text-right">
-                                                        <span className={`font-black font-mono ${
-                                                            trade.isVirtual
-                                                                ? 'text-indigo-400 opacity-70'
-                                                                : trade.profit >= 0 ? 'text-teal-400' : 'text-rose-400'
-                                                        }`}>
-                                                            {trade.isVirtual ? '~' : ''}{trade.profit >= 0 ? '+' : ''}${trade.profit.toFixed(2)}
-                                                        </span>
-                                                    </td>
-                                                </tr>
-                                            ))}
+                                            {(() => {
+                                                const displayTrades = tradeLogStepFilter === 'all'
+                                                    ? tradeLog
+                                                    : tradeLog.filter(t => t.stepIdx === tradeLogStepFilter);
+
+                                                if (displayTrades.length === 0) {
+                                                    return (
+                                                        <tr>
+                                                            <td colSpan={6} className="px-3 py-8 text-center text-gray-500 text-xs">
+                                                                No trades recorded for Step {Number(tradeLogStepFilter) + 1}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                }
+
+                                                // Build rows with step-boundary dividers for playlist mode
+                                                const rows: React.ReactNode[] = [];
+                                                // Step color palette — cycles through a set of distinct accent colors
+                                                const STEP_COLORS = [
+                                                    { bg: 'bg-emerald-500/15', border: 'border-emerald-500/30', text: 'text-emerald-400', bar: 'border-l-emerald-500/50' },
+                                                    { bg: 'bg-cyan-500/15',    border: 'border-cyan-500/30',    text: 'text-cyan-400',    bar: 'border-l-cyan-500/50'    },
+                                                    { bg: 'bg-violet-500/15',  border: 'border-violet-500/30',  text: 'text-violet-400',  bar: 'border-l-violet-500/50'  },
+                                                    { bg: 'bg-amber-500/15',   border: 'border-amber-500/30',   text: 'text-amber-400',   bar: 'border-l-amber-500/50'   },
+                                                    { bg: 'bg-pink-500/15',    border: 'border-pink-500/30',    text: 'text-pink-400',    bar: 'border-l-pink-500/50'    },
+                                                    { bg: 'bg-teal-500/15',    border: 'border-teal-500/30',    text: 'text-teal-400',    bar: 'border-l-teal-500/50'    },
+                                                    { bg: 'bg-orange-500/15',  border: 'border-orange-500/30',  text: 'text-orange-400',  bar: 'border-l-orange-500/50'  },
+                                                    { bg: 'bg-indigo-500/15',  border: 'border-indigo-500/30',  text: 'text-indigo-400',  bar: 'border-l-indigo-500/50'  },
+                                                ];
+                                                let prevStepIdx: number | undefined = undefined;
+
+                                                displayTrades.forEach((trade, i) => {
+                                                    const isPlaylist = selectedPreset === 'trade_playlist';
+                                                    const sIdx = trade.stepIdx;
+                                                    const col = sIdx != null ? STEP_COLORS[sIdx % STEP_COLORS.length] : null;
+                                                    const shortLabel = trade.stepLabel
+                                                        ? trade.stepLabel.replace(/\s*\(\s*copy\s*\)/gi, '').replace(/\s*\(.*\)/, '').trim() // Strip "(Immediate)" / "(+Xm delay)"
+                                                        : sIdx != null ? `Step ${sIdx + 1}` : null;
+
+                                                    // Inject a step-boundary divider row when the step changes (only when viewing ALL steps)
+                                                    if (isPlaylist && tradeLogStepFilter === 'all' && sIdx != null && sIdx !== prevStepIdx && i > 0) {
+                                                        rows.push(
+                                                            <tr key={`divider-${i}`} className="border-t-2 border-white/10">
+                                                                <td colSpan={6} className="px-3 py-1.5">
+                                                                    <div className={`flex items-center gap-1.5 ${col?.text ?? 'text-gray-400'}`}>
+                                                                        <div className={`h-px flex-1 ${col?.bg ?? 'bg-white/5'}`} />
+                                                                        <span className="text-[8px] font-black uppercase tracking-widest opacity-80">
+                                                                            ↑ {prevStepIdx != null ? `Step ${prevStepIdx + 1}` : ''} &nbsp;|&nbsp; {shortLabel || `Step ${(sIdx ?? 0) + 1}`} ↓
+                                                                        </span>
+                                                                        <div className={`h-px flex-1 ${col?.bg ?? 'bg-white/5'}`} />
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    }
+                                                    prevStepIdx = sIdx;
+
+                                                    rows.push(
+                                                        <tr
+                                                            key={trade.id}
+                                                            className={`transition-colors border-l-2 ${
+                                                                trade.isVirtual
+                                                                    ? 'hover:bg-indigo-500/5 border-l-indigo-500/30'
+                                                                    : isPlaylist && col
+                                                                    ? `hover:bg-white/2 ${col.bar}`
+                                                                    : 'hover:bg-white/2 border-l-transparent'
+                                                            }`}
+                                                        >
+                                                            {/* Step badge column — playlist mode only */}
+                                                            {isPlaylist && (
+                                                                <td className="px-2 py-2">
+                                                                    {shortLabel && col ? (
+                                                                        <span
+                                                                            className={`inline-flex items-center px-1.5 py-0.5 rounded ${col.bg} border ${col.border} ${col.text} text-[8px] font-black whitespace-nowrap`}
+                                                                            title={trade.stepLabel?.replace(/\s*\(\s*copy\s*\)/gi, '').trim()}
+                                                                        >
+                                                                            S{(sIdx ?? 0) + 1}
+                                                                        </span>
+                                                                    ) : (
+                                                                        <span className="text-gray-700 text-[9px]">—</span>
+                                                                    )}
+                                                                </td>
+                                                            )}
+                                                            <td className="px-3 py-2.5 font-mono text-gray-500">
+                                                                {trade.time}
+                                                                {trade.isVirtual && (
+                                                                    <span className="ml-1.5 text-[8px] font-black uppercase tracking-widest px-1 py-0.5 rounded bg-indigo-500/15 text-indigo-400 border border-indigo-500/20">SIM</span>
+                                                                )}
+                                                            </td>
+                                                            <td className="px-3 py-2.5">
+                                                                <div className="font-bold text-white truncate max-w-[80px]">
+                                                                    {TARGET_MARKETS.find(m => m.value === trade.market)?.label.replace(' Index', '') || trade.market}
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-3 py-2.5 text-gray-400 font-mono">{trade.contractType}</td>
+                                                            <td className="px-3 py-2.5">
+                                                                <span className={`w-6 h-6 inline-flex items-center justify-center rounded-lg font-black text-xs ${
+                                                                    trade.result === 'WIN'  ? 'bg-teal-500/20 text-teal-400' :
+                                                                    trade.result === 'LOSS' ? 'bg-rose-500/20 text-rose-400' :
+                                                                    'bg-white/5 text-gray-400'
+                                                                }`}>
+                                                                    {trade.exitDigit ?? '?'}
+                                                                </span>
+                                                            </td>
+                                                            <td className="px-3 py-2.5 text-right">
+                                                                <span className={`font-black font-mono ${
+                                                                    trade.isVirtual
+                                                                        ? 'text-indigo-400 opacity-70'
+                                                                        : trade.profit >= 0 ? 'text-teal-400' : 'text-rose-400'
+                                                                }`}>
+                                                                    {trade.isVirtual ? '~' : ''}{trade.profit >= 0 ? '+' : ''}${trade.profit.toFixed(2)}
+                                                                </span>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                });
+                                                return rows;
+                                            })()}
                                         </tbody>
                                     </table>
                                 )
                             )}
+
+
 
                             {/* ── Audit Log ── */}
                             {activeLogTab === 'audit' && (
