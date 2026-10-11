@@ -20,6 +20,7 @@ import { useBotStore } from '@/store/useBotStore';
 import { ticksToDecimals } from '@/lib/deriv/constants';
 import { tradeEngine } from '@/lib/deriv/trade-engine';
 import { tradeWS } from '@/lib/deriv/trade-ws';
+import { MiniLaxPrimeModal, LaxPrimeStepConfig } from '@/components/MiniLaxPrimeModal';
 
 // ── Snapshot field lists (mirrors usePageSettings.ts) ──────────────────────
 // Used by LaxPrime/Sniper Sync preset to read saved-settings snapshots.
@@ -48,6 +49,7 @@ export interface PlaylistTradeStep {
     marketOverride?: string;        // Optional override (e.g. 'R_100', '1HZ100V', etc.)
     contractOverride?: ContractTypeKey | ''; // Optional override
     digitOverride?: number | null;  // Optional prediction override (0-9)
+    laxprimeConfig?: LaxPrimeStepConfig; // Dedicated LaxPrime settings snapshot per step
 }
 
 type ContractTypeKey =
@@ -358,6 +360,7 @@ export default function AutoTradePage() {
     const [playlistCountdownSecs,  setPlaylistCountdownSecs]  = useState<number>(0);
     const [playlistStepResults,    setPlaylistStepResults]    = useState<Record<string, { result: 'WIN' | 'LOSS'; profit: number; stake: number; exitSpot?: string; time: string }>>({});
     const [expandedStepId,         setExpandedStepId]         = useState<string | null>(null);
+    const [editingStepForLaxPrime, setEditingStepForLaxPrime] = useState<{ step: PlaylistTradeStep; index: number } | null>(null);
 
     const playlistStepsRef          = useRef<PlaylistTradeStep[]>(playlistSteps);
     const playlistLoopRef           = useRef<boolean>(playlistLoop);
@@ -785,20 +788,42 @@ export default function AutoTradePage() {
 
         if (step.source === 'laxprime') {
             try {
-                // Read live LaxPrime store state (contains all strategies, multi-entry boxes, custom contracts, and selected markets)
                 const currentBotState = useBotStore.getState();
+                const stepConfig = step.laxprimeConfig;
+
                 const patch: any = {
-                    stake: stakeStr,
+                    stake: stakeStr, // Compounded stake from AutoTrade capital %
                     targetProfit: takeProfit,
                     stopLoss: stopLoss,
                 };
-                if (step.marketOverride) {
-                    patch.selectedMarkets = [step.marketOverride];
+
+                if (stepConfig && stepConfig.strategies && stepConfig.strategies.length > 0) {
+                    // Apply this step's dedicated snapshot
+                    patch.strategies = JSON.parse(JSON.stringify(stepConfig.strategies));
+                    patch.selectedMarkets = step.marketOverride
+                        ? [step.marketOverride]
+                        : (stepConfig.selectedMarkets && stepConfig.selectedMarkets.length > 0 ? [...stepConfig.selectedMarkets] : ['1HZ10V', '1HZ100V']);
+                    if (stepConfig.tradingMode) patch.tradingMode = stepConfig.tradingMode;
+                    if (stepConfig.crossMarketDelay) patch.crossMarketDelay = stepConfig.crossMarketDelay;
+                    if (stepConfig.martingale) patch.martingale = stepConfig.martingale;
+                    if (stepConfig.adaptiveSwitch) patch.adaptiveSwitch = JSON.parse(JSON.stringify(stepConfig.adaptiveSwitch));
+
+                    if (stepConfig.virtualSettings) {
+                        useDerivStore.getState().setVirtualSettings(stepConfig.virtualSettings as any);
+                    }
+                } else {
+                    // Fallback to global LaxPrime state with market override if set
+                    if (step.marketOverride) {
+                        patch.selectedMarkets = [step.marketOverride];
+                    }
                 }
+
                 useBotStore.setState(patch);
 
                 const activeMkts = patch.selectedMarkets || currentBotState.selectedMarkets || [];
-                addAuditLog(`🚀 [Step ${stepIdx + 1}/${currentSteps.length}] Starting LaxPrime | Stake: $${stakeStr} (${currentBotState.strategies?.length || 0} strategies on ${activeMkts.length} markets)`, 'info');
+                const activeStrats = patch.strategies || currentBotState.strategies || [];
+                const stratSummary = activeStrats.map((s: any) => s.tradeType).join(', ');
+                addAuditLog(`🚀 [Step ${stepIdx + 1}/${currentSteps.length}] Starting LaxPrime | Stake: $${stakeStr} (${activeStrats.length} strats: [${stratSummary}] on ${activeMkts.length} markets)`, 'info');
                 useBotStore.getState().startBot();
             } catch (err) {
                 addAuditLog(`❌ Error starting LaxPrime step: ${String(err)}`, 'error');
@@ -906,6 +931,7 @@ export default function AutoTradePage() {
                 ...original,
                 id: uid(),
                 label: `${original.label || `Step ${idx + 1}`} (Copy)`,
+                laxprimeConfig: original.laxprimeConfig ? JSON.parse(JSON.stringify(original.laxprimeConfig)) : undefined,
             };
             const updated = [...prev];
             updated.splice(idx + 1, 0, clone);
@@ -2518,6 +2544,33 @@ export default function AutoTradePage() {
                                                                     )}
                                                                 </div>
 
+                                                                {/* LaxPrime Step Configuration Summary */}
+                                                                {step.source === 'laxprime' && (
+                                                                    <div className="mt-1 flex items-center gap-1.5 flex-wrap text-[10px]">
+                                                                        {step.laxprimeConfig ? (
+                                                                            <>
+                                                                                <span className="px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 font-mono font-bold flex items-center gap-1">
+                                                                                    <Sparkles className="w-2.5 h-2.5 text-cyan-400" />
+                                                                                    {step.laxprimeConfig.strategies.length} Strat{step.laxprimeConfig.strategies.length !== 1 ? 's' : ''}:{' '}
+                                                                                    {step.laxprimeConfig.strategies.map(s => s.tradeType).join(', ')}
+                                                                                </span>
+                                                                                <span className="px-1.5 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 font-mono">
+                                                                                    {step.laxprimeConfig.selectedMarkets?.length || 2} Mkts
+                                                                                </span>
+                                                                                {step.laxprimeConfig.adaptiveSwitch?.enabled && (
+                                                                                    <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 font-bold">
+                                                                                        ⚡ Switcher
+                                                                                    </span>
+                                                                                )}
+                                                                            </>
+                                                                        ) : (
+                                                                            <span className="text-gray-500 italic text-[10px]">
+                                                                                (Global LaxPrime defaults · Click Setup LaxPrime to customize)
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+
                                                                 {/* Status Result Preview */}
                                                                 {stepResult && (
                                                                     <div className="flex items-center gap-2 mt-1 text-[10px]">
@@ -2537,7 +2590,24 @@ export default function AutoTradePage() {
                                                         </div>
 
                                                         {/* Step Actions */}
-                                                        <div className="flex items-center gap-1.5 self-end md:self-auto">
+                                                        <div className="flex items-center gap-1.5 self-end md:self-auto flex-wrap">
+                                                            {/* Mini LaxPrime Config Modal Trigger Button */}
+                                                            {step.source === 'laxprime' && (
+                                                                <button
+                                                                    onClick={() => setEditingStepForLaxPrime({ step, index: idx })}
+                                                                    disabled={isRunningAuto}
+                                                                    title="Open Mini LaxPrime Window to set dedicated strategies, conditions, trade patterns and markets"
+                                                                    className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-40 ${
+                                                                        step.laxprimeConfig
+                                                                            ? 'bg-gradient-to-r from-indigo-600/30 to-cyan-600/30 border border-indigo-500/50 text-cyan-200 hover:from-indigo-600/50 hover:to-cyan-600/50 shadow-indigo-500/10'
+                                                                            : 'bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/20'
+                                                                    }`}
+                                                                >
+                                                                    <Sliders className="w-3.5 h-3.5 text-cyan-400" />
+                                                                    <span>{step.laxprimeConfig ? 'Edit LaxPrime' : 'Setup LaxPrime'}</span>
+                                                                </button>
+                                                            )}
+
                                                             {/* Delay Input */}
                                                             <div className="flex items-center gap-1 bg-white/5 border border-white/8 rounded-xl px-2 py-1">
                                                                 <span className="text-[9px] font-bold text-gray-500 uppercase">Delay</span>
@@ -3694,6 +3764,26 @@ export default function AutoTradePage() {
                     </div>
                 </div>
             </div>
+            {/* ── Mini LaxPrime Modal for Independent Step Configuration ── */}
+            {editingStepForLaxPrime && (
+                <MiniLaxPrimeModal
+                    isOpen={!!editingStepForLaxPrime}
+                    onClose={() => setEditingStepForLaxPrime(null)}
+                    stepIndex={editingStepForLaxPrime.index}
+                    stepLabel={editingStepForLaxPrime.step.label || `Step ${editingStepForLaxPrime.index + 1}`}
+                    currentConfig={editingStepForLaxPrime.step.laxprimeConfig}
+                    onSave={(savedConfig) => {
+                        updatePlaylistStep(editingStepForLaxPrime.step.id, {
+                            laxprimeConfig: savedConfig,
+                        });
+                        addAuditLog(`💾 LaxPrime configuration saved for ${editingStepForLaxPrime.step.label || `Step ${editingStepForLaxPrime.index + 1}`}`, 'info');
+                    }}
+                    currentCompoundedStake={currentStake}
+                    capitalPct={capitalPct}
+                    isCapitalCompound={isCapitalCompound}
+                    isCompounding={isCompounding}
+                />
+            )}
         </div>
     );
 }
