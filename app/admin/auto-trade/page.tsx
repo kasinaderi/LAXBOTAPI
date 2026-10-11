@@ -368,11 +368,14 @@ export default function AutoTradePage() {
     const [playlistStepResults,    setPlaylistStepResults]    = useState<Record<string, { result: 'WIN' | 'LOSS'; profit: number; stake: number; exitSpot?: string; time: string }>>({});
     const [expandedStepId,         setExpandedStepId]         = useState<string | null>(null);
     const [editingStepForLaxPrime, setEditingStepForLaxPrime] = useState<{ step: PlaylistTradeStep; index: number } | null>(null);
+    const [stepCapitalLossGuard,   setStepCapitalLossGuard]   = useState<boolean>(true);
 
     const playlistStepsRef          = useRef<PlaylistTradeStep[]>(playlistSteps);
     const playlistLoopRef           = useRef<boolean>(playlistLoop);
     const playlistCurrentStepIdxRef = useRef<number>(0);
     const playlistStatusRef         = useRef<'idle' | 'countdown' | 'executing' | 'completed'>('idle');
+    const stepCapitalLossGuardRef   = useRef<boolean>(true);
+    const executePlaylistStepRef    = useRef<(stepIdx: number) => void>(() => {});
     const playlistCountdownTimerRef = useRef<NodeJS.Timeout | null>(null);
     const lastBotLogIdRef           = useRef<string | null>(null);
     const activeStepSourceRef       = useRef<'laxprime' | 'laxsniper-xv' | null>(null);
@@ -414,6 +417,7 @@ export default function AutoTradePage() {
     useEffect(() => { playlistStepsRef.current   = playlistSteps;    }, [playlistSteps]);
     useEffect(() => { playlistLoopRef.current    = playlistLoop;     }, [playlistLoop]);
     useEffect(() => { playlistStatusRef.current  = playlistStatus;   }, [playlistStatus]);
+    useEffect(() => { stepCapitalLossGuardRef.current = stepCapitalLossGuard; }, [stepCapitalLossGuard]);
 
     // React to virtual ↔ real mode switches triggered by the trade engine
     const prevVirtualModeRef = useRef(virtualSettings.isVirtualMode);
@@ -661,6 +665,7 @@ export default function AutoTradePage() {
                 setPlaylistSteps(s.playlistSteps);
             }
             if (s.playlistLoop !== undefined) setPlaylistLoop(s.playlistLoop);
+            if (s.stepCapitalLossGuard !== undefined) setStepCapitalLossGuard(s.stepCapitalLossGuard);
         } catch (e) {
             console.warn('AUTO-LX: failed to restore settings', e);
         }
@@ -681,7 +686,7 @@ export default function AutoTradePage() {
                 takeProfit, globalTPMode, stopLoss, globalSLMode,
                 maxWinsCap, maxTradesCap, maxTradesPerMarket, cycleInterval,
                 isCompounding, compoundPct, isCapitalCompound, capitalPct,
-                playlistSteps, playlistLoop,
+                playlistSteps, playlistLoop, stepCapitalLossGuard,
             }));
         } catch (e) { /* quota exceeded — ignore */ }
     }, [
@@ -695,7 +700,7 @@ export default function AutoTradePage() {
         takeProfit, globalTPMode, stopLoss, globalSLMode,
         maxWinsCap, maxTradesCap, maxTradesPerMarket, cycleInterval,
         isCompounding, compoundPct, isCapitalCompound, capitalPct,
-        playlistSteps, playlistLoop,
+        playlistSteps, playlistLoop, stepCapitalLossGuard,
     ]);
 
     // ── Uptime ─────────────────────────────────────────────────────────────
@@ -725,8 +730,8 @@ export default function AutoTradePage() {
     const calcStake = useCallback((): string => {
         const base = parseFloat(baseStake) || 0.50;
         if (isCapitalCompound) {
-            const bal = account?.balance || 0;
-            if (bal > 0) return Math.max(0.35, bal * (parseFloat(capitalPct) / 100)).toFixed(2);
+            const bal = useDerivStore.getState().account?.balance ?? (account?.balance || 0);
+            if (bal > 0) return Math.max(0.35, Number((bal * (parseFloat(capitalPct) / 100)).toFixed(2))).toFixed(2);
         }
         if (isCompounding && sessionProfRef.current > 0) {
             const comp = base + sessionProfRef.current * (parseFloat(compoundPct) / 100);
@@ -762,7 +767,7 @@ export default function AutoTradePage() {
                     playlistCountdownTimerRef.current = null;
                 }
                 setNextExecCd(null);
-                executePlaylistStep(targetStepIdx);
+                executePlaylistStepRef.current(targetStepIdx);
             } else {
                 setNextExecCd(formatCd(remaining));
             }
@@ -771,6 +776,10 @@ export default function AutoTradePage() {
 
     const executePlaylistStep = useCallback((stepIdx: number) => {
         if (!isRunningRef.current) return;
+        if (playlistStatusRef.current === 'executing' && activeStepSourceRef.current !== null && stepIdx !== playlistCurrentStepIdxRef.current) {
+            addAuditLog(`⚠️ Cannot start Step ${stepIdx + 1}: Previous Step ${playlistCurrentStepIdxRef.current + 1} is still active.`, 'warn');
+            return;
+        }
         const currentSteps = playlistStepsRef.current;
         if (!currentSteps || stepIdx >= currentSteps.length) return;
 
@@ -820,8 +829,11 @@ export default function AutoTradePage() {
         const base = parseFloat(baseStake) || 0.50;
         let nextStakeVal = base;
         if (isCapitalCompound) {
-            const bal = account?.balance || 0;
-            if (bal > 0) nextStakeVal = Math.max(0.35, bal * (parseFloat(capitalPct) / 100));
+            const liveBal = useDerivStore.getState().account?.balance ?? (account?.balance || 0);
+            if (liveBal > 0) {
+                const pct = parseFloat(capitalPct) || 1.0;
+                nextStakeVal = Math.max(0.35, Number((liveBal * (pct / 100)).toFixed(2)));
+            }
         } else if (isCompounding && curProfit > 0) {
             const comp = base + curProfit * (parseFloat(compoundPct) / 100);
             nextStakeVal = Math.max(base, comp);
@@ -926,6 +938,10 @@ export default function AutoTradePage() {
         }
     }, [account?.balance, baseStake, isCapitalCompound, isCompounding, capitalPct, compoundPct, takeProfit, stopLoss, addAuditLog]);
 
+    useEffect(() => {
+        executePlaylistStepRef.current = executePlaylistStep;
+    });
+
     const handlePlaylistTradeSettled = useCallback((profit: number, stakeVal: number, isWon: boolean, exitSpot: string | null, contractType: string) => {
         // Stop bot engines immediately
         useBotStore.getState().stopBot();
@@ -948,6 +964,17 @@ export default function AutoTradePage() {
                 time: new Date().toLocaleTimeString([], { hour12: false })
             }
         }));
+
+        // 50% Total Capital Loss Guard Check
+        if (stepCapitalLossGuardRef.current) {
+            const liveCap = useDerivStore.getState().account?.balance ?? (account?.balance || 0);
+            if (profit < 0 && liveCap > 0 && Math.abs(profit) >= (liveCap * 0.5)) {
+                addAuditLog(`🛑 EMERGENCY 50% CAPITAL GUARD: Step ${currentIdx + 1} loss of -$${Math.abs(profit).toFixed(2)} exceeded 50% of total capital ($${(liveCap * 0.5).toFixed(2)})! Halting entire bot session globally.`, 'error');
+                setPlaylistStatus('completed');
+                handleStop();
+                return;
+            }
+        }
 
         // Check global take profit & stop loss limits across all steps
         const curProfit = sessionProfRef.current;
@@ -977,6 +1004,21 @@ export default function AutoTradePage() {
             return;
         }
 
+        // Immediately update preview stake for the upcoming step using fresh balance
+        const base = parseFloat(baseStake) || 0.50;
+        let previewStake = base;
+        if (isCapitalCompound) {
+            const liveBal = useDerivStore.getState().account?.balance ?? (account?.balance || 0);
+            if (liveBal > 0) {
+                const pct = parseFloat(capitalPct) || 1.0;
+                previewStake = Math.max(0.35, Number((liveBal * (pct / 100)).toFixed(2)));
+            }
+        } else if (isCompounding && sessionProfRef.current > 0) {
+            const comp = base + sessionProfRef.current * (parseFloat(compoundPct) / 100);
+            previewStake = Math.max(base, comp);
+        }
+        setCurrentStake(previewStake.toFixed(2));
+
         // Determine next step
         const nextIdx = currentIdx + 1;
         if (nextIdx < currentSteps.length) {
@@ -998,7 +1040,7 @@ export default function AutoTradePage() {
             addAuditLog(`🏁 All ${currentSteps.length} Playlist steps successfully executed. Session finished.`, 'success');
             handleStop();
         }
-    }, [takeProfit, stopLoss, startPlaylistCountdown, addAuditLog]);
+    }, [takeProfit, stopLoss, startPlaylistCountdown, addAuditLog, baseStake, isCapitalCompound, isCompounding, capitalPct, compoundPct, account?.balance]);
 
     // ── Playlist Step Management Helpers ────────────────────────────────────
     const addPlaylistStep = (delayMinutes: number = 5, source: 'laxprime' | 'laxsniper-xv' = 'laxprime') => {
@@ -1198,7 +1240,7 @@ export default function AutoTradePage() {
         };
         setTradeLog(prev => {
             if (prev.some(r => String(r.id) === String(record.id))) return prev;
-            return [record, ...prev].slice(0, 300);
+            return [record, ...prev].slice(0, 200);
         });
         addAuditLog(
             `${isVirtual ? '[VIRTUAL] ' : ''}[${cType}] ${isWon ? '✓ WIN' : '✗ LOSS'} | Exit: ${exitDigit ?? '?'} | P/L: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}`,
@@ -1208,6 +1250,15 @@ export default function AutoTradePage() {
         // ── Autonomous Trade Playlist mode settlement (LaxSniper XV) ─────
         if (selectedPreset === 'trade_playlist') {
             if (activeStepSourceRef.current === 'laxsniper-xv' && playlistStatusRef.current === 'executing' && !isVirtual) {
+                if (stepCapitalLossGuardRef.current) {
+                    const liveCap = useDerivStore.getState().account?.balance ?? (account?.balance || 0);
+                    if (profit < 0 && liveCap > 0 && Math.abs(profit) >= (liveCap * 0.5)) {
+                        addAuditLog(`🛑 EMERGENCY 50% CAPITAL GUARD: Step ${playlistCurrentStepIdxRef.current + 1} loss of -$${Math.abs(profit).toFixed(2)} exceeded 50% of total capital ($${(liveCap * 0.5).toFixed(2)})! Halting entire bot session globally.`, 'error');
+                        setPlaylistStatus('completed');
+                        handleStop();
+                        return;
+                    }
+                }
                 handlePlaylistTradeSettled(profit, stakeVal, isWon, exitDigit !== null ? String(exitDigit) : null, cType);
             }
             return; // In playlist preset, playlist manager handles sequence transitions
@@ -1515,8 +1566,8 @@ export default function AutoTradePage() {
         const base = parseFloat(baseStake) || 0.50;
         let nextStakeVal = base;
         if (isCapitalCompound) {
-            const bal = account?.balance || 0;
-            if (bal > 0) nextStakeVal = Math.max(0.35, bal * (parseFloat(capitalPct) / 100));
+            const bal = useDerivStore.getState().account?.balance ?? (account?.balance || 0);
+            if (bal > 0) nextStakeVal = Math.max(0.35, Number((bal * (parseFloat(capitalPct) / 100)).toFixed(2)));
         } else if (isCompounding && nextProfit > 0) {
             const comp = base + nextProfit * (parseFloat(compoundPct) / 100);
             nextStakeVal = Math.max(base, comp);
@@ -1545,7 +1596,7 @@ export default function AutoTradePage() {
 
         setTradeLog(prev => {
             if (prev.some(r => String(r.id) === String(record.id))) return prev;
-            return [record, ...prev].slice(0, 300);
+            return [record, ...prev].slice(0, 200);
         });
 
         addAuditLog(
@@ -1592,6 +1643,16 @@ export default function AutoTradePage() {
 
                 activeStep.stepProfit += profit;
                 if (isWon) activeStep.stepWins++; else activeStep.stepLosses++;
+
+                if (stepCapitalLossGuardRef.current && activeStep) {
+                    const liveCap = useDerivStore.getState().account?.balance ?? (account?.balance || 0);
+                    if (liveCap > 0 && activeStep.stepProfit <= - (liveCap * 0.5)) {
+                        addAuditLog(`🛑 EMERGENCY 50% CAPITAL GUARD: Step ${activeStep.stepIdx + 1} cumulative loss (-$${Math.abs(activeStep.stepProfit).toFixed(2)}) exceeded 50% of total capital ($${(liveCap * 0.5).toFixed(2)})! Emergency halt.`, 'error');
+                        setPlaylistStatus('completed');
+                        handleStop();
+                        return;
+                    }
+                }
 
                 // Inner Compounding: calculate next stake inside this step
                 if (activeStep.compoundProfits && isWon && activeStep.stepProfit > 0) {
@@ -1718,17 +1779,44 @@ export default function AutoTradePage() {
                 addAuditLog('Watchdog: Connection lost. Awaiting recovery…', 'warn');
                 return;
             }
-            const tp = parseFloat(takeProfit), sl = parseFloat(stopLoss);
-            const curPL = sessionProfRef.current;
-            if (curPL >= tp)                          { addAuditLog(`TP Hit! +$${curPL.toFixed(2)}`, 'success');  handleStop(); return; }
-            if (curPL <= -sl)                         { addAuditLog(`SL Hit! -$${Math.abs(curPL).toFixed(2)}`, 'error');     handleStop(); return; }
+
+            const curProfit = sessionProfRef.current;
+            const curWins = sessionWinsRef.current;
+            const curLosses = sessionLossesRef.current;
+
+            const reachedGlobalTP = globalTPModeRef.current === 'wins'
+                ? (Number(takeProfit) > 0 && curWins >= Number(takeProfit))
+                : (Number(takeProfit) > 0 && curProfit >= Number(takeProfit));
+
+            const reachedGlobalSL = globalSLModeRef.current === 'losses'
+                ? (Number(stopLoss) > 0 && curLosses >= Number(stopLoss))
+                : (Number(stopLoss) > 0 && curProfit <= -Math.abs(Number(stopLoss)));
+
+            if (reachedGlobalTP) {
+                const detail = globalTPModeRef.current === 'wins' ? `${curWins} >= ${takeProfit} Wins` : `$${curProfit.toFixed(2)} >= $${takeProfit}`;
+                addAuditLog(`🎯 Global Take Profit reached (${detail})! Session completed.`, 'success');
+                if (selectedPresetRef.current === 'trade_playlist') setPlaylistStatus('completed');
+                handleStop();
+                return;
+            }
+            if (reachedGlobalSL) {
+                const detail = globalSLModeRef.current === 'losses' ? `${curLosses} >= ${stopLoss} Losses` : `$${curProfit.toFixed(2)} <= -$${stopLoss}`;
+                addAuditLog(`🛑 Global Stop Loss hit (${detail})! Session halted.`, 'error');
+                if (selectedPresetRef.current === 'trade_playlist') setPlaylistStatus('completed');
+                handleStop();
+                return;
+            }
+
             if (sessionWinsRef.current >= Number(maxWinsCap))   { addAuditLog(`Win cap hit (${sessionWinsRef.current})`, 'success'); handleStop(); return; }
             if (sessionTrRef.current   >= Number(maxTradesCap)) { addAuditLog(`Trade cap hit (${sessionTrRef.current})`, 'warn');    handleStop(); return; }
 
-            if (cycleInterval === 'continuous' && !isEngineRunning && !isScannerWarmup && tradingStatus === 'connected') {
-                const s = calcStake(); setCurrentStake(s);
-                setRiskSettings({ initialStake: Number(s) });
-                startBot();
+            // Autonomous Trade Playlist manages its own step engine lifecycle; do NOT restart generic bot
+            if (selectedPresetRef.current !== 'trade_playlist' && selectedPreset !== 'trade_playlist') {
+                if (cycleInterval === 'continuous' && !isEngineRunning && !isScannerWarmup && tradingStatus === 'connected') {
+                    const s = calcStake(); setCurrentStake(s);
+                    setRiskSettings({ initialStake: Number(s) });
+                    startBot();
+                }
             }
         }, 8000);
 
@@ -2570,7 +2658,7 @@ export default function AutoTradePage() {
                                         </div>
 
                                         {/* Loop, Stake & Global TP/SL Session Controls Bar */}
-                                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 pt-1">
+                                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 pt-1">
                                             {/* Loop Toggle */}
                                             <div className="flex items-center justify-between p-3 rounded-xl bg-white/3 border border-white/5">
                                                 <div className="space-y-0.5">
@@ -2709,8 +2797,20 @@ export default function AutoTradePage() {
                                                 </p>
                                             </div>
 
+                                            {/* 50% Capital Loss Guard Toggle */}
+                                            <div className="flex items-center justify-between p-3 rounded-xl bg-white/3 border border-white/5">
+                                                <div className="space-y-0.5 pr-1">
+                                                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                                                        <ShieldAlert className={`w-3.5 h-3.5 ${stepCapitalLossGuard ? 'text-rose-400' : 'text-gray-500'}`} />
+                                                        50% Cap Guard
+                                                    </span>
+                                                    <p className="text-[9px] text-gray-400">Halt if step loss &gt; 50% bal</p>
+                                                </div>
+                                                <Toggle enabled={stepCapitalLossGuard} onChange={setStepCapitalLossGuard} disabled={isRunningAuto} />
+                                            </div>
+
                                             {/* Running Compounded Stake Display */}
-                                            <div className="flex items-center justify-between p-3 rounded-xl bg-white/3 border border-white/5 col-span-2 sm:col-span-1 lg:col-span-1">
+                                            <div className="flex items-center justify-between p-3 rounded-xl bg-white/3 border border-white/5">
                                                 <div className="space-y-0.5">
                                                     <span className="text-xs font-bold text-white flex items-center gap-1.5">
                                                         <Sparkles className="w-3.5 h-3.5 text-amber-400" />
@@ -2757,7 +2857,7 @@ export default function AutoTradePage() {
                                     </div>
 
                                     {/* ── Playlist Step Cards (Interactive Sequence List) ── */}
-                                    <div className="space-y-3">
+                                    <div className="space-y-2.5">
                                         {playlistSteps.map((step, idx) => {
                                             const isActive = isRunningAuto && playlistCurrentStepIdx === idx && playlistStatus === 'executing';
                                             const isCountingDown = isRunningAuto && playlistCurrentStepIdx === idx && playlistStatus === 'countdown';
@@ -2767,11 +2867,11 @@ export default function AutoTradePage() {
                                             return (
                                                 <div
                                                     key={step.id}
-                                                    className={`rounded-2xl border transition-all ${
+                                                    className={`rounded-xl border transition-all ${
                                                         isActive
-                                                            ? 'border-emerald-500/50 bg-emerald-500/5 shadow-lg shadow-emerald-500/10'
+                                                            ? 'border-emerald-500/50 bg-emerald-500/5 shadow-md shadow-emerald-500/10'
                                                             : isCountingDown
-                                                            ? 'border-amber-500/50 bg-amber-500/5 shadow-lg shadow-amber-500/10 animate-pulse'
+                                                            ? 'border-amber-500/50 bg-amber-500/5 shadow-md shadow-amber-500/10 animate-pulse'
                                                             : stepResult
                                                             ? stepResult.result === 'WIN'
                                                                 ? 'border-emerald-500/20 bg-white/2'
@@ -2779,145 +2879,131 @@ export default function AutoTradePage() {
                                                             : 'border-white/8 bg-white/2 hover:border-white/15'
                                                     }`}
                                                 >
-                                                    <div className="p-3.5 sm:p-4 space-y-3">
-                                                        {/* Top Row: Step Header & Quick Controls */}
-                                                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                                                            <div className="flex items-center gap-2.5">
-                                                                {/* Step Number */}
-                                                                <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl flex items-center justify-center text-xs font-black font-mono transition-all ${
-                                                                    isActive
-                                                                        ? 'bg-emerald-500 text-[#0a0a10] shadow-md shadow-emerald-500/30'
-                                                                        : isCountingDown
-                                                                        ? 'bg-amber-500 text-[#0a0a10] shadow-md shadow-amber-500/30'
-                                                                        : stepResult?.result === 'WIN'
-                                                                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                                                                        : stepResult?.result === 'LOSS'
-                                                                        ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                                                                        : 'bg-white/8 text-gray-400'
-                                                                }`}>
-                                                                    {idx + 1}
-                                                                </div>
-
-                                                                <div className="flex items-center gap-1.5 flex-wrap">
-                                                                    <span className="text-xs font-black text-white">{step.label || `Step ${idx + 1}`}</span>
-                                                                    <span className="px-2 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-[9px] font-bold text-indigo-300 uppercase">
-                                                                        {step.source === 'laxprime' ? 'LaxPrime' : 'LaxSniper XV'}
-                                                                    </span>
-                                                                    <span className="px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-[9px] font-mono font-bold text-gray-300">
-                                                                        ⏱️ {step.delayMinutes > 0 ? `${step.delayMinutes}m delay` : 'Immediate'}
-                                                                    </span>
-                                                                    {step.marketOverride && (
-                                                                        <span className="px-1.5 py-0.5 rounded bg-teal-500/10 text-teal-400 text-[9px] font-mono">
-                                                                            {step.marketOverride}
-                                                                        </span>
-                                                                    )}
-                                                                </div>
+                                                    {/* ── Collapsed Single Compact Row (Always Visible) ── */}
+                                                    <div className="p-2.5 sm:p-3 flex items-center justify-between gap-2">
+                                                        {/* Left: Step Info Elements */}
+                                                        <div className="flex items-center gap-2 min-w-0 flex-1 flex-wrap sm:flex-nowrap">
+                                                            {/* Step Number Bubble */}
+                                                            <div className={`w-6 h-6 sm:w-7 sm:h-7 shrink-0 rounded-lg flex items-center justify-center text-xs font-black font-mono transition-all ${
+                                                                isActive
+                                                                    ? 'bg-emerald-500 text-[#0a0a10] shadow-sm shadow-emerald-500/30'
+                                                                    : isCountingDown
+                                                                    ? 'bg-amber-500 text-[#0a0a10] shadow-sm shadow-amber-500/30'
+                                                                    : stepResult?.result === 'WIN'
+                                                                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                                                    : stepResult?.result === 'LOSS'
+                                                                    ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                                                                    : 'bg-white/8 text-gray-400'
+                                                            }`}>
+                                                                {idx + 1}
                                                             </div>
 
-                                                            {/* Quick Reorder, Duplicate & Delete Buttons */}
-                                                            <div className="flex items-center gap-1 ml-auto">
-                                                                <button
-                                                                    onClick={() => movePlaylistStep(idx, -1)}
-                                                                    disabled={isRunningAuto || idx === 0}
-                                                                    title="Move Step Up"
-                                                                    className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 disabled:opacity-20 transition-all"
-                                                                >
-                                                                    <ArrowUp className="w-3.5 h-3.5" />
-                                                                </button>
-                                                                <button
-                                                                    onClick={() => movePlaylistStep(idx, 1)}
-                                                                    disabled={isRunningAuto || idx === playlistSteps.length - 1}
-                                                                    title="Move Step Down"
-                                                                    className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 disabled:opacity-20 transition-all"
-                                                                >
-                                                                    <ArrowDown className="w-3.5 h-3.5" />
-                                                                </button>
-                                                                <button
-                                                                    onClick={() => duplicatePlaylistStep(step.id)}
-                                                                    disabled={isRunningAuto}
-                                                                    title="Duplicate Step"
-                                                                    className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-300 hover:bg-indigo-500/10 disabled:opacity-20 transition-all"
-                                                                >
-                                                                    <Copy className="w-3.5 h-3.5" />
-                                                                </button>
-                                                                <button
-                                                                    onClick={() => deletePlaylistStep(step.id)}
-                                                                    disabled={isRunningAuto || playlistSteps.length <= 1}
-                                                                    title="Delete Step"
-                                                                    className="p-1.5 rounded-lg text-gray-500 hover:text-rose-400 hover:bg-rose-500/10 disabled:opacity-20 transition-all"
-                                                                >
-                                                                    <Trash2 className="w-3.5 h-3.5" />
-                                                                </button>
+                                                            {/* Step Title, Source Pill, Delay Pill, Badges */}
+                                                            <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                                                                <span className="text-xs font-bold text-white truncate max-w-[130px] sm:max-w-[200px]">
+                                                                    {step.label || `Step ${idx + 1} (${step.delayMinutes > 0 ? `+${step.delayMinutes}m` : 'Immediate'})`}
+                                                                </span>
+                                                                <span className="px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/25 text-[9px] font-bold text-indigo-300 uppercase shrink-0">
+                                                                    {step.source === 'laxprime' ? 'LaxPrime' : 'LaxSniper XV'}
+                                                                </span>
+                                                                <span className="px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-[9px] font-mono font-medium text-gray-300 shrink-0">
+                                                                    ⏱️ {step.delayMinutes > 0 ? `${step.delayMinutes}m delay` : 'Immediate'}
+                                                                </span>
+                                                                {step.marketOverride && (
+                                                                    <span className="px-1.5 py-0.5 rounded bg-teal-500/10 border border-teal-500/20 text-teal-400 text-[9px] font-mono shrink-0">
+                                                                        {step.marketOverride}
+                                                                    </span>
+                                                                )}
+                                                                {/* Glowing Active Badge */}
+                                                                {isActive && (
+                                                                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-[9px] font-black text-emerald-400 flex items-center gap-1 animate-pulse shrink-0">
+                                                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                                                                        ACTIVE
+                                                                    </span>
+                                                                )}
+                                                                {/* Cooldown Badge */}
+                                                                {isCountingDown && (
+                                                                    <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-[9px] font-black text-amber-400 flex items-center gap-1 shrink-0">
+                                                                        <Timer className="w-2.5 h-2.5" />
+                                                                        COOLDOWN
+                                                                    </span>
+                                                                )}
+                                                                {/* Settled Result Badge */}
+                                                                {stepResult && (
+                                                                    <span className={`px-2 py-0.5 rounded-md text-[9px] font-black font-mono shrink-0 flex items-center gap-1 ${
+                                                                        stepResult.result === 'WIN' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                                                    }`}>
+                                                                        {stepResult.result === 'WIN' ? '✓' : '✗'} {stepResult.profit >= 0 ? '+' : ''}${stepResult.profit.toFixed(2)}
+                                                                    </span>
+                                                                )}
                                                             </div>
                                                         </div>
 
-                                                        {/* Middle Row: LaxPrime Configuration Summary & Status */}
-                                                        <div>
+                                                        {/* Right: Action Icons (ALWAYS visible on PC and Mobile) */}
+                                                        <div className="flex items-center gap-0.5 sm:gap-1 shrink-0 ml-auto">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => movePlaylistStep(idx, -1)}
+                                                                disabled={isRunningAuto || idx === 0}
+                                                                title="Move Step Up"
+                                                                className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 disabled:opacity-20 transition-all cursor-pointer"
+                                                            >
+                                                                <ArrowUp className="w-3.5 h-3.5" />
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => movePlaylistStep(idx, 1)}
+                                                                disabled={isRunningAuto || idx === playlistSteps.length - 1}
+                                                                title="Move Step Down"
+                                                                className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 disabled:opacity-20 transition-all cursor-pointer"
+                                                            >
+                                                                <ArrowDown className="w-3.5 h-3.5" />
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => duplicatePlaylistStep(step.id)}
+                                                                disabled={isRunningAuto}
+                                                                title="Duplicate Step"
+                                                                className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-300 hover:bg-indigo-500/10 disabled:opacity-20 transition-all cursor-pointer"
+                                                            >
+                                                                <Copy className="w-3.5 h-3.5" />
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => deletePlaylistStep(step.id)}
+                                                                disabled={isRunningAuto || playlistSteps.length <= 1}
+                                                                title="Delete Step"
+                                                                className="p-1.5 rounded-lg text-gray-500 hover:text-rose-400 hover:bg-rose-500/10 disabled:opacity-20 transition-all cursor-pointer"
+                                                            >
+                                                                <Trash2 className="w-3.5 h-3.5" />
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setExpandedStepId(isExpanded ? null : step.id)}
+                                                                title={isExpanded ? "Collapse Step" : "Expand Step Drawer"}
+                                                                className={`p-1.5 rounded-lg transition-all cursor-pointer ${
+                                                                    isExpanded
+                                                                        ? 'text-indigo-400 bg-indigo-500/15 border border-indigo-500/30'
+                                                                        : 'text-gray-400 hover:text-white hover:bg-white/5'
+                                                                }`}
+                                                            >
+                                                                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? 'rotate-180 text-indigo-400' : ''}`} />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* ── Expanded Drawer ── */}
+                                                    {isExpanded && (
+                                                        <div className="px-3 pb-3 pt-2.5 border-t border-white/5 space-y-3 bg-black/25 rounded-b-xl">
+                                                            {/* Mini LaxPrime Trigger Button & Strategy Summary Badges */}
                                                             {step.source === 'laxprime' && (
-                                                                <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
-                                                                    {step.laxprimeConfig ? (
-                                                                        <>
-                                                                            <span className="px-2 py-0.5 rounded-md bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 font-mono font-bold flex items-center gap-1">
-                                                                                <Sparkles className="w-2.5 h-2.5 text-cyan-400" />
-                                                                                {step.laxprimeConfig.strategies.length} Strat{step.laxprimeConfig.strategies.length !== 1 ? 's' : ''}:{' '}
-                                                                                {step.laxprimeConfig.strategies.map(s => s.tradeType).join(', ')}
-                                                                            </span>
-                                                                            <span className="px-2 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 font-mono">
-                                                                                {step.laxprimeConfig.selectedMarkets?.length || 2} Mkts
-                                                                            </span>
-                                                                            {/* Step Target & SL Preview */}
-                                                                            <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 font-mono font-bold">
-                                                                                🎯 {step.laxprimeConfig.targetProfitMode === 'wins' ? `${step.laxprimeConfig.targetProfit || 2}W` : `$${step.laxprimeConfig.targetProfit || 5}`}
-                                                                            </span>
-                                                                            <span className="px-2 py-0.5 rounded-md bg-rose-500/10 border border-rose-500/20 text-rose-300 font-mono font-bold">
-                                                                                🛑 {step.laxprimeConfig.stopLossMode === 'losses' ? `${step.laxprimeConfig.stopLoss || 2}L` : `$${step.laxprimeConfig.stopLoss || 10}`}
-                                                                            </span>
-                                                                            {step.laxprimeConfig.compoundProfits && (
-                                                                                <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold">
-                                                                                    📈 Compound {step.laxprimeConfig.compoundPct || 50}%
-                                                                                </span>
-                                                                            )}
-                                                                            {step.laxprimeConfig.adaptiveSwitch?.enabled && (
-                                                                                <span className="px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-300 font-bold">
-                                                                                    ⚡ Switcher
-                                                                                </span>
-                                                                            )}
-                                                                        </>
-                                                                    ) : (
-                                                                        <span className="text-gray-500 italic text-[10px]">
-                                                                            (Global LaxPrime defaults · Tap Setup LaxPrime to customize)
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                            )}
-
-                                                            {/* Status Result Preview */}
-                                                            {stepResult && (
-                                                                <div className="flex items-center gap-2 mt-1.5 text-[10px] flex-wrap">
-                                                                    <span className={`font-black px-1.5 py-0.5 rounded ${stepResult.result === 'WIN' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
-                                                                        {stepResult.result === 'WIN' ? '✓ WON' : '✗ LOST'}
-                                                                    </span>
-                                                                    <span className="font-mono text-gray-300 font-bold">
-                                                                        {stepResult.profit >= 0 ? '+' : ''}${stepResult.profit.toFixed(2)}
-                                                                    </span>
-                                                                    {stepResult.exitSpot && (
-                                                                        <span className="text-gray-400 font-mono">· Exit: {stepResult.exitSpot}</span>
-                                                                    )}
-                                                                    <span className="text-gray-500">· {stepResult.time}</span>
-                                                                </div>
-                                                            )}
-                                                        </div>
-
-                                                        {/* Bottom Row: Actions & Setup */}
-                                                        <div className="pt-2 border-t border-white/5 flex flex-wrap items-center justify-between gap-2.5">
-                                                            <div className="flex items-center gap-2 flex-wrap flex-1 min-w-[200px]">
-                                                                {/* Mini LaxPrime Config Modal Trigger Button */}
-                                                                {step.source === 'laxprime' && (
+                                                                <div className="flex flex-wrap items-center justify-between gap-2">
                                                                     <button
+                                                                        type="button"
                                                                         onClick={() => setEditingStepForLaxPrime({ step, index: idx })}
                                                                         disabled={isRunningAuto}
                                                                         title="Open Mini LaxPrime Window to set dedicated strategies, conditions, trade patterns and markets"
-                                                                        className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-40 min-h-[36px] ${
+                                                                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-40 cursor-pointer ${
                                                                             step.laxprimeConfig
                                                                                 ? 'bg-gradient-to-r from-indigo-600/30 to-cyan-600/30 border border-indigo-500/50 text-cyan-200 hover:from-indigo-600/50 hover:to-cyan-600/50 shadow-indigo-500/10'
                                                                                 : 'bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/25'
@@ -2926,91 +3012,177 @@ export default function AutoTradePage() {
                                                                         <Sliders className="w-3.5 h-3.5 text-cyan-400" />
                                                                         <span>{step.laxprimeConfig ? 'Edit LaxPrime' : 'Setup LaxPrime'}</span>
                                                                     </button>
-                                                                )}
 
-                                                                {/* Delay Input */}
-                                                                <div className="flex items-center gap-1.5 bg-white/5 border border-white/8 rounded-xl px-2.5 py-1.5 min-h-[36px]">
-                                                                    <span className="text-[10px] font-bold text-gray-400 uppercase">Delay:</span>
+                                                                    <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
+                                                                        {step.laxprimeConfig ? (
+                                                                            <>
+                                                                                <span className="px-2 py-0.5 rounded-md bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 font-mono font-bold flex items-center gap-1">
+                                                                                    <Sparkles className="w-2.5 h-2.5 text-cyan-400" />
+                                                                                    {step.laxprimeConfig.strategies.length} Strats: {step.laxprimeConfig.strategies.map(s => s.tradeType).join(', ')}
+                                                                                </span>
+                                                                                <span className="px-2 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 font-mono">
+                                                                                    {step.laxprimeConfig.selectedMarkets?.length || 2} Mkts
+                                                                                </span>
+                                                                                <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 font-mono font-bold">
+                                                                                    🎯 {step.laxprimeConfig.targetProfitMode === 'wins' ? `${step.laxprimeConfig.targetProfit || 2}W` : `$${step.laxprimeConfig.targetProfit || 5}`}
+                                                                                </span>
+                                                                                <span className="px-2 py-0.5 rounded-md bg-rose-500/10 border border-rose-500/20 text-rose-300 font-mono font-bold">
+                                                                                    🛑 {step.laxprimeConfig.stopLossMode === 'losses' ? `${step.laxprimeConfig.stopLoss || 2}L` : `$${step.laxprimeConfig.stopLoss || 10}`}
+                                                                                </span>
+                                                                                {step.laxprimeConfig.compoundProfits && (
+                                                                                    <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold">
+                                                                                        📈 Compound {step.laxprimeConfig.compoundPct || 50}%
+                                                                                    </span>
+                                                                                )}
+                                                                                {step.laxprimeConfig.adaptiveSwitch?.enabled && (
+                                                                                    <span className="px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-300 font-bold">
+                                                                                        ⚡ Switcher
+                                                                                    </span>
+                                                                                )}
+                                                                            </>
+                                                                        ) : (
+                                                                            <span className="text-gray-500 italic text-[10px]">
+                                                                                (Global LaxPrime defaults · Tap Setup LaxPrime to customize)
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+
+                                                            {/* Engine Source & Delay Row */}
+                                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                                                {/* Engine Source Selector */}
+                                                                <div className="space-y-1">
+                                                                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block">Engine Source</span>
+                                                                    <select
+                                                                        value={step.source}
+                                                                        onChange={e => updatePlaylistStep(step.id, { source: e.target.value as any })}
+                                                                        disabled={isRunningAuto}
+                                                                        className="w-full bg-white/5 border border-white/8 rounded-xl px-2.5 py-1.5 text-xs font-bold text-white focus:outline-none"
+                                                                    >
+                                                                        <option value="laxprime">LaxPrime</option>
+                                                                        <option value="laxsniper-xv">LaxSniper XV</option>
+                                                                    </select>
+                                                                </div>
+
+                                                                {/* Delay Input with Quick Chips */}
+                                                                <div className="space-y-1">
+                                                                    <div className="flex items-center justify-between">
+                                                                        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Delay (Minutes)</span>
+                                                                        <div className="flex items-center gap-1">
+                                                                            {[0, 1, 5, 10, 15].map(d => (
+                                                                                <button
+                                                                                    key={d}
+                                                                                    type="button"
+                                                                                    onClick={() => updatePlaylistStep(step.id, { delayMinutes: d })}
+                                                                                    disabled={isRunningAuto}
+                                                                                    className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold transition-all cursor-pointer ${
+                                                                                        step.delayMinutes === d
+                                                                                            ? 'bg-indigo-500/30 text-indigo-300 border border-indigo-500/40'
+                                                                                            : 'bg-white/5 text-gray-400 hover:text-white'
+                                                                                    }`}
+                                                                                >
+                                                                                    +{d}m
+                                                                                </button>
+                                                                            ))}
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-1.5 bg-white/5 border border-white/8 rounded-xl px-2.5 py-1">
+                                                                        <input
+                                                                            type="number"
+                                                                            min={0}
+                                                                            max={120}
+                                                                            value={step.delayMinutes}
+                                                                            onChange={e => updatePlaylistStep(step.id, { delayMinutes: Math.max(0, Number(e.target.value)) })}
+                                                                            disabled={isRunningAuto}
+                                                                            className="w-full bg-transparent text-xs font-black font-mono text-white focus:outline-none"
+                                                                        />
+                                                                        <span className="text-[10px] text-gray-400 font-mono">minutes</span>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+
+                                                            {/* Overrides: Step Label Rename, Market, Contract, Digit */}
+                                                            <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 pt-1">
+                                                                {/* Step Label Rename */}
+                                                                <div>
+                                                                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Step Label</span>
+                                                                    <input
+                                                                        type="text"
+                                                                        placeholder={`Step ${idx + 1}`}
+                                                                        value={step.label || ''}
+                                                                        onChange={e => updatePlaylistStep(step.id, { label: e.target.value })}
+                                                                        disabled={isRunningAuto}
+                                                                        className="w-full bg-white/5 border border-white/8 rounded-xl px-2.5 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none"
+                                                                    />
+                                                                </div>
+
+                                                                {/* Market Override */}
+                                                                <div>
+                                                                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Market Override</span>
+                                                                    <select
+                                                                        value={step.marketOverride || ''}
+                                                                        onChange={e => updatePlaylistStep(step.id, { marketOverride: e.target.value })}
+                                                                        disabled={isRunningAuto}
+                                                                        className="w-full bg-white/5 border border-white/8 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none"
+                                                                    >
+                                                                        <option value="">(Inherit from {step.source})</option>
+                                                                        {TARGET_MARKETS.map(m => (
+                                                                            <option key={m.value} value={m.value}>{m.label}</option>
+                                                                        ))}
+                                                                    </select>
+                                                                </div>
+
+                                                                {/* Contract Override */}
+                                                                <div>
+                                                                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Contract Override</span>
+                                                                    <select
+                                                                        value={step.contractOverride || ''}
+                                                                        onChange={e => updatePlaylistStep(step.id, { contractOverride: e.target.value as any })}
+                                                                        disabled={isRunningAuto}
+                                                                        className="w-full bg-white/5 border border-white/8 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none"
+                                                                    >
+                                                                        <option value="">(Inherit from {step.source})</option>
+                                                                        {CONTRACT_OPTIONS.map(c => (
+                                                                            <option key={c.value} value={c.value}>{c.label}</option>
+                                                                        ))}
+                                                                    </select>
+                                                                </div>
+
+                                                                {/* Digit Prediction Override */}
+                                                                <div>
+                                                                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Digit Prediction</span>
                                                                     <input
                                                                         type="number"
                                                                         min={0}
-                                                                        max={120}
-                                                                        value={step.delayMinutes}
-                                                                        onChange={e => updatePlaylistStep(step.id, { delayMinutes: Math.max(0, Number(e.target.value)) })}
+                                                                        max={9}
+                                                                        placeholder="(Inherit)"
+                                                                        value={step.digitOverride !== undefined && step.digitOverride !== null ? step.digitOverride : ''}
+                                                                        onChange={e => updatePlaylistStep(step.id, { digitOverride: e.target.value === '' ? null : Number(e.target.value) })}
                                                                         disabled={isRunningAuto}
-                                                                        className="w-10 text-center bg-transparent text-xs font-black font-mono text-white focus:outline-none"
+                                                                        className="w-full bg-white/5 border border-white/8 rounded-xl px-2.5 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none"
                                                                     />
-                                                                    <span className="text-[10px] text-gray-400">m</span>
                                                                 </div>
-
-                                                                {/* Engine Source Selector */}
-                                                                <select
-                                                                    value={step.source}
-                                                                    onChange={e => updatePlaylistStep(step.id, { source: e.target.value as any })}
-                                                                    disabled={isRunningAuto}
-                                                                    className="bg-white/5 border border-white/8 rounded-xl px-2.5 py-1.5 text-xs font-bold text-white focus:outline-none min-h-[36px]"
-                                                                >
-                                                                    <option value="laxprime">LaxPrime</option>
-                                                                    <option value="laxsniper-xv">LaxSniper XV</option>
-                                                                </select>
                                                             </div>
 
-                                                            {/* Toggle Expand fine-tune */}
-                                                            <button
-                                                                onClick={() => setExpandedStepId(isExpanded ? null : step.id)}
-                                                                title="Fine-tune Step Overrides"
-                                                                className={`px-2.5 py-1.5 rounded-xl transition-all flex items-center gap-1 text-xs font-bold min-h-[36px] ${isExpanded ? 'text-indigo-400 bg-indigo-500/10 border border-indigo-500/30' : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'}`}
-                                                            >
-                                                                <span className="text-[10px]">Overrides</span>
-                                                                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                                                            </button>
-                                                        </div>
-                                                    </div>
-
-                                                    {/* Optional Expandable Overrides */}
-                                                    {isExpanded && (
-                                                        <div className="p-4 pt-0 border-t border-white/5 grid grid-cols-1 sm:grid-cols-3 gap-3 mt-2">
-                                                            <div>
-                                                                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Market Override</span>
-                                                                <select
-                                                                    value={step.marketOverride || ''}
-                                                                    onChange={e => updatePlaylistStep(step.id, { marketOverride: e.target.value })}
-                                                                    disabled={isRunningAuto}
-                                                                    className="w-full bg-white/5 border border-white/8 rounded-xl px-2.5 py-1.5 text-xs text-white"
-                                                                >
-                                                                    <option value="">(Inherit from {step.source})</option>
-                                                                    {TARGET_MARKETS.map(m => (
-                                                                        <option key={m.value} value={m.value}>{m.label}</option>
-                                                                    ))}
-                                                                </select>
-                                                            </div>
-                                                            <div>
-                                                                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Contract Override</span>
-                                                                <select
-                                                                    value={step.contractOverride || ''}
-                                                                    onChange={e => updatePlaylistStep(step.id, { contractOverride: e.target.value as any })}
-                                                                    disabled={isRunningAuto}
-                                                                    className="w-full bg-white/5 border border-white/8 rounded-xl px-2.5 py-1.5 text-xs text-white"
-                                                                >
-                                                                    <option value="">(Inherit from {step.source})</option>
-                                                                    {CONTRACT_OPTIONS.map(c => (
-                                                                        <option key={c.value} value={c.value}>{c.label}</option>
-                                                                    ))}
-                                                                </select>
-                                                            </div>
-                                                            <div>
-                                                                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Digit Prediction</span>
-                                                                <input
-                                                                    type="number"
-                                                                    min={0}
-                                                                    max={9}
-                                                                    placeholder="(Inherit)"
-                                                                    value={step.digitOverride !== undefined && step.digitOverride !== null ? step.digitOverride : ''}
-                                                                    onChange={e => updatePlaylistStep(step.id, { digitOverride: e.target.value === '' ? null : Number(e.target.value) })}
-                                                                    disabled={isRunningAuto}
-                                                                    className="w-full bg-white/5 border border-white/8 rounded-xl px-2.5 py-1.5 text-xs text-white"
-                                                                />
-                                                            </div>
+                                                            {/* Step Results Log (if finished) */}
+                                                            {stepResult && (
+                                                                <div className="p-2.5 rounded-xl bg-white/3 border border-white/5 flex items-center justify-between text-[11px] font-mono">
+                                                                    <span className="text-gray-400">Step Result:</span>
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className={`font-black px-1.5 py-0.5 rounded ${stepResult.result === 'WIN' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
+                                                                            {stepResult.result === 'WIN' ? '✓ WON' : '✗ LOST'}
+                                                                        </span>
+                                                                        <span className="text-white font-bold">
+                                                                            {stepResult.profit >= 0 ? '+' : ''}${stepResult.profit.toFixed(2)}
+                                                                        </span>
+                                                                        {stepResult.exitSpot && (
+                                                                            <span className="text-gray-400">· Exit: {stepResult.exitSpot}</span>
+                                                                        )}
+                                                                        <span className="text-gray-500">· {stepResult.time}</span>
+                                                                    </div>
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     )}
                                                 </div>

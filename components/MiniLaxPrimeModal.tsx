@@ -5,7 +5,7 @@ import {
   X, Check, Plus, Trash2, Sliders, Settings2, ShieldAlert,
   Layers, Sparkles, Copy, RefreshCw, Zap, TrendingUp, TrendingDown,
   ArrowLeftRight, Clock, Target, ChevronDown, AlertTriangle,
-  Flame, CheckCircle2
+  Flame, CheckCircle2, FlaskConical
 } from 'lucide-react';
 import {
   Strategy, Condition, PatternBox, PatternTrigger,
@@ -33,7 +33,42 @@ export interface LaxPrimeStepConfig {
   stopLoss?: string;              // Step SL
   stopLossMode?: 'loss' | 'losses';     // USD vs Losses
   adaptiveSwitch?: AdaptiveSwitch;
-  virtualSettings?: any;
+  virtualSettings?: {
+    isVirtualMode: boolean;
+    startVirtualToReal: boolean;
+    vTriggerType: 'wins' | 'losses';
+    vTriggerMode: 'consec' | 'total';
+    vThreshold: number;
+    vInEnabled?: boolean;
+    vInTrades?: number;
+    isDoubleVirtual?: boolean;
+    vDoubleStage?: 'A' | 'B';
+    vTriggerTypeB?: 'wins' | 'losses';
+    vTriggerModeB?: 'consec' | 'total';
+    vThresholdB?: number;
+    vInEnabledB?: boolean;
+    vInTradesB?: number;
+    vStageBReps?: number;
+    vStageBCompletedReps?: number;
+    startRealToVirtual: boolean;
+    rTriggerType: 'wins' | 'losses';
+    rTriggerMode: 'consec' | 'total';
+    rThreshold: number;
+    smartSettings?: {
+      enabled: boolean;
+      type: 'sequence' | 'alternating';
+      sequence: { step1Type: 'Wins' | 'Losses'; step1Qty: number; step1Mode: 'consecutive' | 'total'; step2Type: 'Wins' | 'Losses'; step2Qty: number; step2Mode: 'consecutive' | 'total'; };
+      alternating: { count: number; };
+    };
+    virtualWins?: number;
+    virtualLosses?: number;
+    vConsecWins?: number;
+    vConsecLosses?: number;
+    realWins?: number;
+    realLosses?: number;
+    rConsecWins?: number;
+    rConsecLosses?: number;
+  };
 }
 
 interface MiniLaxPrimeModalProps {
@@ -622,8 +657,46 @@ export function MiniLaxPrimeModal({
     ],
   });
 
+  // Virtual System state
   const [showVirtualPanel, setShowVirtualPanel] = useState(false);
   const [showSwitcherPanel, setShowSwitcherPanel] = useState(false);
+  const [virtualMode, setVirtualMode] = useState({
+    isVirtualMode: false,
+    startVirtualToReal: false,
+    vTriggerType: 'wins' as 'wins' | 'losses',
+    vTriggerMode: 'consec' as 'consec' | 'total',
+    vThreshold: 2,
+    vInEnabled: false,
+    vInTrades: 5,
+    isDoubleVirtual: false,
+    vDoubleStage: 'A' as 'A' | 'B',
+    vTriggerTypeB: 'wins' as 'wins' | 'losses',
+    vTriggerModeB: 'consec' as 'consec' | 'total',
+    vThresholdB: 2,
+    vInEnabledB: false,
+    vInTradesB: 5,
+    vStageBReps: 3,
+    vStageBCompletedReps: 0,
+    startRealToVirtual: false,
+    rTriggerType: 'wins' as 'wins' | 'losses',
+    rTriggerMode: 'consec' as 'consec' | 'total',
+    rThreshold: 3,
+    smartSettings: {
+      enabled: false,
+      type: 'sequence' as 'sequence' | 'alternating',
+      sequence: { step1Type: 'Wins' as 'Wins' | 'Losses', step1Qty: 2, step1Mode: 'consecutive' as 'consecutive' | 'total', step2Type: 'Losses' as 'Wins' | 'Losses', step2Qty: 2, step2Mode: 'consecutive' as 'consecutive' | 'total' },
+      alternating: { count: 2 },
+    },
+    virtualWins: 0,
+    virtualLosses: 0,
+    vConsecWins: 0,
+    vConsecLosses: 0,
+    realWins: 0,
+    realLosses: 0,
+    rConsecWins: 0,
+    rConsecLosses: 0,
+  });
+  const updateVS = (patch: Partial<typeof virtualMode>) => setVirtualMode(prev => ({ ...prev, ...patch }));
 
   // Swipe detection refs for touch screens
   const stepTpTouchXRef = React.useRef<number | null>(null);
@@ -649,6 +722,10 @@ export function MiniLaxPrimeModal({
       if (currentConfig.adaptiveSwitch) {
         setAdaptiveSwitch(JSON.parse(JSON.stringify(currentConfig.adaptiveSwitch)));
       }
+      // Sync virtualSettings
+      if (currentConfig.virtualSettings) {
+        setVirtualMode(prev => ({ ...prev, ...currentConfig.virtualSettings }));
+      }
     } else {
       const liveState = useBotStore.getState();
       setStrategies(liveState.strategies?.length ? JSON.parse(JSON.stringify(liveState.strategies)) : [createStrategy(0)]);
@@ -670,6 +747,38 @@ export function MiniLaxPrimeModal({
           { contractType: 'DIGITEVEN', reps: 2 },
           { contractType: 'DIGITODD',  reps: 2 },
         ],
+      });
+      setVirtualMode({
+        isVirtualMode: false,
+        startVirtualToReal: false,
+        vTriggerType: 'wins',
+        vTriggerMode: 'consec',
+        vThreshold: 2,
+        vInEnabled: false,
+        vInTrades: 5,
+        isDoubleVirtual: false,
+        vDoubleStage: 'A',
+        vTriggerTypeB: 'wins',
+        vTriggerModeB: 'consec',
+        vThresholdB: 2,
+        vInEnabledB: false,
+        vInTradesB: 5,
+        vStageBReps: 3,
+        vStageBCompletedReps: 0,
+        startRealToVirtual: false,
+        rTriggerType: 'wins',
+        rTriggerMode: 'consec',
+        rThreshold: 3,
+        smartSettings: {
+          enabled: false,
+          type: 'sequence',
+          sequence: { step1Type: 'Wins', step1Qty: 2, step1Mode: 'consecutive', step2Type: 'Losses', step2Qty: 2, step2Mode: 'consecutive' },
+          alternating: { count: 2 },
+        },
+        virtualWins: 0, virtualLosses: 0,
+        vConsecWins: 0, vConsecLosses: 0,
+        realWins: 0, realLosses: 0,
+        rConsecWins: 0, rConsecLosses: 0,
       });
     }
   }, [isOpen, currentConfig]);
@@ -725,6 +834,7 @@ export function MiniLaxPrimeModal({
       stopLoss,
       stopLossMode,
       adaptiveSwitch,
+      virtualSettings: virtualMode,
     };
     onSave(configToSave);
     onClose();
@@ -997,7 +1107,281 @@ export function MiniLaxPrimeModal({
             </div>
           </div>
 
-          {/* ── Switcher Panel Toggle ── */}
+          {/* ── Virtual System Panel ── */}
+          <div className="rounded-2xl border border-purple-500/20 bg-purple-500/5 p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <FlaskConical className="w-4 h-4 text-purple-400" />
+                <span className="text-xs font-black text-white uppercase tracking-wider">Virtual System</span>
+                {virtualMode.isVirtualMode && (
+                  <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-400 text-[9px] font-black animate-pulse">● VIRTUAL ACTIVE</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => updateVS({ isVirtualMode: !virtualMode.isVirtualMode })}
+                  className={`px-2 py-1 rounded-lg text-[10px] font-black transition-all ${
+                    virtualMode.isVirtualMode
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      : 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                  }`}
+                >
+                  {virtualMode.isVirtualMode ? '→ SWITCH TO REAL' : '→ SWITCH TO VIRTUAL'}
+                </button>
+                <button type="button" onClick={() => setShowVirtualPanel(v => !v)} className="text-xs text-purple-400 hover:text-purple-300">
+                  {showVirtualPanel ? '▲ Hide' : '▼ Configure'}
+                </button>
+              </div>
+            </div>
+
+            {showVirtualPanel && (
+              <div className="space-y-3 mt-3 pt-3 border-t border-white/10">
+                {/* === Virtual → Real Card === */}
+                <div className="bg-black/40 border border-white/10 rounded-xl p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-purple-300">Start Virtual → Switch to Real</span>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" className="sr-only peer" checked={virtualMode.startVirtualToReal} onChange={e => updateVS({ startVirtualToReal: e.target.checked })} />
+                      <div className="w-8 h-4 bg-slate-700 peer-checked:bg-purple-500 rounded-full transition-colors" />
+                      <div className="absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full transition-transform peer-checked:translate-x-4" />
+                    </label>
+                  </div>
+
+                  {virtualMode.startVirtualToReal && (
+                    <div className="space-y-2">
+                      {/* Double Virtual toggle */}
+                      <div className="flex items-center justify-between bg-purple-500/10 border border-purple-500/20 rounded-lg p-2">
+                        <span className="text-[10px] font-bold text-purple-300">⚡ Double Virtual (2-Stage)</span>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input type="checkbox" className="sr-only peer" checked={!!virtualMode.isDoubleVirtual}
+                            onChange={e => updateVS({ isDoubleVirtual: e.target.checked, vDoubleStage: 'A', vStageBCompletedReps: 0 })} />
+                          <div className="w-8 h-4 bg-slate-700 peer-checked:bg-purple-600 rounded-full transition-colors" />
+                          <div className="absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full transition-transform peer-checked:translate-x-4" />
+                        </label>
+                      </div>
+
+                      {/* Stage A Controls */}
+                      <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                        <span className="text-gray-400 font-bold">{virtualMode.isDoubleVirtual ? 'Stage A Gate:' : 'Trigger on:'}</span>
+                        <select value={virtualMode.vTriggerType} onChange={e => updateVS({ vTriggerType: e.target.value as 'wins' | 'losses' })}
+                          className="bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }}>
+                          <option value="wins" style={{ background: '#0f172a' }}>Wins</option>
+                          <option value="losses" style={{ background: '#0f172a' }}>Losses</option>
+                        </select>
+                        <select value={virtualMode.vTriggerMode} onChange={e => updateVS({ vTriggerMode: e.target.value as 'consec' | 'total' })}
+                          className="bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }}>
+                          <option value="consec" style={{ background: '#0f172a' }}>Consecutive</option>
+                          <option value="total" style={{ background: '#0f172a' }}>Total</option>
+                        </select>
+                        <span className="text-gray-400">Threshold:</span>
+                        <input type="number" min={1} value={virtualMode.vThreshold} onChange={e => updateVS({ vThreshold: +e.target.value || 1 })}
+                          className="w-12 bg-slate-900 border border-white/10 rounded px-1 py-1 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
+                        <button type="button" onClick={() => updateVS({ vInEnabled: !virtualMode.vInEnabled })}
+                          className={`px-1.5 py-0.5 rounded text-[9px] font-black transition-all ${
+                            virtualMode.vInEnabled ? 'bg-indigo-600 text-white border border-indigo-400' : 'bg-white/5 text-gray-400 border border-white/10'
+                          }`} title="Evaluate threshold within last N virtual trades">
+                          IN
+                        </button>
+                        {virtualMode.vInEnabled && (
+                          <>
+                            <input type="number" min={1} value={virtualMode.vInTrades ?? 5} onChange={e => updateVS({ vInTrades: Math.max(1, +e.target.value || 1) })}
+                              className="w-12 bg-slate-900 border border-indigo-400/40 rounded px-1 py-1 text-center text-indigo-300 text-[10px]" style={{ background: '#0f172a' }} />
+                            <span className="text-gray-500 text-[10px]">trades</span>
+                          </>
+                        )}
+                      </div>
+
+                      {/* Stage B (Double Virtual) */}
+                      {virtualMode.isDoubleVirtual && (
+                        <div className="bg-purple-500/8 border border-purple-500/25 rounded-lg p-2.5 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[9px] font-bold text-purple-300">STAGE B (Gate 2 & Execution Cycle):</span>
+                            <span className={`text-[9px] font-bold ${virtualMode.vDoubleStage === 'B' ? 'text-emerald-400' : 'text-gray-500'}`}>
+                              {virtualMode.vDoubleStage === 'B' ? `ACTIVE [Rep ${(virtualMode.vStageBCompletedReps || 0) + 1}/${virtualMode.vStageBReps || 1}]` : 'WAITING FOR STAGE A'}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                            <span className="text-gray-400">Gate B:</span>
+                            <select value={virtualMode.vTriggerTypeB || 'wins'} onChange={e => updateVS({ vTriggerTypeB: e.target.value as 'wins' | 'losses' })}
+                              className="bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }}>
+                              <option value="wins" style={{ background: '#0f172a' }}>Wins</option>
+                              <option value="losses" style={{ background: '#0f172a' }}>Losses</option>
+                            </select>
+                            <select value={virtualMode.vTriggerModeB || 'consec'} onChange={e => updateVS({ vTriggerModeB: e.target.value as 'consec' | 'total' })}
+                              className="bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }}>
+                              <option value="consec" style={{ background: '#0f172a' }}>Consecutive</option>
+                              <option value="total" style={{ background: '#0f172a' }}>Total</option>
+                            </select>
+                            <span className="text-gray-400">Target:</span>
+                            <input type="number" min={1} value={virtualMode.vThresholdB ?? 2} onChange={e => updateVS({ vThresholdB: +e.target.value || 1 })}
+                              className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
+                            <button type="button" onClick={() => updateVS({ vInEnabledB: !virtualMode.vInEnabledB })}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-black transition-all ${
+                                virtualMode.vInEnabledB ? 'bg-purple-600 text-white border border-purple-400' : 'bg-white/5 text-gray-400 border border-white/10'
+                              }`}>IN</button>
+                            {virtualMode.vInEnabledB && (
+                              <input type="number" min={1} value={virtualMode.vInTradesB ?? 5} onChange={e => updateVS({ vInTradesB: Math.max(1, +e.target.value || 1) })}
+                                className="w-10 bg-slate-900 border border-purple-400/40 rounded px-1 py-0.5 text-center text-purple-300 text-[10px]" style={{ background: '#0f172a' }} />
+                            )}
+                            <span className="text-gray-400">→ Real Reps:</span>
+                            <input type="number" min={1} value={virtualMode.vStageBReps ?? 3} onChange={e => updateVS({ vStageBReps: +e.target.value || 1 })}
+                              className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Smart Analysis Switch */}
+                      <div className="bg-indigo-500/8 border border-indigo-500/25 rounded-lg p-2.5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="text-[10px] font-bold text-indigo-300">🧠 Smart Analysis Switch</span>
+                            <p className="text-[9px] text-gray-500 mt-0.5">Switch to Real on strict result patterns</p>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" className="sr-only peer" checked={virtualMode.smartSettings?.enabled || false}
+                              onChange={e => updateVS({ smartSettings: { ...(virtualMode.smartSettings || { enabled: false, type: 'sequence' as const, sequence: { step1Type: 'Wins' as const, step1Qty: 2, step1Mode: 'consecutive' as const, step2Type: 'Losses' as const, step2Qty: 2, step2Mode: 'consecutive' as const }, alternating: { count: 2 } }), enabled: e.target.checked } })} />
+                            <div className="w-8 h-4 bg-slate-700 peer-checked:bg-indigo-600 rounded-full transition-colors" />
+                            <div className="absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full transition-transform peer-checked:translate-x-4" />
+                          </label>
+                        </div>
+
+                        {virtualMode.smartSettings?.enabled && (
+                          <div className="space-y-2">
+                            {/* Mode selector */}
+                            <div className="flex bg-black/30 rounded-lg p-0.5 border border-white/8">
+                              <button type="button" onClick={() => updateVS({ smartSettings: { ...virtualMode.smartSettings!, type: 'sequence' } })}
+                                className={`flex-1 py-1 rounded text-[9px] font-bold transition-all ${
+                                  virtualMode.smartSettings?.type === 'sequence' ? 'bg-indigo-600 text-white' : 'text-gray-400'
+                                }`}>STRICT SEQUENCE</button>
+                              <button type="button" onClick={() => updateVS({ smartSettings: { ...virtualMode.smartSettings!, type: 'alternating' } })}
+                                className={`flex-1 py-1 rounded text-[9px] font-bold transition-all ${
+                                  virtualMode.smartSettings?.type === 'alternating' ? 'bg-indigo-600 text-white' : 'text-gray-400'
+                                }`}>ALTERNATING</button>
+                            </div>
+
+                            {virtualMode.smartSettings?.type === 'sequence' ? (
+                              <div className="grid grid-cols-2 gap-2">
+                                {/* Step 1 Gate */}
+                                <div className="bg-white/3 rounded-lg p-2 border border-white/5">
+                                  <span className="text-[9px] font-bold text-gray-400 uppercase">Step 1 Gate</span>
+                                  <div className="flex gap-1 mt-1">
+                                    <select value={virtualMode.smartSettings?.sequence?.step1Type || 'Wins'}
+                                      onChange={e => updateVS({ smartSettings: { ...virtualMode.smartSettings!, sequence: { ...virtualMode.smartSettings!.sequence, step1Type: e.target.value as 'Wins' | 'Losses' } } })}
+                                      className="bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-white text-[9px] flex-1" style={{ background: '#0f172a', color: '#fff' }}>
+                                      <option value="Wins" style={{ background: '#0f172a' }}>Wins</option>
+                                      <option value="Losses" style={{ background: '#0f172a' }}>Losses</option>
+                                    </select>
+                                    <input type="number" min={1} value={virtualMode.smartSettings?.sequence?.step1Qty || 2}
+                                      onChange={e => updateVS({ smartSettings: { ...virtualMode.smartSettings!, sequence: { ...virtualMode.smartSettings!.sequence, step1Qty: +e.target.value || 1 } } })}
+                                      className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px]" style={{ background: '#0f172a', color: '#fff' }} />
+                                  </div>
+                                  <div className="flex gap-1 mt-1">
+                                    <button type="button" onClick={() => updateVS({ smartSettings: { ...virtualMode.smartSettings!, sequence: { ...virtualMode.smartSettings!.sequence, step1Mode: 'consecutive' } } })}
+                                      className={`flex-1 text-[8px] py-0.5 rounded border-none ${
+                                        (virtualMode.smartSettings?.sequence?.step1Mode || 'consecutive') === 'consecutive' ? 'bg-indigo-600 text-white' : 'bg-white/5 text-white'
+                                      } cursor-pointer`}>Consec</button>
+                                    <button type="button" onClick={() => updateVS({ smartSettings: { ...virtualMode.smartSettings!, sequence: { ...virtualMode.smartSettings!.sequence, step1Mode: 'total' } } })}
+                                      className={`flex-1 text-[8px] py-0.5 rounded border-none ${
+                                        virtualMode.smartSettings?.sequence?.step1Mode === 'total' ? 'bg-indigo-600 text-white' : 'bg-white/5 text-white'
+                                      } cursor-pointer`}>Total</button>
+                                  </div>
+                                </div>
+                                {/* Step 2 Gate */}
+                                <div className="bg-white/3 rounded-lg p-2 border border-white/5">
+                                  <span className="text-[9px] font-bold text-gray-400 uppercase">Step 2 Gate</span>
+                                  <div className="flex gap-1 mt-1">
+                                    <select value={virtualMode.smartSettings?.sequence?.step2Type || 'Losses'}
+                                      onChange={e => updateVS({ smartSettings: { ...virtualMode.smartSettings!, sequence: { ...virtualMode.smartSettings!.sequence, step2Type: e.target.value as 'Wins' | 'Losses' } } })}
+                                      className="bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-white text-[9px] flex-1" style={{ background: '#0f172a', color: '#fff' }}>
+                                      <option value="Wins" style={{ background: '#0f172a' }}>Wins</option>
+                                      <option value="Losses" style={{ background: '#0f172a' }}>Losses</option>
+                                    </select>
+                                    <input type="number" min={1} value={virtualMode.smartSettings?.sequence?.step2Qty || 2}
+                                      onChange={e => updateVS({ smartSettings: { ...virtualMode.smartSettings!, sequence: { ...virtualMode.smartSettings!.sequence, step2Qty: +e.target.value || 1 } } })}
+                                      className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px]" style={{ background: '#0f172a', color: '#fff' }} />
+                                  </div>
+                                  <div className="flex gap-1 mt-1">
+                                    <button type="button" onClick={() => updateVS({ smartSettings: { ...virtualMode.smartSettings!, sequence: { ...virtualMode.smartSettings!.sequence, step2Mode: 'consecutive' } } })}
+                                      className={`flex-1 text-[8px] py-0.5 rounded border-none ${
+                                        (virtualMode.smartSettings?.sequence?.step2Mode || 'consecutive') === 'consecutive' ? 'bg-indigo-600 text-white' : 'bg-white/5 text-white'
+                                      } cursor-pointer`}>Consec</button>
+                                    <button type="button" onClick={() => updateVS({ smartSettings: { ...virtualMode.smartSettings!, sequence: { ...virtualMode.smartSettings!.sequence, step2Mode: 'total' } } })}
+                                      className={`flex-1 text-[8px] py-0.5 rounded border-none ${
+                                        virtualMode.smartSettings?.sequence?.step2Mode === 'total' ? 'bg-indigo-600 text-white' : 'bg-white/5 text-white'
+                                      } cursor-pointer`}>Total</button>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="bg-white/3 rounded-lg p-2 border border-white/5">
+                                <div className="flex justify-between items-center mb-1">
+                                  <span className="text-[9px] font-bold text-gray-400 uppercase">Required Alternating Patterns</span>
+                                  <span className="text-[9px] font-bold text-indigo-300">{virtualMode.smartSettings?.alternating?.count || 2} CYCLES</span>
+                                </div>
+                                <input type="range" min={1} max={5} value={virtualMode.smartSettings?.alternating?.count || 2}
+                                  onChange={e => updateVS({ smartSettings: { ...virtualMode.smartSettings!, alternating: { count: +e.target.value } } })}
+                                  className="w-full accent-indigo-500" />
+                                <div className="flex justify-between text-[8px] text-gray-600 font-bold mt-0.5">
+                                  <span>W-L</span><span>W-L-W-L</span><span>W-L-W-L-W-L</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Streak tracker */}
+                  <div className="flex items-center gap-2 text-[10px] pt-1 border-t border-white/5">
+                    <span className="text-emerald-400 font-bold">{virtualMode.virtualWins || 0}W</span>
+                    <span className="text-rose-400 font-bold">{virtualMode.virtualLosses || 0}L</span>
+                    <span className="text-gray-600">|</span>
+                    <span className="text-gray-400">Streak {virtualMode.vConsecWins || 0}W / {virtualMode.vConsecLosses || 0}L</span>
+                  </div>
+                </div>
+
+                {/* === Real → Virtual Card === */}
+                <div className="bg-black/40 border border-white/10 rounded-xl p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-rose-300">Start Real → Switch to Virtual</span>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" className="sr-only peer" checked={virtualMode.startRealToVirtual} onChange={e => updateVS({ startRealToVirtual: e.target.checked })} />
+                      <div className="w-8 h-4 bg-slate-700 peer-checked:bg-rose-500 rounded-full transition-colors" />
+                      <div className="absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full transition-transform peer-checked:translate-x-4" />
+                    </label>
+                  </div>
+                  {virtualMode.startRealToVirtual && (
+                    <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                      <span className="text-gray-400">Trigger on:</span>
+                      <select value={virtualMode.rTriggerType} onChange={e => updateVS({ rTriggerType: e.target.value as 'wins' | 'losses' })}
+                        className="bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }}>
+                        <option value="wins" style={{ background: '#0f172a' }}>Wins</option>
+                        <option value="losses" style={{ background: '#0f172a' }}>Losses</option>
+                      </select>
+                      <select value={virtualMode.rTriggerMode} onChange={e => updateVS({ rTriggerMode: e.target.value as 'consec' | 'total' })}
+                        className="bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }}>
+                        <option value="consec" style={{ background: '#0f172a' }}>Consecutive</option>
+                        <option value="total" style={{ background: '#0f172a' }}>Total</option>
+                      </select>
+                      <span className="text-gray-400">Threshold:</span>
+                      <input type="number" min={1} value={virtualMode.rThreshold} onChange={e => updateVS({ rThreshold: +e.target.value || 1 })}
+                        className="w-12 bg-slate-900 border border-white/10 rounded px-1 py-1 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2 text-[10px] pt-1 border-t border-white/5">
+                    <span className="text-emerald-400 font-bold">{virtualMode.realWins || 0}W</span>
+                    <span className="text-rose-400 font-bold">{virtualMode.realLosses || 0}L</span>
+                    <span className="text-gray-600">|</span>
+                    <span className="text-gray-400">Streak {virtualMode.rConsecWins || 0}W / {virtualMode.rConsecLosses || 0}L</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── Enhanced Switcher Panel ── */}
           <div className="rounded-2xl border border-indigo-500/20 bg-indigo-500/5 p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -1033,32 +1417,124 @@ export function MiniLaxPrimeModal({
 
             {showSwitcherPanel && (
               <div className="mt-4 pt-4 border-t border-white/10 space-y-3">
-                <div className="flex items-center gap-4 text-xs">
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="radio"
-                      name="mini_adaptive_mode"
-                      checked={(adaptiveSwitch.mode || 'sequence') === 'sequence'}
-                      onChange={() => setAdaptiveSwitch(prev => ({ ...prev, mode: 'sequence' }))}
-                    />
-                    <span>Sequence Steps (Step 1 → Step 2)</span>
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="radio"
-                      name="mini_adaptive_mode"
-                      checked={adaptiveSwitch.mode === 'adaptive'}
-                      onChange={() => setAdaptiveSwitch(prev => ({ ...prev, mode: 'adaptive' }))}
-                    />
-                    <span>Auto-Switch on Loss (Contract A ⇌ B)</span>
+                {/* Switcher Mode Tabs */}
+                <div className="flex bg-black/30 rounded-xl p-1 border border-white/8 gap-1">
+                  <button type="button"
+                    onClick={() => setAdaptiveSwitch(prev => ({ ...prev, mode: 'sequence' }))}
+                    className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                      (adaptiveSwitch.mode || 'sequence') === 'sequence' ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'
+                    }`}>📋 SEQUENCE STEPS</button>
+                  <button type="button"
+                    onClick={() => setAdaptiveSwitch(prev => ({ ...prev, mode: 'adaptive' }))}
+                    className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                      adaptiveSwitch.mode === 'adaptive' ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'
+                    }`}>⚡ ADAPTIVE CONTRACTS</button>
+                </div>
+
+                {/* Dual Contracts System toggle */}
+                <div className="flex items-center justify-between bg-purple-500/8 border border-purple-500/20 rounded-xl p-2.5">
+                  <div>
+                    <span className="text-[10px] font-bold text-purple-300">⚡ DUAL CONTRACTS SYSTEM</span>
+                    <p className="text-[9px] text-gray-500 mt-0.5">Fires exactly 2 contracts on the same tick. Martingale only acts on both-loss.</p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer ml-2">
+                    <input type="checkbox" className="sr-only peer" checked={!!adaptiveSwitch.dualMode}
+                      onChange={e => setAdaptiveSwitch(prev => ({ ...prev, dualMode: e.target.checked }))} />
+                    <div className="w-8 h-4 bg-slate-700 peer-checked:bg-purple-600 rounded-full transition-colors" />
+                    <div className="absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full transition-transform peer-checked:translate-x-4" />
                   </label>
                 </div>
 
+                {/* ADAPTIVE CONTRACTS Panel */}
+                {adaptiveSwitch.mode === 'adaptive' && (() => {
+                  const ac = adaptiveSwitch.adaptiveContracts || {
+                    contractA: { type: 'DIGITEVEN', barrier: 4, ticks: 5 },
+                    contractB: { type: 'DIGITODD', barrier: 4, ticks: 5 },
+                    activeSide: 'A' as 'A' | 'B',
+                    startSide: 'A' as 'A' | 'B',
+                  };
+                  const activeSide = ac.activeSide || ac.startSide || 'A';
+                  const startSide = ac.startSide || 'A';
+                  const updateAC = (patch: any) => setAdaptiveSwitch(prev => ({ ...prev, adaptiveContracts: { ...ac, ...patch } }));
+
+                  return (
+                    <div className="space-y-3 bg-purple-500/5 border border-purple-500/20 rounded-xl p-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-[10px] font-bold text-purple-300">AUTO-SWITCH ON LOSS</span>
+                          <p className="text-[9px] text-gray-500 mt-0.5">Switches instantly when a loss occurs</p>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                            activeSide === 'A' ? 'text-indigo-300 bg-indigo-500/20 border-indigo-500/30' : 'text-rose-300 bg-rose-500/20 border-rose-500/30'
+                          }`}>● CONTRACT {activeSide}</span>
+                          <button type="button" onClick={() => updateAC({ activeSide: activeSide === 'A' ? 'B' : 'A' })}
+                            className="text-[9px] font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 px-1.5 py-0.5 rounded cursor-pointer">⇌</button>
+                        </div>
+                      </div>
+
+                      {/* Start Side */}
+                      <div className="flex items-center gap-2 text-[10px]">
+                        <span className="text-gray-400 font-bold">Start:</span>
+                        <button type="button" onClick={() => updateAC({ startSide: 'A', activeSide: 'A' })}
+                          className={`px-2 py-0.5 rounded text-[9px] font-bold border-none ${ startSide === 'A' ? 'bg-indigo-600 text-white' : 'bg-white/5 text-gray-400'} cursor-pointer`}>Contract A</button>
+                        <button type="button" onClick={() => updateAC({ startSide: 'B', activeSide: 'B' })}
+                          className={`px-2 py-0.5 rounded text-[9px] font-bold border-none ${ startSide === 'B' ? 'bg-indigo-600 text-white' : 'bg-white/5 text-gray-400'} cursor-pointer`}>Contract B</button>
+                      </div>
+
+                      {/* Contract A & B grid */}
+                      <div className="grid grid-cols-2 gap-2">
+                        {/* Contract A */}
+                        <div className={`flex flex-col gap-1.5 p-2.5 rounded-xl border ${ activeSide === 'A' ? 'border-indigo-500 bg-indigo-500/10' : 'border-white/8 bg-white/2' }`}>
+                          <span className="text-[10px] font-bold text-indigo-300">CONTRACT A{activeSide === 'A' ? ' ✓' : ''}</span>
+                          <select value={ac.contractA?.type || 'DIGITEVEN'} onChange={e => updateAC({ contractA: { ...ac.contractA, type: e.target.value } })}
+                            className="w-full bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }}>
+                            {TRADE_OPTIONS.map(opt => <option key={opt.value} value={opt.value} style={{ background: '#0f172a' }}>{opt.label}</option>)}
+                          </select>
+                          {needsBarrier(ac.contractA?.type || 'DIGITEVEN') && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-[9px] text-gray-400">Barrier:</span>
+                              <input type="number" min={0} max={9} value={ac.contractA?.barrier ?? 4} onChange={e => updateAC({ contractA: { ...ac.contractA, barrier: Math.min(9, Math.max(0, +e.target.value || 0)) } })}
+                                className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
+                            </div>
+                          )}
+                          <div className="flex items-center gap-1">
+                            <span className="text-[9px] text-purple-400 font-bold">Ticks:</span>
+                            <input type="number" min={1} max={100} value={ac.contractA?.ticks ?? 5} onChange={e => updateAC({ contractA: { ...ac.contractA, ticks: Math.max(1, +e.target.value || 1) } })}
+                              className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
+                          </div>
+                        </div>
+                        {/* Contract B */}
+                        <div className={`flex flex-col gap-1.5 p-2.5 rounded-xl border ${ activeSide === 'B' ? 'border-indigo-500 bg-indigo-500/10' : 'border-white/8 bg-white/2' }`}>
+                          <span className="text-[10px] font-bold text-indigo-300">CONTRACT B{activeSide === 'B' ? ' ✓' : ''}</span>
+                          <select value={ac.contractB?.type || 'DIGITODD'} onChange={e => updateAC({ contractB: { ...ac.contractB, type: e.target.value } })}
+                            className="w-full bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }}>
+                            {TRADE_OPTIONS.map(opt => <option key={opt.value} value={opt.value} style={{ background: '#0f172a' }}>{opt.label}</option>)}
+                          </select>
+                          {needsBarrier(ac.contractB?.type || 'DIGITODD') && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-[9px] text-gray-400">Barrier:</span>
+                              <input type="number" min={0} max={9} value={ac.contractB?.barrier ?? 4} onChange={e => updateAC({ contractB: { ...ac.contractB, barrier: Math.min(9, Math.max(0, +e.target.value || 0)) } })}
+                                className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
+                            </div>
+                          )}
+                          <div className="flex items-center gap-1">
+                            <span className="text-[9px] text-purple-400 font-bold">Ticks:</span>
+                            <input type="number" min={1} max={100} value={ac.contractB?.ticks ?? 5} onChange={e => updateAC({ contractB: { ...ac.contractB, ticks: Math.max(1, +e.target.value || 1) } })}
+                              className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* SEQUENCE STEPS Panel */}
                 {(adaptiveSwitch.mode || 'sequence') === 'sequence' && (
                   <div className="space-y-2">
                     {adaptiveSwitch.steps.map((step, idx) => (
                       <div key={idx} className="flex items-center gap-3 bg-black/40 p-2.5 rounded-xl border border-white/5 text-xs">
-                        <span className="font-bold text-gray-400 w-16">Step {idx + 1}:</span>
+                        <span className="font-bold text-gray-400 w-14 shrink-0">Step {idx + 1}:</span>
                         <select
                           value={step.contractType || 'DIGITEVEN'}
                           onChange={e => {
@@ -1068,10 +1544,10 @@ export function MiniLaxPrimeModal({
                               steps: prev.steps.map((s, i) => i === idx ? { ...s, contractType: newType } : s),
                             }));
                           }}
-                          className="bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-white text-xs"
+                          className="flex-1 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-white text-xs" style={{ background: '#0f172a', color: '#fff' }}
                         >
                           {TRADE_OPTIONS.map(opt => (
-                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            <option key={opt.value} value={opt.value} style={{ background: '#0f172a' }}>{opt.label}</option>
                           ))}
                         </select>
                         <div className="flex items-center gap-1.5 ml-auto">
@@ -1088,11 +1564,20 @@ export function MiniLaxPrimeModal({
                                 steps: prev.steps.map((s, i) => i === idx ? { ...s, reps } : s),
                               }));
                             }}
-                            className="w-12 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-center text-white"
+                            className="w-12 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-center text-white text-xs" style={{ background: '#0f172a', color: '#fff' }}
                           />
                         </div>
+                        {adaptiveSwitch.steps.length > 1 && (
+                          <button type="button" onClick={() => setAdaptiveSwitch(prev => ({ ...prev, steps: prev.steps.filter((_, i) => i !== idx) }))}
+                            className="text-rose-400 hover:text-rose-300 text-xs font-bold">✕</button>
+                        )}
                       </div>
                     ))}
+                    <button type="button"
+                      onClick={() => setAdaptiveSwitch(prev => ({ ...prev, steps: [...prev.steps, { contractType: 'DIGITEVEN', reps: 2 }] }))}
+                      className="w-full py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-[10px] font-bold border border-white/10">
+                      + Add Step
+                    </button>
                   </div>
                 )}
               </div>
