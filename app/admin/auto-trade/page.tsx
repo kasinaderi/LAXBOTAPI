@@ -177,6 +177,27 @@ const getTopAlternatingPairAndCount = (digits: number[]) => {
     return { pair: bestPair, count: maxCount };
 };
 
+const getStepTradeType = (step: PlaylistTradeStep): string => {
+    if (step.source === 'laxprime') {
+        if (step.laxprimeConfig?.adaptiveSwitch?.enabled) {
+            return step.laxprimeConfig.adaptiveSwitch.mode === 'adaptive' ? 'Adaptive' : 'Switcher';
+        }
+        if (step.laxprimeConfig?.strategies && step.laxprimeConfig.strategies.length > 0) {
+            return step.laxprimeConfig.strategies.map(s => {
+                const opt = CONTRACT_OPTIONS.find(c => c.value === s.tradeType);
+                return opt ? opt.label.replace(' (CALL)', '').replace(' (PUT)', '') : s.tradeType.replace('DIGIT', '');
+            }).join(' / ');
+        }
+        return 'EVEN';
+    } else {
+        if (step.contractOverride) {
+            const opt = CONTRACT_OPTIONS.find(c => c.value === step.contractOverride);
+            return opt ? opt.label.replace(' (CALL)', '').replace(' (PUT)', '') : step.contractOverride.replace('DIGIT', '');
+        }
+        return 'Differs';
+    }
+};
+
 const getTopOddPair = (digits: number[]) => {
     const counts: Record<number, number> = { 1: 0, 3: 0, 5: 0, 7: 0, 9: 0 };
     digits.forEach(d => {
@@ -418,6 +439,23 @@ export default function AutoTradePage() {
     useEffect(() => { playlistLoopRef.current    = playlistLoop;     }, [playlistLoop]);
     useEffect(() => { playlistStatusRef.current  = playlistStatus;   }, [playlistStatus]);
     useEffect(() => { stepCapitalLossGuardRef.current = stepCapitalLossGuard; }, [stepCapitalLossGuard]);
+
+    useEffect(() => {
+        // Lock stake during execution so it does not interfere in the middle of an ongoing step
+        if (playlistStatusRef.current === 'executing') return;
+
+        if (isCapitalCompound) {
+            const bal = useDerivStore.getState().account?.balance ?? (account?.balance || 0);
+            if (bal > 0) {
+                const pct = parseFloat(capitalPct) || 1.0;
+                const calculated = Math.max(0.35, Number((bal * (pct / 100)).toFixed(2))).toFixed(2);
+                setCurrentStake(calculated);
+            }
+        } else if (!isRunningAuto || sessionProfRef.current <= 0) {
+            const base = parseFloat(baseStake) || 0.50;
+            setCurrentStake(base.toFixed(2));
+        }
+    }, [isCapitalCompound, capitalPct, account?.balance, baseStake, isRunningAuto]);
 
     // React to virtual ↔ real mode switches triggered by the trade engine
     const prevVirtualModeRef = useRef(virtualSettings.isVirtualMode);
@@ -2623,6 +2661,19 @@ export default function AutoTradePage() {
                                                         <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-[9px] font-black text-indigo-300">
                                                             {playlistSteps.length} STEPS
                                                         </span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setPlaylistLoop(l => !l)}
+                                                            disabled={isRunningAuto}
+                                                            className={`px-2 py-0.5 rounded-full text-[9px] font-black border transition-all flex items-center gap-1 ${
+                                                                playlistLoop
+                                                                    ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
+                                                                    : 'bg-white/5 border-white/10 text-gray-500 hover:text-gray-300'
+                                                            }`}
+                                                        >
+                                                            <Repeat className="w-2.5 h-2.5" />
+                                                            {playlistLoop ? 'LOOP ON' : 'LOOP OFF'}
+                                                        </button>
                                                     </div>
                                                     <p className="text-[10px] text-gray-400">Sequential inter-trade delay chain with continuous compounding</p>
                                                 </div>
@@ -2657,49 +2708,41 @@ export default function AutoTradePage() {
                                             )}
                                         </div>
 
-                                        {/* Loop, Stake & Global TP/SL Session Controls Bar */}
-                                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 pt-1">
-                                            {/* Loop Toggle */}
-                                            <div className="flex items-center justify-between p-3 rounded-xl bg-white/3 border border-white/5">
-                                                <div className="space-y-0.5">
+                                        {/* Session Active Capital & Global TP/SL Bar (Spacious 3-Card Grid) */}
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                                            {/* 1. Active Capital & Live Stake Card */}
+                                            <div className="p-3.5 rounded-xl bg-white/3 border border-white/5 flex flex-col justify-between">
+                                                <div className="flex items-center justify-between mb-2">
                                                     <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                                                        <Repeat className="w-3.5 h-3.5 text-indigo-400" />
-                                                        Continuous Loop
+                                                        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                                                        ACTIVE CAPITAL & STAKE
                                                     </span>
-                                                    <p className="text-[9px] text-gray-400">Restart sequence until TP/SL</p>
+                                                    <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                                                        {isCapitalCompound ? `${capitalPct}% Capital Scaling` : isCompounding ? 'Compounded' : 'Base Stake'}
+                                                    </span>
                                                 </div>
-                                                <Toggle enabled={playlistLoop} onChange={setPlaylistLoop} disabled={isRunningAuto} />
+                                                <div className="flex items-baseline justify-between mt-1">
+                                                    <div>
+                                                        <p className="text-[9px] font-black uppercase tracking-widest text-gray-400">Live Balance</p>
+                                                        <p className="text-sm font-black font-mono text-white">${(account?.balance || 0).toFixed(2)}</p>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className="text-[9px] font-black uppercase tracking-widest text-gray-400">Step Stake</p>
+                                                        <p className="text-xl font-black font-mono text-emerald-400">${currentStake}</p>
+                                                    </div>
+                                                </div>
+                                                <p className="text-[9px] text-gray-500 mt-2">
+                                                    {isCapitalCompound
+                                                        ? `Auto-scaling (${capitalPct}% of live balance)`
+                                                        : isCompounding
+                                                        ? 'Base stake + accumulated session profit'
+                                                        : `Fixed starting stake ($${baseStake})`}
+                                                </p>
                                             </div>
 
-                                            {/* Base Starting Stake Input */}
-                                            <div className="flex items-center justify-between p-3 rounded-xl bg-white/3 border border-white/5">
-                                                <div className="space-y-0.5 pr-2">
-                                                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                                                        <Zap className="w-3.5 h-3.5 text-cyan-400" />
-                                                        Base Stake ($)
-                                                    </span>
-                                                    <p className="text-[9px] text-gray-400">Starting base amount</p>
-                                                </div>
-                                                <input
-                                                    type="number"
-                                                    step="0.05"
-                                                    min="0.35"
-                                                    value={baseStake}
-                                                    onChange={e => {
-                                                        const val = e.target.value;
-                                                        setBaseStake(val);
-                                                        if (!isRunningAuto || sessionProfit <= 0) {
-                                                            setCurrentStake(val);
-                                                        }
-                                                    }}
-                                                    disabled={isRunningAuto}
-                                                    className="w-20 px-2 py-1 text-right bg-black/40 border border-white/10 rounded-lg text-xs font-mono font-bold text-white focus:outline-none focus:border-cyan-500/50 disabled:opacity-50"
-                                                />
-                                            </div>
-
-                                            {/* Global Take Profit (Dual Mode: Profit $ ⇌ Total Wins) */}
+                                            {/* 2. Global Take Profit Card */}
                                             <div
-                                                className="p-3 rounded-xl bg-black/40 border border-emerald-500/20 hover:border-emerald-500/40 transition-all select-none"
+                                                className="p-3.5 rounded-xl bg-black/40 border border-emerald-500/20 hover:border-emerald-500/40 transition-all select-none flex flex-col justify-between"
                                                 onTouchStart={e => { tpTouchStartXRef.current = e.touches[0].clientX; }}
                                                 onTouchEnd={e => {
                                                     if (tpTouchStartXRef.current !== null) {
@@ -2711,9 +2754,9 @@ export default function AutoTradePage() {
                                                     }
                                                 }}
                                             >
-                                                <div className="flex items-center justify-between mb-1.5 gap-1">
+                                                <div className="flex items-center justify-between mb-2 gap-1">
                                                     <span
-                                                        className="text-[10px] font-black text-emerald-400 uppercase tracking-wider truncate cursor-pointer hover:underline"
+                                                        className="text-[11px] font-black text-emerald-400 uppercase tracking-wider cursor-pointer hover:underline"
                                                         onClick={() => setGlobalTPMode(m => m === 'profit' ? 'wins' : 'profit')}
                                                         title="Click or swipe to switch between USD Profit and Total Wins"
                                                     >
@@ -2722,13 +2765,13 @@ export default function AutoTradePage() {
                                                     <button
                                                         type="button"
                                                         onClick={() => setGlobalTPMode(m => m === 'profit' ? 'wins' : 'profit')}
-                                                        className="px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 transition-all cursor-pointer shrink-0"
-                                                        title="Toggle between USD profit and number of wins"
+                                                        className="px-2.5 py-0.5 rounded-full text-[9px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 transition-all cursor-pointer shrink-0"
+                                                        title="Toggle between Total Wins and USD Profit"
                                                     >
-                                                        {globalTPMode === 'wins' ? '🏆 Wins' : '💵 USD'}
+                                                        {globalTPMode === 'wins' ? '🏆 Total Wins' : '💵 USD Profit'}
                                                     </button>
                                                 </div>
-                                                <div className="flex items-center gap-1.5">
+                                                <div className="flex items-center gap-2 my-1">
                                                     <input
                                                         type="number"
                                                         min={globalTPMode === 'wins' ? 1 : 0.5}
@@ -2736,20 +2779,20 @@ export default function AutoTradePage() {
                                                         value={takeProfit}
                                                         onChange={e => setTakeProfit(e.target.value)}
                                                         disabled={isRunningAuto}
-                                                        className="w-full px-2 py-1 bg-slate-900 border border-white/10 rounded-lg text-xs font-mono font-bold text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50"
+                                                        className="w-full px-2.5 py-1.5 bg-slate-900 border border-white/10 rounded-lg text-sm font-mono font-bold text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50"
                                                     />
-                                                    <span className="text-[10px] font-bold text-gray-400 font-mono">
-                                                        {globalTPMode === 'wins' ? 'W' : '$'}
+                                                    <span className="text-xs font-bold text-gray-400 font-mono">
+                                                        {globalTPMode === 'wins' ? 'WINS' : 'USD'}
                                                     </span>
                                                 </div>
-                                                <p className="text-[8px] text-gray-500 mt-1 truncate">
-                                                    {globalTPMode === 'wins' ? `Halt all on ${takeProfit} wins` : `Halt all at +$${takeProfit}`}
+                                                <p className="text-[9px] text-gray-400 mt-1">
+                                                    {globalTPMode === 'wins' ? `Halts all steps on ${takeProfit} wins` : `Halts all steps at +$${takeProfit}`}
                                                 </p>
                                             </div>
 
-                                            {/* Global Stop Loss (Dual Mode: Loss $ ⇌ Total Losses) */}
+                                            {/* 3. Global Stop Loss Card */}
                                             <div
-                                                className="p-3 rounded-xl bg-black/40 border border-rose-500/20 hover:border-rose-500/40 transition-all select-none"
+                                                className="p-3.5 rounded-xl bg-black/40 border border-rose-500/20 hover:border-rose-500/40 transition-all select-none flex flex-col justify-between"
                                                 onTouchStart={e => { slTouchStartXRef.current = e.touches[0].clientX; }}
                                                 onTouchEnd={e => {
                                                     if (slTouchStartXRef.current !== null) {
@@ -2761,9 +2804,9 @@ export default function AutoTradePage() {
                                                     }
                                                 }}
                                             >
-                                                <div className="flex items-center justify-between mb-1.5 gap-1">
+                                                <div className="flex items-center justify-between mb-2 gap-1">
                                                     <span
-                                                        className="text-[10px] font-black text-rose-400 uppercase tracking-wider truncate cursor-pointer hover:underline"
+                                                        className="text-[11px] font-black text-rose-400 uppercase tracking-wider cursor-pointer hover:underline"
                                                         onClick={() => setGlobalSLMode(m => m === 'loss' ? 'losses' : 'loss')}
                                                         title="Click or swipe to switch between USD Loss and Total Losses"
                                                     >
@@ -2772,13 +2815,13 @@ export default function AutoTradePage() {
                                                     <button
                                                         type="button"
                                                         onClick={() => setGlobalSLMode(m => m === 'loss' ? 'losses' : 'loss')}
-                                                        className="px-2 py-0.5 rounded-full text-[9px] font-black bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30 transition-all cursor-pointer shrink-0"
-                                                        title="Toggle between USD loss and number of losses"
+                                                        className="px-2.5 py-0.5 rounded-full text-[9px] font-black bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30 transition-all cursor-pointer shrink-0"
+                                                        title="Toggle between Total Losses and USD Loss"
                                                     >
-                                                        {globalSLMode === 'losses' ? '🔢 Count' : '💵 USD'}
+                                                        {globalSLMode === 'losses' ? '🔢 Total Losses' : '💵 USD Loss'}
                                                     </button>
                                                 </div>
-                                                <div className="flex items-center gap-1.5">
+                                                <div className="flex items-center gap-2 my-1">
                                                     <input
                                                         type="number"
                                                         min={globalSLMode === 'losses' ? 1 : 0.5}
@@ -2786,43 +2829,15 @@ export default function AutoTradePage() {
                                                         value={stopLoss}
                                                         onChange={e => setStopLoss(e.target.value)}
                                                         disabled={isRunningAuto}
-                                                        className="w-full px-2 py-1 bg-slate-900 border border-white/10 rounded-lg text-xs font-mono font-bold text-white focus:outline-none focus:border-rose-500/50 disabled:opacity-50"
+                                                        className="w-full px-2.5 py-1.5 bg-slate-900 border border-white/10 rounded-lg text-sm font-mono font-bold text-white focus:outline-none focus:border-rose-500/50 disabled:opacity-50"
                                                     />
-                                                    <span className="text-[10px] font-bold text-gray-400 font-mono">
-                                                        {globalSLMode === 'losses' ? 'L' : '$'}
+                                                    <span className="text-xs font-bold text-gray-400 font-mono">
+                                                        {globalSLMode === 'losses' ? 'LOSSES' : 'USD'}
                                                     </span>
                                                 </div>
-                                                <p className="text-[8px] text-gray-500 mt-1 truncate">
-                                                    {globalSLMode === 'losses' ? `Halt all on ${stopLoss} losses` : `Halt all at -$${stopLoss}`}
+                                                <p className="text-[9px] text-gray-400 mt-1">
+                                                    {globalSLMode === 'losses' ? `Halts all steps on ${stopLoss} losses` : `Halts all steps at -$${stopLoss}`}
                                                 </p>
-                                            </div>
-
-                                            {/* 50% Capital Loss Guard Toggle */}
-                                            <div className="flex items-center justify-between p-3 rounded-xl bg-white/3 border border-white/5">
-                                                <div className="space-y-0.5 pr-1">
-                                                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                                                        <ShieldAlert className={`w-3.5 h-3.5 ${stepCapitalLossGuard ? 'text-rose-400' : 'text-gray-500'}`} />
-                                                        50% Cap Guard
-                                                    </span>
-                                                    <p className="text-[9px] text-gray-400">Halt if step loss &gt; 50% bal</p>
-                                                </div>
-                                                <Toggle enabled={stepCapitalLossGuard} onChange={setStepCapitalLossGuard} disabled={isRunningAuto} />
-                                            </div>
-
-                                            {/* Running Compounded Stake Display */}
-                                            <div className="flex items-center justify-between p-3 rounded-xl bg-white/3 border border-white/5">
-                                                <div className="space-y-0.5">
-                                                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                                                        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                                                        Running Stake
-                                                    </span>
-                                                    <p className="text-[9px] text-gray-400">
-                                                        {isCapitalCompound ? `${capitalPct}% Capital` : isCompounding ? 'Compounded' : 'Base stake'}
-                                                    </p>
-                                                </div>
-                                                <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs font-black font-mono text-emerald-400">
-                                                    ${currentStake}
-                                                </span>
                                             </div>
                                         </div>
 
@@ -2905,6 +2920,10 @@ export default function AutoTradePage() {
                                                                 </span>
                                                                 <span className="px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/25 text-[9px] font-bold text-indigo-300 uppercase shrink-0">
                                                                     {step.source === 'laxprime' ? 'LaxPrime' : 'LaxSniper XV'}
+                                                                </span>
+                                                                <span className="px-1.5 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/25 text-[9px] font-bold text-cyan-300 shrink-0 flex items-center gap-1">
+                                                                    <Zap className="w-2.5 h-2.5 text-cyan-400" />
+                                                                    {getStepTradeType(step)}
                                                                 </span>
                                                                 <span className="px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-[9px] font-mono font-medium text-gray-300 shrink-0">
                                                                     ⏱️ {step.delayMinutes > 0 ? `${step.delayMinutes}m delay` : 'Immediate'}
@@ -3678,6 +3697,33 @@ export default function AutoTradePage() {
                                         </div>
                                     </div>
 
+                                    {/* Playlist Execution & Risk Protection Controls */}
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                        {/* Continuous Loop */}
+                                        <div className="p-4 rounded-xl border border-white/8 bg-white/2 flex items-center justify-between">
+                                            <div className="space-y-0.5 pr-2">
+                                                <span className="text-sm font-bold text-white flex items-center gap-1.5">
+                                                    <Repeat className="w-4 h-4 text-indigo-400" />
+                                                    Continuous Loop
+                                                </span>
+                                                <p className="text-[10px] text-gray-500">Restart playlist sequence from Step 1 indefinitely until Global TP or SL is reached</p>
+                                            </div>
+                                            <Toggle enabled={playlistLoop} onChange={setPlaylistLoop} disabled={isRunningAuto} />
+                                        </div>
+
+                                        {/* 50% Capital Loss Guard */}
+                                        <div className="p-4 rounded-xl border border-white/8 bg-white/2 flex items-center justify-between">
+                                            <div className="space-y-0.5 pr-2">
+                                                <span className="text-sm font-bold text-white flex items-center gap-1.5">
+                                                    <ShieldAlert className={`w-4 h-4 ${stepCapitalLossGuard ? 'text-rose-400' : 'text-gray-500'}`} />
+                                                    50% Capital Loss Guard
+                                                </span>
+                                                <p className="text-[10px] text-gray-500">Halt if any single step suffers a loss exceeding 50% of live account balance</p>
+                                            </div>
+                                            <Toggle enabled={stepCapitalLossGuard} onChange={setStepCapitalLossGuard} disabled={isRunningAuto} />
+                                        </div>
+                                    </div>
+
                                     {/* Profit Compounding */}
                                     <div className={`p-4 rounded-xl border transition-all ${isCompounding && !isCapitalCompound ? 'border-teal-500/25 bg-teal-500/5' : 'border-white/8 bg-white/2'}`}>
                                         <div className="flex items-center justify-between mb-2">
@@ -3703,7 +3749,18 @@ export default function AutoTradePage() {
                                                 <p className="text-sm font-bold text-white">Capital-Based Stake Scaling</p>
                                                 <p className="text-[10px] text-gray-500">Stake = X% of live account balance · auto-scales as balance grows</p>
                                             </div>
-                                            <Toggle enabled={isCapitalCompound} onChange={v => { setIsCapitalCompound(v); if (v) setIsCompounding(false); }} disabled={isRunningAuto} />
+                                            <Toggle enabled={isCapitalCompound} onChange={v => {
+                                                setIsCapitalCompound(v);
+                                                if (v) {
+                                                    setIsCompounding(false);
+                                                    const bal = useDerivStore.getState().account?.balance ?? (account?.balance || 0);
+                                                    if (bal > 0) {
+                                                        const pct = parseFloat(capitalPct) || 1.0;
+                                                        const calculated = Math.max(0.35, Number((bal * (pct / 100)).toFixed(2))).toFixed(2);
+                                                        setCurrentStake(calculated);
+                                                    }
+                                                }
+                                            }} disabled={isRunningAuto} />
                                         </div>
                                         {isCapitalCompound && (
                                             <div className="grid grid-cols-2 gap-4 mt-3 pt-3 border-t border-white/5">
