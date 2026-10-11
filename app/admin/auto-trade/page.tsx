@@ -294,7 +294,9 @@ export default function AutoTradePage() {
     const [maxMartSteps,        setMaxMartSteps]        = useState('5');
     const [stopOnMaxSteps,      setStopOnMaxSteps]      = useState(true);
     const [takeProfit,          setTakeProfit]          = useState('10.00');
+    const [globalTPMode,        setGlobalTPMode]        = useState<'profit' | 'wins'>('profit');
     const [stopLoss,            setStopLoss]            = useState('30.00');
+    const [globalSLMode,        setGlobalSLMode]        = useState<'loss' | 'losses'>('loss');
     const [maxWinsCap,          setMaxWinsCap]          = useState('20');
     const [maxTradesCap,        setMaxTradesCap]        = useState('50');
     const [maxTradesPerMarket,  setMaxTradesPerMarket]  = useState('3');
@@ -335,6 +337,11 @@ export default function AutoTradePage() {
     const curRepRef     = useRef(0);
     const sessionProfRef= useRef(0);
     const sessionWinsRef= useRef(0);
+    const sessionLossesRef = useRef(0);
+    const globalTPModeRef = useRef<'profit' | 'wins'>('profit');
+    const globalSLModeRef = useRef<'loss' | 'losses'>('loss');
+    const tpTouchStartXRef = useRef<number | null>(null);
+    const slTouchStartXRef = useRef<number | null>(null);
     const sessionTrRef  = useRef(0);
     const cycleTradesCountRef  = useRef(0);
     const marketRatingsRef     = useRef<any[]>([]);
@@ -369,6 +376,20 @@ export default function AutoTradePage() {
     const playlistCountdownTimerRef = useRef<NodeJS.Timeout | null>(null);
     const lastBotLogIdRef           = useRef<string | null>(null);
     const activeStepSourceRef       = useRef<'laxprime' | 'laxsniper-xv' | null>(null);
+    const activeLaxPrimeStepRef     = useRef<{
+        stepIdx: number;
+        stepProfit: number;
+        stepWins: number;
+        stepLosses: number;
+        initialStake: number;
+        targetProfit: number;
+        targetProfitMode: 'profit' | 'wins';
+        stopLoss: number;
+        stopLossMode: 'loss' | 'losses';
+        tradingMode: string;
+        compoundProfits: boolean;
+        compoundPct: number;
+    } | null>(null);
     const stepLaunchTimeRef         = useRef<number>(0);
     const playlistTargetTimeRef     = useRef<number>(0);
 
@@ -380,6 +401,9 @@ export default function AutoTradePage() {
     useEffect(() => { curRepRef.current          = curRep;           }, [curRep]);
     useEffect(() => { sessionProfRef.current     = sessionProfit;    }, [sessionProfit]);
     useEffect(() => { sessionWinsRef.current     = sessionWins;      }, [sessionWins]);
+    useEffect(() => { sessionLossesRef.current   = sessionLosses;    }, [sessionLosses]);
+    useEffect(() => { globalTPModeRef.current    = globalTPMode;     }, [globalTPMode]);
+    useEffect(() => { globalSLModeRef.current    = globalSLMode;     }, [globalSLMode]);
     useEffect(() => { sessionTrRef.current       = sessionTrades;    }, [sessionTrades]);
     useEffect(() => { cycleTradesCountRef.current  = cycleTradesCount; }, [cycleTradesCount]);
     useEffect(() => { selectedPresetRef.current  = selectedPreset;   }, [selectedPreset]);
@@ -621,7 +645,9 @@ export default function AutoTradePage() {
             if (s.maxMartSteps)        setMaxMartSteps(s.maxMartSteps);
             if (s.stopOnMaxSteps       !== undefined) setStopOnMaxSteps(s.stopOnMaxSteps);
             if (s.takeProfit)          setTakeProfit(s.takeProfit);
+            if (s.globalTPMode)        setGlobalTPMode(s.globalTPMode);
             if (s.stopLoss)            setStopLoss(s.stopLoss);
+            if (s.globalSLMode)        setGlobalSLMode(s.globalSLMode);
             if (s.maxWinsCap)          setMaxWinsCap(s.maxWinsCap);
             if (s.maxTradesCap)        setMaxTradesCap(s.maxTradesCap);
             if (s.maxTradesPerMarket)  setMaxTradesPerMarket(s.maxTradesPerMarket);
@@ -651,7 +677,8 @@ export default function AutoTradePage() {
                 digitPatternEnabled, patternBoxes, compareDigit, useCustomContracts, noContradiction,
                 tradePattern, continuousMode,
                 baseStake,
-                isMartingaleEnabled, martingaleMul, maxMartSteps, stopOnMaxSteps, takeProfit, stopLoss,
+                isMartingaleEnabled, martingaleMul, maxMartSteps, stopOnMaxSteps,
+                takeProfit, globalTPMode, stopLoss, globalSLMode,
                 maxWinsCap, maxTradesCap, maxTradesPerMarket, cycleInterval,
                 isCompounding, compoundPct, isCapitalCompound, capitalPct,
                 playlistSteps, playlistLoop,
@@ -664,7 +691,8 @@ export default function AutoTradePage() {
         digitPatternEnabled, patternBoxes, compareDigit, useCustomContracts, noContradiction,
         tradePattern, continuousMode,
         baseStake,
-        isMartingaleEnabled, martingaleMul, maxMartSteps, stopOnMaxSteps, takeProfit, stopLoss,
+        isMartingaleEnabled, martingaleMul, maxMartSteps, stopOnMaxSteps,
+        takeProfit, globalTPMode, stopLoss, globalSLMode,
         maxWinsCap, maxTradesCap, maxTradesPerMarket, cycleInterval,
         isCompounding, compoundPct, isCapitalCompound, capitalPct,
         playlistSteps, playlistLoop,
@@ -760,15 +788,30 @@ export default function AutoTradePage() {
         lastBotLogIdRef.current = currentBotLogs[0] ? `${currentBotLogs[0].id}::${currentBotLogs[0].result}` : '__INIT__';
         lastIdRef.current = currentDerivLogs[0] ? `${currentDerivLogs[0].requestId}::${currentDerivLogs[0].result}` : '__INIT__';
 
-        // Check global take profit & stop loss limits
+        // Check global take profit & stop loss limits across all steps
         const curProfit = sessionProfRef.current;
-        if (Number(takeProfit) > 0 && curProfit >= Number(takeProfit)) {
-            addAuditLog(`🎯 Global Take Profit reached ($${curProfit.toFixed(2)} >= $${takeProfit})! Session completed.`, 'success');
+        const curWins = sessionWinsRef.current;
+        const curLosses = sessionLossesRef.current;
+
+        const reachedGlobalTP = globalTPModeRef.current === 'wins'
+            ? (Number(takeProfit) > 0 && curWins >= Number(takeProfit))
+            : (Number(takeProfit) > 0 && curProfit >= Number(takeProfit));
+
+        const reachedGlobalSL = globalSLModeRef.current === 'losses'
+            ? (Number(stopLoss) > 0 && curLosses >= Number(stopLoss))
+            : (Number(stopLoss) > 0 && curProfit <= -Math.abs(Number(stopLoss)));
+
+        if (reachedGlobalTP) {
+            const detail = globalTPModeRef.current === 'wins' ? `${curWins} >= ${takeProfit} Wins` : `$${curProfit.toFixed(2)} >= $${takeProfit}`;
+            addAuditLog(`🎯 Global Take Profit reached (${detail})! Session completed.`, 'success');
+            setPlaylistStatus('completed');
             handleStop();
             return;
         }
-        if (Number(stopLoss) > 0 && curProfit <= -Math.abs(Number(stopLoss))) {
-            addAuditLog(`🛑 Global Stop Loss hit ($${curProfit.toFixed(2)} <= -$${stopLoss})! Session halted.`, 'error');
+        if (reachedGlobalSL) {
+            const detail = globalSLModeRef.current === 'losses' ? `${curLosses} >= ${stopLoss} Losses` : `$${curProfit.toFixed(2)} <= -$${stopLoss}`;
+            addAuditLog(`🛑 Global Stop Loss hit (${detail})! Session halted.`, 'error');
+            setPlaylistStatus('completed');
             handleStop();
             return;
         }
@@ -791,10 +834,36 @@ export default function AutoTradePage() {
                 const currentBotState = useBotStore.getState();
                 const stepConfig = step.laxprimeConfig;
 
+                const stepTP = Number(stepConfig?.targetProfit ?? (stepConfig?.targetProfitMode === 'wins' ? 2 : 5));
+                const stepTPMode = stepConfig?.targetProfitMode || (stepConfig?.targetProfit ? 'profit' : 'wins');
+                const stepSL = Number(stepConfig?.stopLoss ?? (stepConfig?.stopLossMode === 'losses' ? 2 : 10));
+                const stepSLMode = stepConfig?.stopLossMode || (stepConfig?.stopLoss ? 'loss' : 'losses');
+                const stepTradingMode = stepConfig?.tradingMode || 'target';
+                const stepCompound = !!stepConfig?.compoundProfits;
+                const stepCompoundPct = Number(stepConfig?.compoundPct || 50);
+
+                activeLaxPrimeStepRef.current = {
+                    stepIdx,
+                    stepProfit: 0,
+                    stepWins: 0,
+                    stepLosses: 0,
+                    initialStake: Number(stakeStr),
+                    targetProfit: stepTP,
+                    targetProfitMode: stepTPMode,
+                    stopLoss: stepSL,
+                    stopLossMode: stepSLMode,
+                    tradingMode: stepTradingMode,
+                    compoundProfits: stepCompound,
+                    compoundPct: stepCompoundPct,
+                };
+
                 const patch: any = {
                     stake: stakeStr, // Compounded stake from AutoTrade capital %
-                    targetProfit: takeProfit,
-                    stopLoss: stopLoss,
+                    targetProfit: String(stepTP),
+                    targetProfitMode: stepTPMode,
+                    stopLoss: String(stepSL),
+                    stopLossMode: stepSLMode,
+                    tradingMode: stepTradingMode,
                 };
 
                 if (stepConfig && stepConfig.strategies && stepConfig.strategies.length > 0) {
@@ -803,7 +872,6 @@ export default function AutoTradePage() {
                     patch.selectedMarkets = step.marketOverride
                         ? [step.marketOverride]
                         : (stepConfig.selectedMarkets && stepConfig.selectedMarkets.length > 0 ? [...stepConfig.selectedMarkets] : ['1HZ10V', '1HZ100V']);
-                    if (stepConfig.tradingMode) patch.tradingMode = stepConfig.tradingMode;
                     if (stepConfig.crossMarketDelay) patch.crossMarketDelay = stepConfig.crossMarketDelay;
                     if (stepConfig.martingale) patch.martingale = stepConfig.martingale;
                     if (stepConfig.adaptiveSwitch) patch.adaptiveSwitch = JSON.parse(JSON.stringify(stepConfig.adaptiveSwitch));
@@ -818,12 +886,20 @@ export default function AutoTradePage() {
                     }
                 }
 
+                // Inner Compounding for this step
+                useDerivStore.getState().setRiskSettings({ compoundProfits: stepCompound });
+
                 useBotStore.setState(patch);
 
                 const activeMkts = patch.selectedMarkets || currentBotState.selectedMarkets || [];
                 const activeStrats = patch.strategies || currentBotState.strategies || [];
                 const stratSummary = activeStrats.map((s: any) => s.tradeType).join(', ');
-                addAuditLog(`🚀 [Step ${stepIdx + 1}/${currentSteps.length}] Starting LaxPrime | Stake: $${stakeStr} (${activeStrats.length} strats: [${stratSummary}] on ${activeMkts.length} markets)`, 'info');
+                const goalSummary = stepTradingMode === 'once'
+                    ? '1 Trade Only'
+                    : stepTPMode === 'wins'
+                    ? `${stepTP} Wins TP / ${stepSL} Losses SL`
+                    : `$${stepTP} TP / -$${stepSL} SL`;
+                addAuditLog(`🚀 [Step ${stepIdx + 1}/${currentSteps.length}] Starting LaxPrime | Stake: $${stakeStr} | Goal: ${goalSummary}${stepCompound ? ` | Inner Compounding (${stepCompoundPct}%)` : ''} | ${activeStrats.length} strats [${stratSummary}] on ${activeMkts.length} mkts`, 'info');
                 useBotStore.getState().startBot();
             } catch (err) {
                 addAuditLog(`❌ Error starting LaxPrime step: ${String(err)}`, 'error');
@@ -873,16 +949,29 @@ export default function AutoTradePage() {
             }
         }));
 
-        // Check global take profit & stop loss limits
+        // Check global take profit & stop loss limits across all steps
         const curProfit = sessionProfRef.current;
-        if (Number(takeProfit) > 0 && curProfit >= Number(takeProfit)) {
-            addAuditLog(`🎯 Global Take Profit reached ($${curProfit.toFixed(2)} >= $${takeProfit})! Session completed.`, 'success');
+        const curWins = sessionWinsRef.current;
+        const curLosses = sessionLossesRef.current;
+
+        const reachedGlobalTP = globalTPModeRef.current === 'wins'
+            ? (Number(takeProfit) > 0 && curWins >= Number(takeProfit))
+            : (Number(takeProfit) > 0 && curProfit >= Number(takeProfit));
+
+        const reachedGlobalSL = globalSLModeRef.current === 'losses'
+            ? (Number(stopLoss) > 0 && curLosses >= Number(stopLoss))
+            : (Number(stopLoss) > 0 && curProfit <= -Math.abs(Number(stopLoss)));
+
+        if (reachedGlobalTP) {
+            const detail = globalTPModeRef.current === 'wins' ? `${curWins} >= ${takeProfit} Wins` : `$${curProfit.toFixed(2)} >= $${takeProfit}`;
+            addAuditLog(`🎯 Global Take Profit reached (${detail})! All steps completed.`, 'success');
             setPlaylistStatus('completed');
             handleStop();
             return;
         }
-        if (Number(stopLoss) > 0 && curProfit <= -Math.abs(Number(stopLoss))) {
-            addAuditLog(`🛑 Global Stop Loss hit ($${curProfit.toFixed(2)} <= -$${stopLoss})! Session halted.`, 'error');
+        if (reachedGlobalSL) {
+            const detail = globalSLModeRef.current === 'losses' ? `${curLosses} >= ${stopLoss} Losses` : `$${curProfit.toFixed(2)} <= -$${stopLoss}`;
+            addAuditLog(`🛑 Global Stop Loss hit (${detail})! Halting all steps and stopping session.`, 'error');
             setPlaylistStatus('completed');
             handleStop();
             return;
@@ -1466,8 +1555,86 @@ export default function AutoTradePage() {
 
         // ── Autonomous Trade Playlist mode settlement (LaxPrime) ──────────
         if (selectedPreset === 'trade_playlist') {
+            // Check global take profit & stop loss limits across all steps
+            const curProfit = sessionProfRef.current;
+            const curWins = sessionWinsRef.current;
+            const curLosses = sessionLossesRef.current;
+
+            const reachedGlobalTP = globalTPModeRef.current === 'wins'
+                ? (Number(takeProfit) > 0 && curWins >= Number(takeProfit))
+                : (Number(takeProfit) > 0 && curProfit >= Number(takeProfit));
+
+            const reachedGlobalSL = globalSLModeRef.current === 'losses'
+                ? (Number(stopLoss) > 0 && curLosses >= Number(stopLoss))
+                : (Number(stopLoss) > 0 && curProfit <= -Math.abs(Number(stopLoss)));
+
+            if (reachedGlobalTP) {
+                const detail = globalTPModeRef.current === 'wins' ? `${curWins} >= ${takeProfit} Wins` : `$${curProfit.toFixed(2)} >= $${takeProfit}`;
+                addAuditLog(`🎯 Global Take Profit reached (${detail})! Halting all steps and completing session.`, 'success');
+                setPlaylistStatus('completed');
+                handleStop();
+                return;
+            }
+            if (reachedGlobalSL) {
+                const detail = globalSLModeRef.current === 'losses' ? `${curLosses} >= ${stopLoss} Losses` : `$${curProfit.toFixed(2)} <= -$${stopLoss}`;
+                addAuditLog(`🛑 Global Stop Loss hit (${detail})! Halting all steps and stopping session.`, 'error');
+                setPlaylistStatus('completed');
+                handleStop();
+                return;
+            }
+
             if (activeStepSourceRef.current === 'laxprime' && playlistStatusRef.current === 'executing') {
-                handlePlaylistTradeSettled(profit, stakeVal, isWon, latest.exitSpot ? String(latest.exitSpot) : null, latest.contract || 'DIGITDIFF');
+                const activeStep = activeLaxPrimeStepRef.current;
+                if (!activeStep) {
+                    handlePlaylistTradeSettled(profit, stakeVal, isWon, latest.exitSpot ? String(latest.exitSpot) : null, latest.contract || 'DIGITDIFF');
+                    return;
+                }
+
+                activeStep.stepProfit += profit;
+                if (isWon) activeStep.stepWins++; else activeStep.stepLosses++;
+
+                // Inner Compounding: calculate next stake inside this step
+                if (activeStep.compoundProfits && isWon && activeStep.stepProfit > 0) {
+                    const nextInnerStake = Math.max(0.35, activeStep.initialStake + activeStep.stepProfit * (activeStep.compoundPct / 100));
+                    useBotStore.setState({ stake: nextInnerStake.toFixed(2) });
+                    addAuditLog(`📈 [Step ${activeStep.stepIdx + 1}] Inner Compounding active: Next stake $${nextInnerStake.toFixed(2)} (+${activeStep.compoundPct}% of profit)`, 'info');
+                }
+
+                // Check Step TP & SL termination
+                const reachedTP = activeStep.targetProfitMode === 'wins'
+                    ? activeStep.stepWins >= activeStep.targetProfit
+                    : activeStep.stepProfit >= activeStep.targetProfit;
+
+                const reachedSL = activeStep.stopLossMode === 'losses'
+                    ? activeStep.stepLosses >= activeStep.stopLoss
+                    : activeStep.stepProfit <= -Math.abs(activeStep.stopLoss);
+
+                const isSingleTrade = activeStep.tradingMode === 'once';
+
+                if (reachedTP || reachedSL || isSingleTrade) {
+                    const stepIsWon = activeStep.stepProfit >= 0;
+                    const reason = reachedTP ? '🎯 Target Profit' : reachedSL ? '🛑 Stop Loss' : '⚡ Single Trade';
+                    addAuditLog(
+                        `🏁 [Step ${activeStep.stepIdx + 1}] Finished (${reason}) | Step P/L: ${activeStep.stepProfit >= 0 ? '+' : ''}$${activeStep.stepProfit.toFixed(2)} (${activeStep.stepWins}W / ${activeStep.stepLosses}L)`,
+                        stepIsWon ? 'success' : 'warn'
+                    );
+                    handlePlaylistTradeSettled(
+                        activeStep.stepProfit,
+                        activeStep.initialStake,
+                        stepIsWon,
+                        latest.exitSpot ? String(latest.exitSpot) : null,
+                        latest.contract || 'DIGITDIFF'
+                    );
+                } else {
+                    // Step continues trading towards TP / SL!
+                    const progressStr = activeStep.targetProfitMode === 'wins'
+                        ? `${activeStep.stepWins}/${activeStep.targetProfit} Wins`
+                        : `$${activeStep.stepProfit.toFixed(2)} / $${activeStep.targetProfit} TP`;
+                    addAuditLog(
+                        `⏳ [Step ${activeStep.stepIdx + 1}] Continuing towards goal: ${progressStr} | Step P/L: ${activeStep.stepProfit >= 0 ? '+' : ''}$${activeStep.stepProfit.toFixed(2)}`,
+                        'info'
+                    );
+                }
             }
             return;
         }
@@ -2402,8 +2569,8 @@ export default function AutoTradePage() {
                                             )}
                                         </div>
 
-                                        {/* Loop & Compounding Settings Bar */}
-                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                                        {/* Loop, Stake & Global TP/SL Session Controls Bar */}
+                                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 pt-1">
                                             {/* Loop Toggle */}
                                             <div className="flex items-center justify-between p-3 rounded-xl bg-white/3 border border-white/5">
                                                 <div className="space-y-0.5">
@@ -2442,14 +2609,116 @@ export default function AutoTradePage() {
                                                 />
                                             </div>
 
-                                            {/* Next Compounded Stake Display */}
-                                            <div className="flex items-center justify-between p-3 rounded-xl bg-white/3 border border-white/5">
+                                            {/* Global Take Profit (Dual Mode: Profit $ ⇌ Total Wins) */}
+                                            <div
+                                                className="p-3 rounded-xl bg-black/40 border border-emerald-500/20 hover:border-emerald-500/40 transition-all select-none"
+                                                onTouchStart={e => { tpTouchStartXRef.current = e.touches[0].clientX; }}
+                                                onTouchEnd={e => {
+                                                    if (tpTouchStartXRef.current !== null) {
+                                                        const diffX = e.changedTouches[0].clientX - tpTouchStartXRef.current;
+                                                        if (Math.abs(diffX) > 20) {
+                                                            setGlobalTPMode(m => m === 'profit' ? 'wins' : 'profit');
+                                                        }
+                                                        tpTouchStartXRef.current = null;
+                                                    }
+                                                }}
+                                            >
+                                                <div className="flex items-center justify-between mb-1.5 gap-1">
+                                                    <span
+                                                        className="text-[10px] font-black text-emerald-400 uppercase tracking-wider truncate cursor-pointer hover:underline"
+                                                        onClick={() => setGlobalTPMode(m => m === 'profit' ? 'wins' : 'profit')}
+                                                        title="Click or swipe to switch between USD Profit and Total Wins"
+                                                    >
+                                                        {globalTPMode === 'wins' ? 'TARGET WINS' : 'GLOBAL TAKE PROFIT'}
+                                                    </span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setGlobalTPMode(m => m === 'profit' ? 'wins' : 'profit')}
+                                                        className="px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 transition-all cursor-pointer shrink-0"
+                                                        title="Toggle between USD profit and number of wins"
+                                                    >
+                                                        {globalTPMode === 'wins' ? '🏆 Wins' : '💵 USD'}
+                                                    </button>
+                                                </div>
+                                                <div className="flex items-center gap-1.5">
+                                                    <input
+                                                        type="number"
+                                                        min={globalTPMode === 'wins' ? 1 : 0.5}
+                                                        step={globalTPMode === 'wins' ? 1 : 0.5}
+                                                        value={takeProfit}
+                                                        onChange={e => setTakeProfit(e.target.value)}
+                                                        disabled={isRunningAuto}
+                                                        className="w-full px-2 py-1 bg-slate-900 border border-white/10 rounded-lg text-xs font-mono font-bold text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50"
+                                                    />
+                                                    <span className="text-[10px] font-bold text-gray-400 font-mono">
+                                                        {globalTPMode === 'wins' ? 'W' : '$'}
+                                                    </span>
+                                                </div>
+                                                <p className="text-[8px] text-gray-500 mt-1 truncate">
+                                                    {globalTPMode === 'wins' ? `Halt all on ${takeProfit} wins` : `Halt all at +$${takeProfit}`}
+                                                </p>
+                                            </div>
+
+                                            {/* Global Stop Loss (Dual Mode: Loss $ ⇌ Total Losses) */}
+                                            <div
+                                                className="p-3 rounded-xl bg-black/40 border border-rose-500/20 hover:border-rose-500/40 transition-all select-none"
+                                                onTouchStart={e => { slTouchStartXRef.current = e.touches[0].clientX; }}
+                                                onTouchEnd={e => {
+                                                    if (slTouchStartXRef.current !== null) {
+                                                        const diffX = e.changedTouches[0].clientX - slTouchStartXRef.current;
+                                                        if (Math.abs(diffX) > 20) {
+                                                            setGlobalSLMode(m => m === 'loss' ? 'losses' : 'loss');
+                                                        }
+                                                        slTouchStartXRef.current = null;
+                                                    }
+                                                }}
+                                            >
+                                                <div className="flex items-center justify-between mb-1.5 gap-1">
+                                                    <span
+                                                        className="text-[10px] font-black text-rose-400 uppercase tracking-wider truncate cursor-pointer hover:underline"
+                                                        onClick={() => setGlobalSLMode(m => m === 'loss' ? 'losses' : 'loss')}
+                                                        title="Click or swipe to switch between USD Loss and Total Losses"
+                                                    >
+                                                        {globalSLMode === 'losses' ? 'STOP LOSSES' : 'GLOBAL STOP LOSS'}
+                                                    </span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setGlobalSLMode(m => m === 'loss' ? 'losses' : 'loss')}
+                                                        className="px-2 py-0.5 rounded-full text-[9px] font-black bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30 transition-all cursor-pointer shrink-0"
+                                                        title="Toggle between USD loss and number of losses"
+                                                    >
+                                                        {globalSLMode === 'losses' ? '🔢 Count' : '💵 USD'}
+                                                    </button>
+                                                </div>
+                                                <div className="flex items-center gap-1.5">
+                                                    <input
+                                                        type="number"
+                                                        min={globalSLMode === 'losses' ? 1 : 0.5}
+                                                        step={globalSLMode === 'losses' ? 1 : 0.5}
+                                                        value={stopLoss}
+                                                        onChange={e => setStopLoss(e.target.value)}
+                                                        disabled={isRunningAuto}
+                                                        className="w-full px-2 py-1 bg-slate-900 border border-white/10 rounded-lg text-xs font-mono font-bold text-white focus:outline-none focus:border-rose-500/50 disabled:opacity-50"
+                                                    />
+                                                    <span className="text-[10px] font-bold text-gray-400 font-mono">
+                                                        {globalSLMode === 'losses' ? 'L' : '$'}
+                                                    </span>
+                                                </div>
+                                                <p className="text-[8px] text-gray-500 mt-1 truncate">
+                                                    {globalSLMode === 'losses' ? `Halt all on ${stopLoss} losses` : `Halt all at -$${stopLoss}`}
+                                                </p>
+                                            </div>
+
+                                            {/* Running Compounded Stake Display */}
+                                            <div className="flex items-center justify-between p-3 rounded-xl bg-white/3 border border-white/5 col-span-2 sm:col-span-1 lg:col-span-1">
                                                 <div className="space-y-0.5">
                                                     <span className="text-xs font-bold text-white flex items-center gap-1.5">
                                                         <Sparkles className="w-3.5 h-3.5 text-amber-400" />
                                                         Running Stake
                                                     </span>
-                                                    <p className="text-[9px] text-gray-400">Compounded value</p>
+                                                    <p className="text-[9px] text-gray-400">
+                                                        {isCapitalCompound ? `${capitalPct}% Capital` : isCompounding ? 'Compounded' : 'Base stake'}
+                                                    </p>
                                                 </div>
                                                 <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs font-black font-mono text-emerald-400">
                                                     ${currentStake}
@@ -2510,26 +2779,26 @@ export default function AutoTradePage() {
                                                             : 'border-white/8 bg-white/2 hover:border-white/15'
                                                     }`}
                                                 >
-                                                    <div className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
-                                                        <div className="flex items-center gap-3">
-                                                            {/* Step Number */}
-                                                            <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black font-mono transition-all ${
-                                                                isActive
-                                                                    ? 'bg-emerald-500 text-[#0a0a10] shadow-md shadow-emerald-500/30'
-                                                                    : isCountingDown
-                                                                    ? 'bg-amber-500 text-[#0a0a10] shadow-md shadow-amber-500/30'
-                                                                    : stepResult?.result === 'WIN'
-                                                                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                                                                    : stepResult?.result === 'LOSS'
-                                                                    ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                                                                    : 'bg-white/8 text-gray-400'
-                                                            }`}>
-                                                                {idx + 1}
-                                                            </div>
+                                                    <div className="p-3.5 sm:p-4 space-y-3">
+                                                        {/* Top Row: Step Header & Quick Controls */}
+                                                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                            <div className="flex items-center gap-2.5">
+                                                                {/* Step Number */}
+                                                                <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl flex items-center justify-center text-xs font-black font-mono transition-all ${
+                                                                    isActive
+                                                                        ? 'bg-emerald-500 text-[#0a0a10] shadow-md shadow-emerald-500/30'
+                                                                        : isCountingDown
+                                                                        ? 'bg-amber-500 text-[#0a0a10] shadow-md shadow-amber-500/30'
+                                                                        : stepResult?.result === 'WIN'
+                                                                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                                                        : stepResult?.result === 'LOSS'
+                                                                        ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                                                                        : 'bg-white/8 text-gray-400'
+                                                                }`}>
+                                                                    {idx + 1}
+                                                                </div>
 
-                                                            {/* Step Info */}
-                                                            <div>
-                                                                <div className="flex items-center gap-2 flex-wrap">
+                                                                <div className="flex items-center gap-1.5 flex-wrap">
                                                                     <span className="text-xs font-black text-white">{step.label || `Step ${idx + 1}`}</span>
                                                                     <span className="px-2 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-[9px] font-bold text-indigo-300 uppercase">
                                                                         {step.source === 'laxprime' ? 'LaxPrime' : 'LaxSniper XV'}
@@ -2543,142 +2812,157 @@ export default function AutoTradePage() {
                                                                         </span>
                                                                     )}
                                                                 </div>
+                                                            </div>
 
-                                                                {/* LaxPrime Step Configuration Summary */}
-                                                                {step.source === 'laxprime' && (
-                                                                    <div className="mt-1 flex items-center gap-1.5 flex-wrap text-[10px]">
-                                                                        {step.laxprimeConfig ? (
-                                                                            <>
-                                                                                <span className="px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 font-mono font-bold flex items-center gap-1">
-                                                                                    <Sparkles className="w-2.5 h-2.5 text-cyan-400" />
-                                                                                    {step.laxprimeConfig.strategies.length} Strat{step.laxprimeConfig.strategies.length !== 1 ? 's' : ''}:{' '}
-                                                                                    {step.laxprimeConfig.strategies.map(s => s.tradeType).join(', ')}
-                                                                                </span>
-                                                                                <span className="px-1.5 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 font-mono">
-                                                                                    {step.laxprimeConfig.selectedMarkets?.length || 2} Mkts
-                                                                                </span>
-                                                                                {step.laxprimeConfig.adaptiveSwitch?.enabled && (
-                                                                                    <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 font-bold">
-                                                                                        ⚡ Switcher
-                                                                                    </span>
-                                                                                )}
-                                                                            </>
-                                                                        ) : (
-                                                                            <span className="text-gray-500 italic text-[10px]">
-                                                                                (Global LaxPrime defaults · Click Setup LaxPrime to customize)
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
-                                                                )}
-
-                                                                {/* Status Result Preview */}
-                                                                {stepResult && (
-                                                                    <div className="flex items-center gap-2 mt-1 text-[10px]">
-                                                                        <span className={`font-black ${stepResult.result === 'WIN' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                                                            {stepResult.result === 'WIN' ? '✓ WON' : '✗ LOST'}
-                                                                        </span>
-                                                                        <span className="font-mono text-gray-300">
-                                                                            {stepResult.profit >= 0 ? '+' : ''}${stepResult.profit.toFixed(2)}
-                                                                        </span>
-                                                                        {stepResult.exitSpot && (
-                                                                            <span className="text-gray-500">· Exit: {stepResult.exitSpot}</span>
-                                                                        )}
-                                                                        <span className="text-gray-600">· {stepResult.time}</span>
-                                                                    </div>
-                                                                )}
+                                                            {/* Quick Reorder, Duplicate & Delete Buttons */}
+                                                            <div className="flex items-center gap-1 ml-auto">
+                                                                <button
+                                                                    onClick={() => movePlaylistStep(idx, -1)}
+                                                                    disabled={isRunningAuto || idx === 0}
+                                                                    title="Move Step Up"
+                                                                    className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 disabled:opacity-20 transition-all"
+                                                                >
+                                                                    <ArrowUp className="w-3.5 h-3.5" />
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => movePlaylistStep(idx, 1)}
+                                                                    disabled={isRunningAuto || idx === playlistSteps.length - 1}
+                                                                    title="Move Step Down"
+                                                                    className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 disabled:opacity-20 transition-all"
+                                                                >
+                                                                    <ArrowDown className="w-3.5 h-3.5" />
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => duplicatePlaylistStep(step.id)}
+                                                                    disabled={isRunningAuto}
+                                                                    title="Duplicate Step"
+                                                                    className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-300 hover:bg-indigo-500/10 disabled:opacity-20 transition-all"
+                                                                >
+                                                                    <Copy className="w-3.5 h-3.5" />
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => deletePlaylistStep(step.id)}
+                                                                    disabled={isRunningAuto || playlistSteps.length <= 1}
+                                                                    title="Delete Step"
+                                                                    className="p-1.5 rounded-lg text-gray-500 hover:text-rose-400 hover:bg-rose-500/10 disabled:opacity-20 transition-all"
+                                                                >
+                                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                                </button>
                                                             </div>
                                                         </div>
 
-                                                        {/* Step Actions */}
-                                                        <div className="flex items-center gap-1.5 self-end md:self-auto flex-wrap">
-                                                            {/* Mini LaxPrime Config Modal Trigger Button */}
+                                                        {/* Middle Row: LaxPrime Configuration Summary & Status */}
+                                                        <div>
                                                             {step.source === 'laxprime' && (
-                                                                <button
-                                                                    onClick={() => setEditingStepForLaxPrime({ step, index: idx })}
-                                                                    disabled={isRunningAuto}
-                                                                    title="Open Mini LaxPrime Window to set dedicated strategies, conditions, trade patterns and markets"
-                                                                    className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-40 ${
-                                                                        step.laxprimeConfig
-                                                                            ? 'bg-gradient-to-r from-indigo-600/30 to-cyan-600/30 border border-indigo-500/50 text-cyan-200 hover:from-indigo-600/50 hover:to-cyan-600/50 shadow-indigo-500/10'
-                                                                            : 'bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/20'
-                                                                    }`}
-                                                                >
-                                                                    <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-                                                                    <span>{step.laxprimeConfig ? 'Edit LaxPrime' : 'Setup LaxPrime'}</span>
-                                                                </button>
+                                                                <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
+                                                                    {step.laxprimeConfig ? (
+                                                                        <>
+                                                                            <span className="px-2 py-0.5 rounded-md bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 font-mono font-bold flex items-center gap-1">
+                                                                                <Sparkles className="w-2.5 h-2.5 text-cyan-400" />
+                                                                                {step.laxprimeConfig.strategies.length} Strat{step.laxprimeConfig.strategies.length !== 1 ? 's' : ''}:{' '}
+                                                                                {step.laxprimeConfig.strategies.map(s => s.tradeType).join(', ')}
+                                                                            </span>
+                                                                            <span className="px-2 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 font-mono">
+                                                                                {step.laxprimeConfig.selectedMarkets?.length || 2} Mkts
+                                                                            </span>
+                                                                            {/* Step Target & SL Preview */}
+                                                                            <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 font-mono font-bold">
+                                                                                🎯 {step.laxprimeConfig.targetProfitMode === 'wins' ? `${step.laxprimeConfig.targetProfit || 2}W` : `$${step.laxprimeConfig.targetProfit || 5}`}
+                                                                            </span>
+                                                                            <span className="px-2 py-0.5 rounded-md bg-rose-500/10 border border-rose-500/20 text-rose-300 font-mono font-bold">
+                                                                                🛑 {step.laxprimeConfig.stopLossMode === 'losses' ? `${step.laxprimeConfig.stopLoss || 2}L` : `$${step.laxprimeConfig.stopLoss || 10}`}
+                                                                            </span>
+                                                                            {step.laxprimeConfig.compoundProfits && (
+                                                                                <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold">
+                                                                                    📈 Compound {step.laxprimeConfig.compoundPct || 50}%
+                                                                                </span>
+                                                                            )}
+                                                                            {step.laxprimeConfig.adaptiveSwitch?.enabled && (
+                                                                                <span className="px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-300 font-bold">
+                                                                                    ⚡ Switcher
+                                                                                </span>
+                                                                            )}
+                                                                        </>
+                                                                    ) : (
+                                                                        <span className="text-gray-500 italic text-[10px]">
+                                                                            (Global LaxPrime defaults · Tap Setup LaxPrime to customize)
+                                                                        </span>
+                                                                    )}
+                                                                </div>
                                                             )}
 
-                                                            {/* Delay Input */}
-                                                            <div className="flex items-center gap-1 bg-white/5 border border-white/8 rounded-xl px-2 py-1">
-                                                                <span className="text-[9px] font-bold text-gray-500 uppercase">Delay</span>
-                                                                <input
-                                                                    type="number"
-                                                                    min={0}
-                                                                    max={120}
-                                                                    value={step.delayMinutes}
-                                                                    onChange={e => updatePlaylistStep(step.id, { delayMinutes: Math.max(0, Number(e.target.value)) })}
+                                                            {/* Status Result Preview */}
+                                                            {stepResult && (
+                                                                <div className="flex items-center gap-2 mt-1.5 text-[10px] flex-wrap">
+                                                                    <span className={`font-black px-1.5 py-0.5 rounded ${stepResult.result === 'WIN' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
+                                                                        {stepResult.result === 'WIN' ? '✓ WON' : '✗ LOST'}
+                                                                    </span>
+                                                                    <span className="font-mono text-gray-300 font-bold">
+                                                                        {stepResult.profit >= 0 ? '+' : ''}${stepResult.profit.toFixed(2)}
+                                                                    </span>
+                                                                    {stepResult.exitSpot && (
+                                                                        <span className="text-gray-400 font-mono">· Exit: {stepResult.exitSpot}</span>
+                                                                    )}
+                                                                    <span className="text-gray-500">· {stepResult.time}</span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+
+                                                        {/* Bottom Row: Actions & Setup */}
+                                                        <div className="pt-2 border-t border-white/5 flex flex-wrap items-center justify-between gap-2.5">
+                                                            <div className="flex items-center gap-2 flex-wrap flex-1 min-w-[200px]">
+                                                                {/* Mini LaxPrime Config Modal Trigger Button */}
+                                                                {step.source === 'laxprime' && (
+                                                                    <button
+                                                                        onClick={() => setEditingStepForLaxPrime({ step, index: idx })}
+                                                                        disabled={isRunningAuto}
+                                                                        title="Open Mini LaxPrime Window to set dedicated strategies, conditions, trade patterns and markets"
+                                                                        className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-40 min-h-[36px] ${
+                                                                            step.laxprimeConfig
+                                                                                ? 'bg-gradient-to-r from-indigo-600/30 to-cyan-600/30 border border-indigo-500/50 text-cyan-200 hover:from-indigo-600/50 hover:to-cyan-600/50 shadow-indigo-500/10'
+                                                                                : 'bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/25'
+                                                                        }`}
+                                                                    >
+                                                                        <Sliders className="w-3.5 h-3.5 text-cyan-400" />
+                                                                        <span>{step.laxprimeConfig ? 'Edit LaxPrime' : 'Setup LaxPrime'}</span>
+                                                                    </button>
+                                                                )}
+
+                                                                {/* Delay Input */}
+                                                                <div className="flex items-center gap-1.5 bg-white/5 border border-white/8 rounded-xl px-2.5 py-1.5 min-h-[36px]">
+                                                                    <span className="text-[10px] font-bold text-gray-400 uppercase">Delay:</span>
+                                                                    <input
+                                                                        type="number"
+                                                                        min={0}
+                                                                        max={120}
+                                                                        value={step.delayMinutes}
+                                                                        onChange={e => updatePlaylistStep(step.id, { delayMinutes: Math.max(0, Number(e.target.value)) })}
+                                                                        disabled={isRunningAuto}
+                                                                        className="w-10 text-center bg-transparent text-xs font-black font-mono text-white focus:outline-none"
+                                                                    />
+                                                                    <span className="text-[10px] text-gray-400">m</span>
+                                                                </div>
+
+                                                                {/* Engine Source Selector */}
+                                                                <select
+                                                                    value={step.source}
+                                                                    onChange={e => updatePlaylistStep(step.id, { source: e.target.value as any })}
                                                                     disabled={isRunningAuto}
-                                                                    className="w-10 text-center bg-transparent text-xs font-black font-mono text-white focus:outline-none"
-                                                                />
-                                                                <span className="text-[9px] text-gray-500">m</span>
+                                                                    className="bg-white/5 border border-white/8 rounded-xl px-2.5 py-1.5 text-xs font-bold text-white focus:outline-none min-h-[36px]"
+                                                                >
+                                                                    <option value="laxprime">LaxPrime</option>
+                                                                    <option value="laxsniper-xv">LaxSniper XV</option>
+                                                                </select>
                                                             </div>
-
-                                                            {/* Engine Source Selector */}
-                                                            <select
-                                                                value={step.source}
-                                                                onChange={e => updatePlaylistStep(step.id, { source: e.target.value as any })}
-                                                                disabled={isRunningAuto}
-                                                                className="bg-white/5 border border-white/8 rounded-xl px-2 py-1 text-xs font-bold text-white focus:outline-none"
-                                                            >
-                                                                <option value="laxprime">LaxPrime</option>
-                                                                <option value="laxsniper-xv">LaxSniper XV</option>
-                                                            </select>
-
-                                                            {/* Move up / down */}
-                                                            <button
-                                                                onClick={() => movePlaylistStep(idx, -1)}
-                                                                disabled={isRunningAuto || idx === 0}
-                                                                title="Move Step Up"
-                                                                className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 disabled:opacity-20 transition-all"
-                                                            >
-                                                                <ArrowUp className="w-3.5 h-3.5" />
-                                                            </button>
-                                                            <button
-                                                                onClick={() => movePlaylistStep(idx, 1)}
-                                                                disabled={isRunningAuto || idx === playlistSteps.length - 1}
-                                                                title="Move Step Down"
-                                                                className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 disabled:opacity-20 transition-all"
-                                                            >
-                                                                <ArrowDown className="w-3.5 h-3.5" />
-                                                            </button>
-
-                                                            {/* Clone / Duplicate */}
-                                                            <button
-                                                                onClick={() => duplicatePlaylistStep(step.id)}
-                                                                disabled={isRunningAuto}
-                                                                title="Duplicate Step"
-                                                                className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-300 hover:bg-indigo-500/10 disabled:opacity-20 transition-all"
-                                                            >
-                                                                <Copy className="w-3.5 h-3.5" />
-                                                            </button>
 
                                                             {/* Toggle Expand fine-tune */}
                                                             <button
                                                                 onClick={() => setExpandedStepId(isExpanded ? null : step.id)}
                                                                 title="Fine-tune Step Overrides"
-                                                                className={`p-1.5 rounded-lg transition-all ${isExpanded ? 'text-indigo-400 bg-indigo-500/10' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
+                                                                className={`px-2.5 py-1.5 rounded-xl transition-all flex items-center gap-1 text-xs font-bold min-h-[36px] ${isExpanded ? 'text-indigo-400 bg-indigo-500/10 border border-indigo-500/30' : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'}`}
                                                             >
+                                                                <span className="text-[10px]">Overrides</span>
                                                                 <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                                                            </button>
-
-                                                            {/* Delete */}
-                                                            <button
-                                                                onClick={() => deletePlaylistStep(step.id)}
-                                                                disabled={isRunningAuto || playlistSteps.length <= 1}
-                                                                title="Delete Step"
-                                                                className="p-1.5 rounded-lg text-gray-500 hover:text-rose-400 hover:bg-rose-500/10 disabled:opacity-20 transition-all"
-                                                            >
-                                                                <Trash2 className="w-3.5 h-3.5" />
                                                             </button>
                                                         </div>
                                                     </div>
@@ -3127,8 +3411,99 @@ export default function AutoTradePage() {
                                             }}
                                             disabled={isRunningAuto}
                                         />
-                                        <Input label="Global Take Profit ($)" type="number" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} disabled={isRunningAuto} />
-                                        <Input label="Global Stop Loss ($)" type="number" value={stopLoss} onChange={e => setStopLoss(e.target.value)} disabled={isRunningAuto} />
+                                        {/* Global Take Profit (Dual-Mode: Profit ⇌ Total Wins) */}
+                                        <div
+                                            className="p-3 rounded-xl bg-black/40 border border-emerald-500/20 hover:border-emerald-500/40 transition-all select-none"
+                                            onTouchStart={e => { tpTouchStartXRef.current = e.touches[0].clientX; }}
+                                            onTouchEnd={e => {
+                                                if (tpTouchStartXRef.current !== null) {
+                                                    const diffX = e.changedTouches[0].clientX - tpTouchStartXRef.current;
+                                                    if (Math.abs(diffX) > 20) setGlobalTPMode(m => m === 'profit' ? 'wins' : 'profit');
+                                                    tpTouchStartXRef.current = null;
+                                                }
+                                            }}
+                                        >
+                                            <div className="flex items-center justify-between mb-1.5 gap-1">
+                                                <span
+                                                    className="text-[10px] font-black text-emerald-400 uppercase tracking-wider truncate cursor-pointer hover:underline"
+                                                    onClick={() => setGlobalTPMode(m => m === 'profit' ? 'wins' : 'profit')}
+                                                    title="Click or swipe to switch between USD Profit and Total Wins"
+                                                >
+                                                    {globalTPMode === 'wins' ? 'TARGET WINS' : 'GLOBAL TAKE PROFIT'}
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setGlobalTPMode(m => m === 'profit' ? 'wins' : 'profit')}
+                                                    className="px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 transition-all cursor-pointer shrink-0"
+                                                >
+                                                    {globalTPMode === 'wins' ? '🏆 Wins' : '💵 USD'}
+                                                </button>
+                                            </div>
+                                            <div className="flex items-center gap-1.5">
+                                                <input
+                                                    type="number"
+                                                    min={globalTPMode === 'wins' ? 1 : 0.5}
+                                                    step={globalTPMode === 'wins' ? 1 : 0.5}
+                                                    value={takeProfit}
+                                                    onChange={e => setTakeProfit(e.target.value)}
+                                                    disabled={isRunningAuto}
+                                                    className="w-full px-2 py-1 bg-slate-900 border border-white/10 rounded-lg text-xs font-mono font-bold text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50"
+                                                />
+                                                <span className="text-[10px] font-bold text-gray-400 font-mono">
+                                                    {globalTPMode === 'wins' ? 'W' : '$'}
+                                                </span>
+                                            </div>
+                                            <p className="text-[8px] text-gray-500 mt-1 truncate">
+                                                {globalTPMode === 'wins' ? `Stops all on ${takeProfit} wins` : `Stops all at +$${takeProfit}`}
+                                            </p>
+                                        </div>
+
+                                        {/* Global Stop Loss (Dual-Mode: Loss ⇌ Total Losses) */}
+                                        <div
+                                            className="p-3 rounded-xl bg-black/40 border border-rose-500/20 hover:border-rose-500/40 transition-all select-none"
+                                            onTouchStart={e => { slTouchStartXRef.current = e.touches[0].clientX; }}
+                                            onTouchEnd={e => {
+                                                if (slTouchStartXRef.current !== null) {
+                                                    const diffX = e.changedTouches[0].clientX - slTouchStartXRef.current;
+                                                    if (Math.abs(diffX) > 20) setGlobalSLMode(m => m === 'loss' ? 'losses' : 'loss');
+                                                    slTouchStartXRef.current = null;
+                                                }
+                                            }}
+                                        >
+                                            <div className="flex items-center justify-between mb-1.5 gap-1">
+                                                <span
+                                                    className="text-[10px] font-black text-rose-400 uppercase tracking-wider truncate cursor-pointer hover:underline"
+                                                    onClick={() => setGlobalSLMode(m => m === 'loss' ? 'losses' : 'loss')}
+                                                    title="Click or swipe to switch between USD Loss and Total Losses"
+                                                >
+                                                    {globalSLMode === 'losses' ? 'STOP LOSSES' : 'GLOBAL STOP LOSS'}
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setGlobalSLMode(m => m === 'loss' ? 'losses' : 'loss')}
+                                                    className="px-2 py-0.5 rounded-full text-[9px] font-black bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30 transition-all cursor-pointer shrink-0"
+                                                >
+                                                    {globalSLMode === 'losses' ? '🔢 Count' : '💵 USD'}
+                                                </button>
+                                            </div>
+                                            <div className="flex items-center gap-1.5">
+                                                <input
+                                                    type="number"
+                                                    min={globalSLMode === 'losses' ? 1 : 0.5}
+                                                    step={globalSLMode === 'losses' ? 1 : 0.5}
+                                                    value={stopLoss}
+                                                    onChange={e => setStopLoss(e.target.value)}
+                                                    disabled={isRunningAuto}
+                                                    className="w-full px-2 py-1 bg-slate-900 border border-white/10 rounded-lg text-xs font-mono font-bold text-white focus:outline-none focus:border-rose-500/50 disabled:opacity-50"
+                                                />
+                                                <span className="text-[10px] font-bold text-gray-400 font-mono">
+                                                    {globalSLMode === 'losses' ? 'L' : '$'}
+                                                </span>
+                                            </div>
+                                            <p className="text-[8px] text-gray-500 mt-1 truncate">
+                                                {globalSLMode === 'losses' ? `Stops all on ${stopLoss} losses` : `Stops all at -$${stopLoss}`}
+                                            </p>
+                                        </div>
                                     </div>
 
                                     {/* Profit Compounding */}
@@ -3180,8 +3555,93 @@ export default function AutoTradePage() {
                                 <>
                                     <div className="grid grid-cols-2 md:grid-cols-3 gap-3.5">
                                         <Input label="Base Stake ($)" type="number" value={baseStake} onChange={e => setBaseStake(e.target.value)} disabled={isRunningAuto} />
-                                        <Input label="Take Profit ($)" type="number" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} disabled={isRunningAuto} />
-                                        <Input label="Stop Loss ($)" type="number" value={stopLoss} onChange={e => setStopLoss(e.target.value)} disabled={isRunningAuto} />
+                                        {/* Take Profit (Dual-Mode: Profit ⇌ Total Wins) */}
+                                        <div
+                                            className="p-3 rounded-xl bg-black/40 border border-emerald-500/20 hover:border-emerald-500/40 transition-all select-none"
+                                            onTouchStart={e => { tpTouchStartXRef.current = e.touches[0].clientX; }}
+                                            onTouchEnd={e => {
+                                                if (tpTouchStartXRef.current !== null) {
+                                                    const diffX = e.changedTouches[0].clientX - tpTouchStartXRef.current;
+                                                    if (Math.abs(diffX) > 20) setGlobalTPMode(m => m === 'profit' ? 'wins' : 'profit');
+                                                    tpTouchStartXRef.current = null;
+                                                }
+                                            }}
+                                        >
+                                            <div className="flex items-center justify-between mb-1.5 gap-1">
+                                                <span
+                                                    className="text-[10px] font-black text-emerald-400 uppercase tracking-wider truncate cursor-pointer hover:underline"
+                                                    onClick={() => setGlobalTPMode(m => m === 'profit' ? 'wins' : 'profit')}
+                                                    title="Click or swipe to switch between USD Profit and Total Wins"
+                                                >
+                                                    {globalTPMode === 'wins' ? 'TARGET WINS' : 'TAKE PROFIT'}
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setGlobalTPMode(m => m === 'profit' ? 'wins' : 'profit')}
+                                                    className="px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 transition-all cursor-pointer shrink-0"
+                                                >
+                                                    {globalTPMode === 'wins' ? '🏆 Wins' : '💵 USD'}
+                                                </button>
+                                            </div>
+                                            <div className="flex items-center gap-1.5">
+                                                <input
+                                                    type="number"
+                                                    min={globalTPMode === 'wins' ? 1 : 0.5}
+                                                    step={globalTPMode === 'wins' ? 1 : 0.5}
+                                                    value={takeProfit}
+                                                    onChange={e => setTakeProfit(e.target.value)}
+                                                    disabled={isRunningAuto}
+                                                    className="w-full px-2 py-1 bg-slate-900 border border-white/10 rounded-lg text-xs font-mono font-bold text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50"
+                                                />
+                                                <span className="text-[10px] font-bold text-gray-400 font-mono">
+                                                    {globalTPMode === 'wins' ? 'W' : '$'}
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        {/* Stop Loss (Dual-Mode: Loss ⇌ Total Losses) */}
+                                        <div
+                                            className="p-3 rounded-xl bg-black/40 border border-rose-500/20 hover:border-rose-500/40 transition-all select-none"
+                                            onTouchStart={e => { slTouchStartXRef.current = e.touches[0].clientX; }}
+                                            onTouchEnd={e => {
+                                                if (slTouchStartXRef.current !== null) {
+                                                    const diffX = e.changedTouches[0].clientX - slTouchStartXRef.current;
+                                                    if (Math.abs(diffX) > 20) setGlobalSLMode(m => m === 'loss' ? 'losses' : 'loss');
+                                                    slTouchStartXRef.current = null;
+                                                }
+                                            }}
+                                        >
+                                            <div className="flex items-center justify-between mb-1.5 gap-1">
+                                                <span
+                                                    className="text-[10px] font-black text-rose-400 uppercase tracking-wider truncate cursor-pointer hover:underline"
+                                                    onClick={() => setGlobalSLMode(m => m === 'loss' ? 'losses' : 'loss')}
+                                                    title="Click or swipe to switch between USD Loss and Total Losses"
+                                                >
+                                                    {globalSLMode === 'losses' ? 'STOP LOSSES' : 'STOP LOSS'}
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setGlobalSLMode(m => m === 'loss' ? 'losses' : 'loss')}
+                                                    className="px-2 py-0.5 rounded-full text-[9px] font-black bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30 transition-all cursor-pointer shrink-0"
+                                                >
+                                                    {globalSLMode === 'losses' ? '🔢 Count' : '💵 USD'}
+                                                </button>
+                                            </div>
+                                            <div className="flex items-center gap-1.5">
+                                                <input
+                                                    type="number"
+                                                    min={globalSLMode === 'losses' ? 1 : 0.5}
+                                                    step={globalSLMode === 'losses' ? 1 : 0.5}
+                                                    value={stopLoss}
+                                                    onChange={e => setStopLoss(e.target.value)}
+                                                    disabled={isRunningAuto}
+                                                    className="w-full px-2 py-1 bg-slate-900 border border-white/10 rounded-lg text-xs font-mono font-bold text-white focus:outline-none focus:border-rose-500/50 disabled:opacity-50"
+                                                />
+                                                <span className="text-[10px] font-bold text-gray-400 font-mono">
+                                                    {globalSLMode === 'losses' ? 'L' : '$'}
+                                                </span>
+                                            </div>
+                                        </div>
                                         <Input label="Max Trades / Market" type="number" value={maxTradesPerMarket} onChange={e => setMaxTradesPerMarket(e.target.value)} disabled={isRunningAuto} />
                                         <Input label="Session Win Cap" type="number" value={maxWinsCap} onChange={e => setMaxWinsCap(e.target.value)} disabled={isRunningAuto} />
                                         <Input label="Session Max Trades" type="number" value={maxTradesCap} onChange={e => setMaxTradesCap(e.target.value)} disabled={isRunningAuto} />

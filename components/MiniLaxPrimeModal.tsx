@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import {
   X, Check, Plus, Trash2, Sliders, Settings2, ShieldAlert,
   Layers, Sparkles, Copy, RefreshCw, Zap, TrendingUp, TrendingDown,
-  ArrowLeftRight, Clock, Target, ChevronDown, ChevronUp, AlertTriangle,
+  ArrowLeftRight, Clock, Target, ChevronDown, AlertTriangle,
   Flame, CheckCircle2
 } from 'lucide-react';
 import {
@@ -22,40 +22,18 @@ import {
 export interface LaxPrimeStepConfig {
   selectedMarkets: string[];
   strategies: Strategy[];
-  tradingMode?: string;
-  crossMarketDelay?: string;
-  martingale?: string;
+  tradingMode?: string;           // 'target' | 'continuous' | 'once'
+  crossMarketDelay?: string;       // '1.5' | '2.0' | '3.0'
+  martingale?: string;            // '2.0'
+  isMartingaleEnabled?: boolean;  // Martingale active inside this step
+  compoundProfits?: boolean;      // Inner Compounding active inside this step
+  compoundPct?: string;           // Inner Compounding %
+  targetProfit?: string;          // Step TP
+  targetProfitMode?: 'profit' | 'wins'; // USD vs Wins
+  stopLoss?: string;              // Step SL
+  stopLossMode?: 'loss' | 'losses';     // USD vs Losses
   adaptiveSwitch?: AdaptiveSwitch;
-  virtualSettings?: {
-    isVirtualMode?: boolean;
-    startVirtualToReal?: boolean;
-    vTriggerType?: 'wins' | 'losses';
-    vTriggerMode?: 'consec' | 'total';
-    vThreshold?: number;
-    isDoubleVirtual?: boolean;
-    vDoubleStage?: 'A' | 'B';
-    vTriggerTypeB?: 'wins' | 'losses';
-    vTriggerModeB?: 'consec' | 'total';
-    vThresholdB?: number;
-    vStageBReps?: number;
-    startRealToVirtual?: boolean;
-    rTriggerType?: 'wins' | 'losses';
-    rTriggerMode?: 'consec' | 'total';
-    rThreshold?: number;
-    smartSettings?: {
-      enabled: boolean;
-      type: 'sequence' | 'alternating';
-      sequence?: {
-        step1Type: 'Wins' | 'Losses';
-        step1Qty: number;
-        step1Mode: 'consecutive' | 'total';
-        step2Type: 'Wins' | 'Losses';
-        step2Qty: number;
-        step2Mode: 'consecutive' | 'total';
-      };
-      alternating?: { count: number };
-    };
-  };
+  virtualSettings?: any;
 }
 
 interface MiniLaxPrimeModalProps {
@@ -99,6 +77,12 @@ const DIGIT_OPTIONS = [
   { value: 'ONLY_DOWNS', label: 'Only Downs' },
 ];
 
+const PATTERN_RETRIGGER = [
+  { value: 'any',       label: 'Trigger anytime' },
+  { value: 'no_contra', label: 'No Contradiction' },
+  { value: 'wait_opp',  label: 'Wait for opposite before re-trigger' },
+];
+
 const MA_TYPES = ['SMA', 'EMA', 'WMA', 'HMA', 'KAMA', 'VWMA', 'ALMA', 'TEMA', 'ZLEMA', 'LSMA'];
 
 function tokenNeedsBarrier(token: string): boolean {
@@ -117,21 +101,487 @@ function getTokenBgColor(token: string): string {
   }
 }
 
-function conditionSummaryText(c: Condition): string {
-  switch (c.type) {
-    case 'EVEN_PCT':      return `EVEN % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
-    case 'ODD_PCT':       return `ODD % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
-    case 'FALL_PCT':      return `FALL % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
-    case 'RISE_PCT':      return `RISE % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
-    case 'OVER_PCT':      return `OVER(${c.digitBarrier ?? 4}) % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
-    case 'UNDER_PCT':     return `UNDER(${c.digitBarrier ?? 4}) % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
-    case 'LAST_DIGITS':   return `last ${c.lastN} digits are ${c.digitValue}`;
-    case 'GREEN_BAR':     return `GREEN BAR on ${c.barValue} with pct ${c.comparator} ${c.value}%`;
-    case 'DIGIT_PATTERN': return `PATTERN [${(c.patternBoxes?.length || 0)} boxes]`;
-    case 'DIGIT_APPEARS': return `DIGIT ${(c.targetDigits || [c.digitBarrier ?? 5]).join('&')} APPEARS ${c.comparator} ${c.value}x`;
-    case 'RSI_SIGNAL':    return `RSI(${c.rsiLength || 14}) [${c.rsiSignalAction || 'AUTO'}]`;
-    default:              return '';
-  }
+// ─────────────────────────────────────────────────────────────────────────────
+// ADVANCED PATTERN BUILDER (Multi-Entry Sequence with OR / THEN / THENALL)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function AdvancedPatternBuilder({ cond, onChange }: {
+  cond: Condition;
+  onChange: (updated: Condition) => void;
+}) {
+  const boxes: PatternBox[] = (cond.patternBoxes && cond.patternBoxes.length > 0)
+    ? cond.patternBoxes
+    : [{ triggers: [{ token: 'E' }] }];
+
+  const setBoxes = (next: PatternBox[]) => onChange({ ...cond, patternBoxes: next });
+  const addBox = () => setBoxes([...boxes, { triggers: [{ token: 'E' }] }]);
+  const removeBox = (bi: number) => setBoxes(boxes.filter((_, i) => i !== bi));
+
+  const addTrigger = (bi: number) =>
+    setBoxes(boxes.map((b, i) => i !== bi ? b : { triggers: [...b.triggers, { token: 'E' }] }));
+
+  const removeTrigger = (bi: number, ti: number) =>
+    setBoxes(boxes.map((b, i) => i !== bi ? b : { triggers: b.triggers.filter((_, j) => j !== ti) }));
+
+  const updateTrigger = (bi: number, ti: number, patch: Partial<PatternTrigger>) =>
+    setBoxes(boxes.map((b, i) => i !== bi ? b : {
+      triggers: b.triggers.map((t, j) => j !== ti ? t : { ...t, ...patch }),
+    }));
+
+  const contracts = cond.customContracts || [
+    { type: 'DIGITUNDER', barrier: 7 },
+    { type: 'DIGITOVER',  barrier: 2 },
+    { type: 'DIGITMATCH', barrier: 5 },
+    { type: 'DIGITOVER',  barrier: 0 },
+  ];
+
+  const setContracts = (next: { type: string; barrier: number }[]) =>
+    onChange({ ...cond, customContracts: next });
+
+  const addContract = () => setContracts([...contracts, { type: 'DIGITEVEN', barrier: 0 }]);
+  const removeContract = (ci: number) => setContracts(contracts.filter((_, i) => i !== ci));
+  const updateContractType = (ci: number, type: string) =>
+    setContracts(contracts.map((c, i) => i !== ci ? c : { ...c, type }));
+  const updateContractBarrier = (ci: number, barrier: number) =>
+    setContracts(contracts.map((c, i) => i !== ci ? c : { ...c, barrier }));
+
+  return (
+    <div className="w-full bg-slate-950/70 border border-indigo-500/30 rounded-xl p-3 space-y-3 mt-2">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-black text-indigo-300 uppercase tracking-wider">Multi-Entry Sequence</span>
+          <div
+            className={`w-7 h-4 rounded-full p-0.5 cursor-pointer transition-colors ${
+              (cond.patternBoxes && cond.patternBoxes.length > 0) ? 'bg-emerald-500' : 'bg-slate-700'
+            }`}
+            onClick={() => {
+              if (cond.patternBoxes && cond.patternBoxes.length > 0) {
+                onChange({ ...cond, patternBoxes: [] });
+              } else {
+                onChange({ ...cond, patternBoxes: [{ triggers: [{ token: 'E' }] }] });
+              }
+            }}
+          >
+            <div
+              className={`w-3 h-3 rounded-full bg-white transition-transform ${
+                (cond.patternBoxes && cond.patternBoxes.length > 0) ? 'translate-x-3' : 'translate-x-0'
+              }`}
+            />
+          </div>
+        </div>
+
+        {(cond.patternBoxMode ?? 'OR') === 'OR' && (
+          <button
+            onClick={addBox}
+            className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/40 text-[10px] font-bold text-indigo-200"
+          >
+            + Add Box
+          </button>
+        )}
+        {(cond.patternBoxMode === 'THEN' || cond.patternBoxMode === 'THENALL') && boxes.length < 2 && (
+          <button
+            onClick={addBox}
+            className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/40 text-[10px] font-bold text-indigo-200"
+          >
+            + Add Box 2
+          </button>
+        )}
+      </div>
+
+      {/* Orientation hint */}
+      {cond.patternBoxes && cond.patternBoxes.length > 0 && (
+        <p className="text-[10px] text-gray-400">
+          {(cond.patternBoxMode ?? 'OR') === 'OR'
+            ? 'Each trigger = 1 tick · Left = oldest, Right = latest · Multiple boxes = OR alternatives'
+            : cond.patternBoxMode === 'THEN'
+            ? 'Box 1 triggers → locks market → Box 2 must fire within timeout ticks'
+            : 'Box 1 triggers → ALL markets scanned for Box 2 → fires up to max trades'}
+        </p>
+      )}
+
+      {/* Boxes Grid */}
+      {cond.patternBoxes && cond.patternBoxes.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          {boxes.map((box, bi) => {
+            const mode = cond.patternBoxMode ?? 'OR';
+            if ((mode === 'THEN' || mode === 'THENALL') && bi >= 2) return null;
+
+            return (
+              <React.Fragment key={bi}>
+                {bi > 0 && (
+                  <div className="flex flex-col items-center gap-1.5 px-1">
+                    {bi === 1 && (() => {
+                      const curMode = cond.patternBoxMode ?? 'OR';
+                      const nextMode = curMode === 'OR' ? 'THEN' : curMode === 'THEN' ? 'THENALL' : 'OR';
+                      return (
+                        <div className="flex flex-col items-center gap-1">
+                          <button
+                            onClick={() => onChange({ ...cond, patternBoxMode: nextMode as 'OR' | 'THEN' | 'THENALL' })}
+                            className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm"
+                            title={`Mode: ${curMode} — click to switch to ${nextMode}`}
+                          >
+                            {curMode} ▾
+                          </button>
+                          {(curMode === 'THEN' || curMode === 'THENALL') && (
+                            <div className="flex items-center gap-1 text-[9px] text-gray-300">
+                              <span>TIMEOUT:</span>
+                              <input
+                                type="number"
+                                min={1}
+                                max={500}
+                                value={cond.thenTimeout ?? 20}
+                                onChange={e => onChange({ ...cond, thenTimeout: Math.max(1, +e.target.value || 20) })}
+                                className="w-10 bg-black/60 border border-white/10 rounded px-1 text-center text-white text-[10px]"
+                              />
+                              <span>t</span>
+                            </div>
+                          )}
+                          {curMode === 'THENALL' && (
+                            <div className="flex items-center gap-1 text-[9px] text-gray-300">
+                              <span>MAX:</span>
+                              <input
+                                type="number"
+                                min={1}
+                                max={50}
+                                value={cond.thenMaxTrades ?? 3}
+                                onChange={e => onChange({ ...cond, thenMaxTrades: Math.max(1, +e.target.value || 3) })}
+                                className="w-10 bg-black/60 border border-white/10 rounded px-1 text-center text-white text-[10px]"
+                              />
+                              <span>×</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                    {bi > 1 && (
+                      <span className="text-[10px] font-bold text-amber-400">OR</span>
+                    )}
+                  </div>
+                )}
+
+                {/* Box Card */}
+                <div className="bg-slate-900/90 border border-white/10 rounded-xl p-2.5 space-y-2 min-w-[170px]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black text-white">Box {bi + 1}</span>
+                    <span className="text-[9px] text-gray-500">oldest→latest</span>
+                    {boxes.length > 1 && (
+                      <button onClick={() => removeBox(bi)} className="text-gray-500 hover:text-rose-400 text-xs">✕</button>
+                    )}
+                  </div>
+
+                  {/* Triggers list */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {box.triggers.map((trig, ti) => {
+                      const bNeedsBarrier = tokenNeedsBarrier(trig.token);
+                      return (
+                        <div
+                          key={ti}
+                          className="flex items-center rounded border border-white/20 overflow-hidden shadow-sm text-[11px]"
+                          style={{ background: getTokenBgColor(trig.token) }}
+                        >
+                          <select
+                            value={trig.token}
+                            onChange={e => {
+                              const token = e.target.value;
+                              const barrier = tokenNeedsBarrier(token) ? (trig.barrier ?? 4) : undefined;
+                              updateTrigger(bi, ti, { token, barrier });
+                            }}
+                            className="bg-transparent text-white font-black px-1.5 py-0.5 outline-none cursor-pointer text-xs"
+                            style={{ background: getTokenBgColor(trig.token), color: '#ffffff' }}
+                          >
+                            <option value="E" style={{ background: '#0f172a', color: '#fff' }}>E</option>
+                            <option value="O" style={{ background: '#0f172a', color: '#fff' }}>O</option>
+                            <option value="U" style={{ background: '#0f172a', color: '#fff' }}>U</option>
+                            <option value="V" style={{ background: '#0f172a', color: '#fff' }}>V</option>
+                            <option value="M" style={{ background: '#0f172a', color: '#fff' }}>M</option>
+                            <option value="D" style={{ background: '#0f172a', color: '#fff' }}>D</option>
+                            <option value="SE" style={{ background: '#0f172a', color: '#fff' }}>SE</option>
+                            <option value="SO" style={{ background: '#0f172a', color: '#fff' }}>SO</option>
+                            <option value="R" style={{ background: '#0f172a', color: '#fff' }}>R</option>
+                            <option value="F" style={{ background: '#0f172a', color: '#fff' }}>F</option>
+                          </select>
+
+                          {bNeedsBarrier && (
+                            <select
+                              value={trig.barrier ?? 4}
+                              onChange={e => updateTrigger(bi, ti, { barrier: +e.target.value })}
+                              className="bg-black/50 text-white font-bold px-1.5 py-0.5 outline-none cursor-pointer text-xs"
+                              style={{ background: 'rgba(0,0,0,0.6)', color: '#ffffff' }}
+                            >
+                              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(d => (
+                                <option key={d} value={d} style={{ background: '#0f172a', color: '#fff' }}>{d}</option>
+                              ))}
+                            </select>
+                          )}
+
+                          {box.triggers.length > 1 && (
+                            <button
+                              onClick={() => removeTrigger(bi, ti)}
+                              className="px-1.5 py-0.5 text-white/60 hover:text-white bg-black/20 text-[10px]"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    <button
+                      onClick={() => addTrigger(bi)}
+                      className="w-6 h-6 rounded border border-dashed border-white/30 hover:border-white text-gray-300 flex items-center justify-center text-xs font-bold"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+              </React.Fragment>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Retrigger row */}
+      <div className="flex items-center gap-2 pt-1 border-t border-white/5 text-xs text-gray-300">
+        <span className="text-[11px] text-gray-400 font-bold">Retrigger:</span>
+        <select
+          value={cond.patternRetrigger || 'any'}
+          onChange={e => onChange({ ...cond, patternRetrigger: e.target.value })}
+          className="bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-xs text-white"
+          style={{ background: '#0f172a', color: '#ffffff' }}
+        >
+          {PATTERN_RETRIGGER.map(r => (
+            <option key={r.value} value={r.value} style={{ background: '#0f172a', color: '#fff' }}>{r.label}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* USE CUSTOM CONTRACTS */}
+      <div className="pt-2 border-t border-white/5 space-y-2">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={!!cond.useCustomContracts}
+            onChange={e => onChange({ ...cond, useCustomContracts: e.target.checked })}
+            className="accent-amber-500"
+          />
+          <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+          <span className="text-xs font-bold text-amber-300">USE CUSTOM CONTRACTS (Per Loss Step)</span>
+        </label>
+
+        {cond.useCustomContracts && (
+          <div className="flex flex-wrap gap-2 pt-1">
+            {contracts.map((box, ci) => {
+              const bNeedsBarrier = needsBarrier(box.type);
+              return (
+                <div key={ci} className="bg-black/50 border border-amber-500/30 rounded-xl p-2 space-y-1.5 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-amber-300">Loss Step {ci + 1}</span>
+                    {contracts.length > 1 && (
+                      <button onClick={() => removeContract(ci)} className="text-gray-500 hover:text-rose-400 text-xs">✕</button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      value={box.type}
+                      onChange={e => updateContractType(ci, e.target.value)}
+                      className="bg-slate-900 border border-white/10 rounded px-2 py-1 text-xs text-white"
+                      style={{ background: '#0f172a', color: '#ffffff' }}
+                    >
+                      <option value="DIGITUNDER" style={{ background: '#0f172a', color: '#fff' }}>U (Under)</option>
+                      <option value="DIGITOVER" style={{ background: '#0f172a', color: '#fff' }}>V (Over)</option>
+                      <option value="DIGITMATCH" style={{ background: '#0f172a', color: '#fff' }}>M (Match)</option>
+                      <option value="DIGITDIFF" style={{ background: '#0f172a', color: '#fff' }}>D (Diff)</option>
+                      <option value="DIGITEVEN" style={{ background: '#0f172a', color: '#fff' }}>E (Even)</option>
+                      <option value="DIGITODD" style={{ background: '#0f172a', color: '#fff' }}>O (Odd)</option>
+                      <option value="CALL" style={{ background: '#0f172a', color: '#fff' }}>R (Rise)</option>
+                      <option value="PUT" style={{ background: '#0f172a', color: '#fff' }}>F (Fall)</option>
+                    </select>
+                    {bNeedsBarrier ? (
+                      <input
+                        type="number"
+                        min={0}
+                        max={9}
+                        value={box.barrier}
+                        onChange={e => updateContractBarrier(ci, +e.target.value)}
+                        className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-1 text-center text-white"
+                        style={{ background: '#0f172a', color: '#ffffff' }}
+                      />
+                    ) : (
+                      <span className="text-gray-500 text-xs px-2">—</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            <button
+              onClick={addContract}
+              className="px-2.5 py-1 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-bold self-end"
+            >
+              + Add Box
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RSI SIGNAL BUILDER (Full numerical TradingView indicator panel)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function RsiSignalBuilder({ cond, onChange }: { cond: Condition; onChange: (c: Condition) => void }) {
+  const u = (p: Partial<Condition>) => onChange({ ...cond, ...p });
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  return (
+    <div className="w-full bg-slate-950/80 border border-indigo-500/40 rounded-xl p-3 space-y-3 mt-2 text-xs">
+      {/* Header bar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2">
+        <div className="flex items-center gap-2">
+          <span className="font-black text-indigo-300">⚡ RSI Signal [trade_lexx]</span>
+          <span className="text-[10px] text-gray-500">(Numerical Candle Engine)</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-gray-400 text-[10px]">Action:</span>
+          <select
+            value={cond.rsiSignalAction || 'AUTO'}
+            onChange={e => u({ rsiSignalAction: e.target.value as any })}
+            className="bg-indigo-950/80 border border-indigo-500/40 rounded px-2 py-0.5 text-xs text-indigo-200 font-bold"
+            style={{ background: '#1e1b4b', color: '#c7d2fe' }}
+          >
+            <option value="AUTO" style={{ background: '#0f172a', color: '#fff' }}>AUTO (Matches Trade Type)</option>
+            <option value="BUY" style={{ background: '#0f172a', color: '#fff' }}>BUY (Rise/Call only)</option>
+            <option value="SELL" style={{ background: '#0f172a', color: '#fff' }}>SELL (Fall/Put only)</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Primary params */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-1.5">
+          <span className="text-gray-400 text-[11px]">Ticks/Bar:</span>
+          <input
+            type="number"
+            min={1}
+            max={60}
+            value={cond.rsiTicksPerCandle ?? 5}
+            onChange={e => u({ rsiTicksPerCandle: Math.max(1, +e.target.value || 5) })}
+            className="w-12 bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-center text-white"
+            style={{ background: '#0f172a', color: '#ffffff' }}
+          />
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <span className="text-gray-400 text-[11px]">RSI Length:</span>
+          <input
+            type="number"
+            min={2}
+            max={100}
+            value={cond.rsiLength ?? 14}
+            onChange={e => u({ rsiLength: Math.max(2, +e.target.value || 14) })}
+            className="w-12 bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-center text-white"
+            style={{ background: '#0f172a', color: '#ffffff' }}
+          />
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <span className="text-gray-400 text-[11px]">Pause:</span>
+          <input
+            type="number"
+            min={0}
+            max={50}
+            value={cond.rsiReentryPause ?? 5}
+            onChange={e => u({ rsiReentryPause: Math.max(0, +e.target.value || 0) })}
+            className="w-12 bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-center text-white"
+            style={{ background: '#0f172a', color: '#ffffff' }}
+          />
+          <span className="text-gray-500 text-[10px]">bars</span>
+        </div>
+
+        <button
+          onClick={() => setShowAdvanced(!showAdvanced)}
+          className="ml-auto px-2 py-1 rounded bg-white/5 hover:bg-white/10 border border-white/10 text-indigo-300 text-[10px] font-bold"
+        >
+          {showAdvanced ? '▴ Less' : '▾ More Settings'}
+        </button>
+      </div>
+
+      {/* Sub-signals */}
+      <div className="flex flex-wrap items-center gap-4 pt-2 border-t border-white/5">
+        <label className="flex items-center gap-1.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={cond.rsiMaMode ?? true}
+            onChange={e => u({ rsiMaMode: e.target.checked })}
+            className="accent-indigo-500"
+          />
+          <span className={`font-bold text-[11px] ${(cond.rsiMaMode ?? true) ? 'text-emerald-400' : 'text-gray-500'}`}>MA Cross</span>
+        </label>
+
+        <label className="flex items-center gap-1.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={cond.rsiBbMode ?? true}
+            onChange={e => u({ rsiBbMode: e.target.checked })}
+            className="accent-indigo-500"
+          />
+          <span className={`font-bold text-[11px] ${(cond.rsiBbMode ?? true) ? 'text-emerald-400' : 'text-gray-500'}`}>BB Cross</span>
+        </label>
+
+        <label className="flex items-center gap-1.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={cond.rsiDivergenceMode ?? true}
+            onChange={e => u({ rsiDivergenceMode: e.target.checked })}
+            className="accent-indigo-500"
+          />
+          <span className={`font-bold text-[11px] ${(cond.rsiDivergenceMode ?? true) ? 'text-emerald-400' : 'text-gray-500'}`}>Divergence</span>
+        </label>
+      </div>
+
+      {/* Advanced expandable */}
+      {showAdvanced && (
+        <div className="pt-2 border-t border-dashed border-white/10 space-y-2">
+          {/* Signal Hold Window */}
+          <div className="flex items-center gap-2">
+            <span className="text-indigo-300 font-bold text-[11px]">Signal Hold Window:</span>
+            <input
+              type="number"
+              min={1}
+              max={50}
+              value={cond.rsiSignalHoldTicks ?? 10}
+              onChange={e => u({ rsiSignalHoldTicks: Math.max(1, +e.target.value || 10) })}
+              className="w-12 bg-slate-900 border border-indigo-500/40 rounded px-1.5 py-0.5 text-center text-indigo-200 font-bold"
+              style={{ background: '#0f172a', color: '#c7d2fe' }}
+            />
+            <span className="text-gray-500 text-[10px]">ticks (for collaborating conditions like F-F pullbacks)</span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-4 text-[11px]">
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={cond.rsiWaitForOpposite ?? false}
+                onChange={e => u({ rsiWaitForOpposite: e.target.checked })}
+              />
+              <span>Wait for Opposite Signal</span>
+            </label>
+
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={cond.rsiAndMode ?? false}
+                onChange={e => u({ rsiAndMode: e.target.checked })}
+              />
+              <span>AND Mode (Multi-Signal Confluence)</span>
+            </label>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -150,12 +600,19 @@ export function MiniLaxPrimeModal({
   isCapitalCompound,
   isCompounding,
 }: MiniLaxPrimeModalProps) {
-  // Local state for the step
+  // Step-level settings state
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [selectedMarkets, setSelectedMarkets] = useState<string[]>([]);
-  const [tradingMode, setTradingMode] = useState<string>('continuous');
+  const [tradingMode, setTradingMode] = useState<string>('target');
   const [crossMarketDelay, setCrossMarketDelay] = useState<string>('1.5');
-  const [martingale, setMartingale] = useState<string>('2.1');
+  const [martingale, setMartingale] = useState<string>('2.0');
+  const [isMartingaleEnabled, setIsMartingaleEnabled] = useState<boolean>(true);
+  const [compoundProfits, setCompoundProfits] = useState<boolean>(false);
+  const [compoundPct, setCompoundPct] = useState<string>('50');
+  const [targetProfit, setTargetProfit] = useState<string>('5.00');
+  const [targetProfitMode, setTargetProfitMode] = useState<'profit' | 'wins'>('wins');
+  const [stopLoss, setStopLoss] = useState<string>('10.00');
+  const [stopLossMode, setStopLossMode] = useState<'loss' | 'losses'>('losses');
   const [adaptiveSwitch, setAdaptiveSwitch] = useState<AdaptiveSwitch>({
     enabled: false,
     dualMode: false,
@@ -164,43 +621,48 @@ export function MiniLaxPrimeModal({
       { contractType: 'DIGITODD',  reps: 2 },
     ],
   });
-  const [virtualSettings, setVirtualSettings] = useState<any>({
-    isVirtualMode: false,
-    startVirtualToReal: false,
-    vTriggerType: 'wins',
-    vTriggerMode: 'consec',
-    vThreshold: 2,
-  });
 
-  // UI accordion tabs
   const [showVirtualPanel, setShowVirtualPanel] = useState(false);
   const [showSwitcherPanel, setShowSwitcherPanel] = useState(false);
-  const [showMarketsPanel, setShowMarketsPanel] = useState(true);
 
-  // Initialize or re-sync when modal opens
+  // Swipe detection refs for touch screens
+  const stepTpTouchXRef = React.useRef<number | null>(null);
+  const stepSlTouchXRef = React.useRef<number | null>(null);
+
+  // Sync state when opened
   useEffect(() => {
     if (!isOpen) return;
 
     if (currentConfig && currentConfig.strategies && currentConfig.strategies.length > 0) {
       setStrategies(JSON.parse(JSON.stringify(currentConfig.strategies)));
       setSelectedMarkets(currentConfig.selectedMarkets || ['1HZ10V', '1HZ100V']);
-      setTradingMode(currentConfig.tradingMode || 'continuous');
+      setTradingMode(currentConfig.tradingMode || 'target');
       setCrossMarketDelay(currentConfig.crossMarketDelay || '1.5');
-      setMartingale(currentConfig.martingale || '2.1');
+      setMartingale(currentConfig.martingale || '2.0');
+      setIsMartingaleEnabled(currentConfig.isMartingaleEnabled ?? true);
+      setCompoundProfits(!!currentConfig.compoundProfits);
+      setCompoundPct(currentConfig.compoundPct || '50');
+      setTargetProfit(currentConfig.targetProfit || '2');
+      setTargetProfitMode(currentConfig.targetProfitMode || 'wins');
+      setStopLoss(currentConfig.stopLoss || '2');
+      setStopLossMode(currentConfig.stopLossMode || 'losses');
       if (currentConfig.adaptiveSwitch) {
         setAdaptiveSwitch(JSON.parse(JSON.stringify(currentConfig.adaptiveSwitch)));
       }
-      if (currentConfig.virtualSettings) {
-        setVirtualSettings(JSON.parse(JSON.stringify(currentConfig.virtualSettings)));
-      }
     } else {
-      // Default: copy from current global LaxPrime state so user has a smart starting baseline
       const liveState = useBotStore.getState();
       setStrategies(liveState.strategies?.length ? JSON.parse(JSON.stringify(liveState.strategies)) : [createStrategy(0)]);
       setSelectedMarkets(liveState.selectedMarkets?.length ? [...liveState.selectedMarkets] : ['1HZ10V', '1HZ100V']);
-      setTradingMode(liveState.tradingMode || 'continuous');
+      setTradingMode('target');
       setCrossMarketDelay(liveState.crossMarketDelay || '1.5');
-      setMartingale(liveState.martingale || '2.1');
+      setMartingale(liveState.martingale || '2.0');
+      setIsMartingaleEnabled(true);
+      setCompoundProfits(false);
+      setCompoundPct('50');
+      setTargetProfit('2');
+      setTargetProfitMode('wins');
+      setStopLoss('2');
+      setStopLossMode('losses');
       setAdaptiveSwitch(liveState.adaptiveSwitch ? JSON.parse(JSON.stringify(liveState.adaptiveSwitch)) : {
         enabled: false,
         dualMode: false,
@@ -214,7 +676,6 @@ export function MiniLaxPrimeModal({
 
   if (!isOpen) return null;
 
-  // ── Strategy helpers ────────────────────────────────────────────────────────
   const updateStrategy = (idx: number, patch: Partial<Strategy>) => {
     setStrategies(prev => prev.map((s, i) => i === idx ? { ...s, ...patch } : s));
   };
@@ -238,10 +699,7 @@ export function MiniLaxPrimeModal({
   const updateConditionInStrat = (stratIdx: number, condId: string, updated: Condition) => {
     setStrategies(prev => prev.map((s, i) => {
       if (i !== stratIdx) return s;
-      return {
-        ...s,
-        conditions: s.conditions.map(c => c.id === condId ? updated : c),
-      };
+      return { ...s, conditions: s.conditions.map(c => c.id === condId ? updated : c) };
     }));
   };
 
@@ -252,78 +710,6 @@ export function MiniLaxPrimeModal({
     }));
   };
 
-  // ── Quick Preset loader ───────────────────────────────────────────────────
-  const applyQuickPreset = (presetKey: string) => {
-    if (presetKey === 'copy_live') {
-      const liveState = useBotStore.getState();
-      setStrategies(JSON.parse(JSON.stringify(liveState.strategies || [createStrategy(0)])));
-      setSelectedMarkets([...(liveState.selectedMarkets || ['1HZ10V', '1HZ100V'])]);
-      setTradingMode(liveState.tradingMode || 'continuous');
-      setCrossMarketDelay(liveState.crossMarketDelay || '1.5');
-      setMartingale(liveState.martingale || '2.1');
-      if (liveState.adaptiveSwitch) setAdaptiveSwitch(JSON.parse(JSON.stringify(liveState.adaptiveSwitch)));
-    } else if (presetKey === 'even_only') {
-      const s = createStrategy(0);
-      s.tradeType = 'DIGITEVEN';
-      s.ticks = 1;
-      s.conditions = [{
-        ...createCondition(),
-        type: 'LAST_DIGITS',
-        lastN: 4,
-        digitValue: 'ODD',
-      }];
-      setStrategies([s]);
-      setSelectedMarkets(['1HZ10V', '1HZ100V']);
-    } else if (presetKey === 'over_under') {
-      const s1 = createStrategy(0);
-      s1.tradeType = 'DIGITOVER';
-      s1.prediction = 4;
-      s1.ticks = 1;
-      s1.conditions = [{
-        ...createCondition(),
-        type: 'UNDER_PCT',
-        digitBarrier: 4,
-        comparator: '>',
-        value: 65,
-        period: 100,
-      }];
-      setStrategies([s1]);
-      setSelectedMarkets(['1HZ100V', 'R_100']);
-    } else if (presetKey === 'rsi_signal') {
-      const s = createStrategy(0);
-      s.tradeType = 'CALL';
-      s.ticks = 2;
-      s.conditions = [{
-        ...createCondition(),
-        type: 'RSI_SIGNAL',
-        rsiLength: 14,
-        rsiTicksPerCandle: 5,
-        rsiSignalAction: 'AUTO',
-        rsiSignalHoldTicks: 10,
-        rsiMaMode: true,
-        rsiBbMode: true,
-        rsiDivergenceMode: true,
-        rsiFilterEnabled: true,
-      }];
-      setStrategies([s]);
-      setSelectedMarkets(['1HZ10V', '1HZ100V']);
-    } else if (presetKey === 'only_ups') {
-      const s = createStrategy(0);
-      s.tradeType = 'RUNHIGH';
-      s.ticks = 2;
-      s.conditions = [{
-        ...createCondition(),
-        type: 'FALL_PCT',
-        comparator: '>',
-        value: 60,
-        period: 100,
-      }];
-      setStrategies([s]);
-      // Exclude jump indices for Only Ups
-      setSelectedMarkets(['1HZ10V', '1HZ100V', 'R_100']);
-    }
-  };
-
   const handleSave = () => {
     const configToSave: LaxPrimeStepConfig = {
       selectedMarkets: selectedMarkets.length > 0 ? selectedMarkets : ['1HZ10V', '1HZ100V'],
@@ -331,117 +717,227 @@ export function MiniLaxPrimeModal({
       tradingMode,
       crossMarketDelay,
       martingale,
+      isMartingaleEnabled,
+      compoundProfits,
+      compoundPct,
+      targetProfit,
+      targetProfitMode,
+      stopLoss,
+      stopLossMode,
       adaptiveSwitch,
-      virtualSettings,
     };
     onSave(configToSave);
     onClose();
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-6 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="relative w-full max-w-5xl max-h-[92vh] flex flex-col bg-[#0b0f19] border border-indigo-500/30 rounded-2xl shadow-2xl shadow-indigo-950/50 overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
+      {/* Explicit dark style enforcement for Windows Chromium dropdown option lists */}
+      <style>{`
+        .mini-lp-root select,
+        .mini-lp-root select option {
+          background-color: #0f172a !important;
+          color: #ffffff !important;
+        }
+        .mini-lp-root select:focus {
+          outline: none !important;
+          border-color: #6366f1 !important;
+        }
+      `}</style>
 
-        {/* ── Header ── */}
-        <div className="p-4 md:p-5 border-b border-white/10 bg-slate-900/60 flex items-center justify-between gap-4">
+      <div className="mini-lp-root relative w-full max-w-5xl max-h-[96vh] flex flex-col bg-[#0b0f19] border border-indigo-500/30 rounded-2xl shadow-2xl shadow-indigo-950/50 overflow-hidden text-white">
+
+        {/* ── Top Header ── */}
+        <div className="p-3.5 sm:p-4 md:p-5 border-b border-white/10 bg-slate-900/80 flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-cyan-500 flex items-center justify-center shadow-lg shadow-indigo-500/20 text-white font-black text-sm">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-cyan-500 flex items-center justify-center shadow-lg shadow-indigo-500/20 text-white font-black text-sm shrink-0">
               LX
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-base font-black text-white tracking-wide">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-sm sm:text-base font-black text-white tracking-wide">
                   Mini LaxPrime Settings
                 </h2>
-                <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-[10px] font-black text-indigo-300">
-                  {stepLabel || `Step ${stepIndex + 1}`}
-                </span>
-                <span className="px-2 py-0.5 rounded-full bg-teal-500/20 border border-teal-500/30 text-[10px] font-black text-teal-300">
-                  INDEPENDENT OVERRIDE
-                </span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-[9px] sm:text-[10px] font-black text-indigo-300">
+                    {stepLabel || `Step ${stepIndex + 1}`}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-teal-500/20 border border-teal-500/30 text-[9px] sm:text-[10px] font-black text-teal-300">
+                    OVERRIDE
+                  </span>
+                </div>
               </div>
-              <p className="text-[11px] text-gray-400 mt-0.5">
-                Configure dedicated strategies, conditions, markets, and execution rules for this specific step.
+              <p className="text-[10px] sm:text-[11px] text-gray-400 mt-0.5">
+                Configure dedicated strategies, conditions, TP/SL, inner compounding, and markets for this step.
               </p>
             </div>
           </div>
 
           <button
             onClick={onClose}
-            className="p-2 rounded-xl text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
-            title="Close without saving"
+            className="p-1.5 sm:p-2 rounded-xl text-gray-400 hover:text-white hover:bg-white/10 transition-colors ml-auto"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* ── Compounded Stake Banner (User requirement: Stake controlled by AutoTrade) ── */}
-        <div className="px-5 py-2.5 bg-gradient-to-r from-emerald-950/40 via-slate-900 to-indigo-950/40 border-b border-emerald-500/20 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
-            <div className="text-xs">
-              <span className="font-bold text-white">Stake Managed by Auto-Trade:</span>
-              <span className="text-emerald-300 font-mono font-bold ml-1.5">${currentCompoundedStake}</span>
-              <span className="text-gray-400 ml-2 text-[11px]">
-                {isCapitalCompound
-                  ? `(${capitalPct}% capital compounding active)`
-                  : isCompounding
-                  ? `(compounding active across all steps)`
-                  : `(base stake)`}
-              </span>
+        {/* ── LaxPrime Full Parameter Row (Stake, TP, SL, Martingale/Compounding, Mode) ── */}
+        <div className="p-3 sm:p-4 bg-slate-900/60 border-b border-white/10 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+          {/* Stake Indicator (Controlled by AutoTrade Capital %) */}
+          <div className="bg-black/40 border border-emerald-500/30 rounded-xl p-2.5">
+            <span className="text-[10px] font-black text-emerald-400 uppercase tracking-wider block">
+              BASE STAKE
+            </span>
+            <div className="text-sm font-mono font-bold text-white mt-0.5">
+              ${currentCompoundedStake}
             </div>
-          </div>
-          <div className="flex items-center gap-2 text-[10px] text-gray-400">
-            <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10 font-mono text-gray-300">
-              Martingale: {martingale}x
-            </span>
-            <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10 font-mono text-gray-300">
-              Mode: {tradingMode}
+            <span className="text-[9px] text-emerald-300/80 block mt-0.5 truncate">
+              {isCapitalCompound ? `${capitalPct}% Capital Compounding` : isCompounding ? 'AutoTrade Compounded' : 'AutoTrade Base Stake'}
             </span>
           </div>
-        </div>
 
-        {/* ── Quick Templates Bar ── */}
-        <div className="px-5 py-2.5 border-b border-white/5 bg-white/2 flex items-center gap-2 overflow-x-auto text-[11px]">
-          <span className="text-gray-400 font-bold shrink-0 text-[10px] uppercase tracking-wider flex items-center gap-1">
-            <Zap className="w-3 h-3 text-amber-400" /> Templates:
-          </span>
-          <button
-            onClick={() => applyQuickPreset('copy_live')}
-            className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/40 text-indigo-200 font-bold shrink-0 transition-all flex items-center gap-1"
+          {/* Step Target Profit (Dual-Mode: Profit ⇌ Total Wins with Swipe & Tap) */}
+          <div
+            className="bg-black/40 border border-white/10 rounded-xl p-2.5 select-none"
+            onTouchStart={e => { stepTpTouchXRef.current = e.touches[0].clientX; }}
+            onTouchEnd={e => {
+              if (stepTpTouchXRef.current !== null) {
+                const diffX = e.changedTouches[0].clientX - stepTpTouchXRef.current;
+                if (Math.abs(diffX) > 20) setTargetProfitMode(m => m === 'profit' ? 'wins' : 'profit');
+                stepTpTouchXRef.current = null;
+              }
+            }}
           >
-            <Copy className="w-3 h-3" /> Copy Current LaxPrime
-          </button>
-          <button
-            onClick={() => applyQuickPreset('even_only')}
-            className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-gray-200 shrink-0 transition-all"
+            <div className="flex items-center justify-between mb-1 gap-1">
+              <span
+                className="text-[10px] font-bold text-gray-400 uppercase tracking-wider cursor-pointer hover:underline truncate"
+                onClick={() => setTargetProfitMode(m => m === 'profit' ? 'wins' : 'profit')}
+                title="Tap or swipe to switch between USD Profit and Total Wins"
+              >
+                {targetProfitMode === 'wins' ? 'TARGET WINS' : 'TARGET PROFIT'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setTargetProfitMode(m => m === 'profit' ? 'wins' : 'profit')}
+                className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[9px] font-bold shrink-0 cursor-pointer"
+              >
+                {targetProfitMode === 'wins' ? '🏆 Wins' : '💵 USD'}
+              </button>
+            </div>
+            <input
+              type="number"
+              min="0.1"
+              step={targetProfitMode === 'wins' ? '1' : '0.1'}
+              value={targetProfit}
+              onChange={e => setTargetProfit(e.target.value)}
+              className="w-full bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-xs font-mono font-bold text-white"
+            />
+          </div>
+
+          {/* Step Stop Loss (Dual-Mode: Loss ⇌ Total Losses with Swipe & Tap) */}
+          <div
+            className="bg-black/40 border border-white/10 rounded-xl p-2.5 select-none"
+            onTouchStart={e => { stepSlTouchXRef.current = e.touches[0].clientX; }}
+            onTouchEnd={e => {
+              if (stepSlTouchXRef.current !== null) {
+                const diffX = e.changedTouches[0].clientX - stepSlTouchXRef.current;
+                if (Math.abs(diffX) > 20) setStopLossMode(m => m === 'loss' ? 'losses' : 'loss');
+                stepSlTouchXRef.current = null;
+              }
+            }}
           >
-            Even Only (1 Tick)
-          </button>
-          <button
-            onClick={() => applyQuickPreset('over_under')}
-            className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-gray-200 shrink-0 transition-all"
-          >
-            Over 4 / Under 5
-          </button>
-          <button
-            onClick={() => applyQuickPreset('rsi_signal')}
-            className="px-2.5 py-1 rounded-lg bg-teal-500/10 hover:bg-teal-500/20 border border-teal-500/30 text-teal-300 shrink-0 transition-all"
-          >
-            RSI Signal [trade_lexx]
-          </button>
-          <button
-            onClick={() => applyQuickPreset('only_ups')}
-            className="px-2.5 py-1 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 shrink-0 transition-all"
-          >
-            ↑ Only Ups (2-5 Ticks)
-          </button>
+            <div className="flex items-center justify-between mb-1 gap-1">
+              <span
+                className="text-[10px] font-bold text-gray-400 uppercase tracking-wider cursor-pointer hover:underline truncate"
+                onClick={() => setStopLossMode(m => m === 'loss' ? 'losses' : 'loss')}
+                title="Tap or swipe to switch between USD Loss and Total Losses"
+              >
+                {stopLossMode === 'losses' ? 'STOP LOSSES' : 'STOP LOSS'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setStopLossMode(m => m === 'loss' ? 'losses' : 'loss')}
+                className="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 text-[9px] font-bold shrink-0 cursor-pointer"
+              >
+                {stopLossMode === 'losses' ? '🔢 Count' : '💵 USD'}
+              </button>
+            </div>
+            <input
+              type="number"
+              min="0.1"
+              step={stopLossMode === 'losses' ? '1' : '0.1'}
+              value={stopLoss}
+              onChange={e => setStopLoss(e.target.value)}
+              className="w-full bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-xs font-mono font-bold text-white"
+            />
+          </div>
+
+          {/* Martingale ⇌ Inner Compounding Toggle */}
+          <div className="bg-black/40 border border-white/10 rounded-xl p-2.5">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                {compoundProfits ? 'COMPOUND' : 'MARTINGALE'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setCompoundProfits(!compoundProfits)}
+                className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                  compoundProfits ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-indigo-500/20 text-indigo-300'
+                }`}
+                title="Toggle between Martingale multiplier and Inner Profit Compounding"
+              >
+                {compoundProfits ? '📈 Compound' : '⚡ Martingale'}
+              </button>
+            </div>
+            {compoundProfits ? (
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={compoundPct}
+                  onChange={e => setCompoundPct(e.target.value)}
+                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-xs font-mono font-bold text-white"
+                />
+                <span className="text-xs text-gray-400 font-bold">%</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  step="0.1"
+                  min="1"
+                  max="10"
+                  value={martingale}
+                  onChange={e => setMartingale(e.target.value)}
+                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-xs font-mono font-bold text-white"
+                />
+                <span className="text-xs text-gray-400 font-bold">x</span>
+              </div>
+            )}
+          </div>
+
+          {/* Trading Mode (Full width on 2-column mobile screens) */}
+          <div className="bg-black/40 border border-white/10 rounded-xl p-2.5 col-span-2 sm:col-span-1 lg:col-span-1">
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">
+              STEP TRADING MODE
+            </span>
+            <select
+              value={tradingMode}
+              onChange={e => setTradingMode(e.target.value)}
+              className="w-full bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-xs text-white"
+            >
+              <option value="target">Trade until Step Target (TP/SL)</option>
+              <option value="continuous">Trade continuously on loss</option>
+              <option value="once">Trade once per signal (1 trade)</option>
+            </select>
+          </div>
         </div>
 
         {/* ── Scrollable Body ── */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-5 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-5">
 
-          {/* ── Markets Selection Card ── */}
+          {/* ── Markets Selection ── */}
           <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
@@ -453,20 +949,23 @@ export function MiniLaxPrimeModal({
               </div>
               <div className="flex items-center gap-2 text-[10px]">
                 <button
+                  type="button"
                   onClick={() => setSelectedMarkets(ALL_MARKETS.map(m => m.value))}
-                  className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300"
+                  className="px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-gray-300"
                 >
                   Select All
                 </button>
                 <button
+                  type="button"
                   onClick={() => setSelectedMarkets(['1HZ10V', '1HZ100V'])}
-                  className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300"
+                  className="px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-gray-300"
                 >
                   Default (1HZ)
                 </button>
                 <button
+                  type="button"
                   onClick={() => setSelectedMarkets([])}
-                  className="px-2 py-1 rounded-lg bg-white/5 hover:bg-rose-500/20 text-gray-400 hover:text-rose-300"
+                  className="px-2 py-1 rounded bg-white/5 hover:bg-rose-500/20 text-gray-400 hover:text-rose-300"
                 >
                   Clear
                 </button>
@@ -479,6 +978,7 @@ export function MiniLaxPrimeModal({
                 return (
                   <button
                     key={m.value}
+                    type="button"
                     onClick={() => {
                       setSelectedMarkets(prev =>
                         prev.includes(m.value) ? prev.filter(x => x !== m.value) : [...prev, m.value]
@@ -494,63 +994,6 @@ export function MiniLaxPrimeModal({
                   </button>
                 );
               })}
-            </div>
-          </div>
-
-          {/* ── Trading Mode & Martingale Multiplier ── */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="rounded-xl border border-white/10 bg-slate-900/40 p-3">
-              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">
-                Trading Mode
-              </label>
-              <select
-                value={tradingMode}
-                onChange={e => setTradingMode(e.target.value)}
-                className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none"
-              >
-                <option value="continuous">Trade continuously on loss</option>
-                <option value="once">Trade once per signal</option>
-                <option value="target">Trade until target profit</option>
-              </select>
-            </div>
-
-            <div className="rounded-xl border border-white/10 bg-slate-900/40 p-3">
-              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">
-                Cross-Market Delay
-              </label>
-              <div className="flex gap-1.5">
-                {['1.5', '2.0', '3.0'].map(sec => (
-                  <button
-                    key={sec}
-                    onClick={() => setCrossMarketDelay(sec)}
-                    className={`flex-1 py-1.5 rounded-lg text-xs font-mono font-bold border transition-all ${
-                      crossMarketDelay === sec
-                        ? 'bg-teal-500/20 border-teal-500 text-teal-300'
-                        : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    {sec}s
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-white/10 bg-slate-900/40 p-3">
-              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">
-                Martingale Multiplier
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  step="0.1"
-                  min="1"
-                  max="10"
-                  value={martingale}
-                  onChange={e => setMartingale(e.target.value)}
-                  className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none"
-                />
-                <span className="text-xs text-gray-500 font-bold">x</span>
-              </div>
             </div>
           </div>
 
@@ -579,6 +1022,7 @@ export function MiniLaxPrimeModal({
                   <span className="text-xs font-bold text-gray-300">Enable Switcher</span>
                 </label>
                 <button
+                  type="button"
                   onClick={() => setShowSwitcherPanel(v => !v)}
                   className="text-xs text-indigo-400 hover:text-indigo-300"
                 >
@@ -593,7 +1037,7 @@ export function MiniLaxPrimeModal({
                   <label className="flex items-center gap-2">
                     <input
                       type="radio"
-                      name="adaptive_mode"
+                      name="mini_adaptive_mode"
                       checked={(adaptiveSwitch.mode || 'sequence') === 'sequence'}
                       onChange={() => setAdaptiveSwitch(prev => ({ ...prev, mode: 'sequence' }))}
                     />
@@ -602,7 +1046,7 @@ export function MiniLaxPrimeModal({
                   <label className="flex items-center gap-2">
                     <input
                       type="radio"
-                      name="adaptive_mode"
+                      name="mini_adaptive_mode"
                       checked={adaptiveSwitch.mode === 'adaptive'}
                       onChange={() => setAdaptiveSwitch(prev => ({ ...prev, mode: 'adaptive' }))}
                     />
@@ -610,7 +1054,6 @@ export function MiniLaxPrimeModal({
                   </label>
                 </div>
 
-                {/* Steps configuration */}
                 {(adaptiveSwitch.mode || 'sequence') === 'sequence' && (
                   <div className="space-y-2">
                     {adaptiveSwitch.steps.map((step, idx) => (
@@ -625,7 +1068,7 @@ export function MiniLaxPrimeModal({
                               steps: prev.steps.map((s, i) => i === idx ? { ...s, contractType: newType } : s),
                             }));
                           }}
-                          className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-white text-xs"
+                          className="bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-white text-xs"
                         >
                           {TRADE_OPTIONS.map(opt => (
                             <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -645,7 +1088,7 @@ export function MiniLaxPrimeModal({
                                 steps: prev.steps.map((s, i) => i === idx ? { ...s, reps } : s),
                               }));
                             }}
-                            className="w-12 bg-white/5 border border-white/10 rounded px-1.5 py-0.5 text-center text-white"
+                            className="w-12 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-center text-white"
                           />
                         </div>
                       </div>
@@ -665,6 +1108,7 @@ export function MiniLaxPrimeModal({
               </h3>
             </div>
             <button
+              type="button"
               onClick={addStrategy}
               disabled={strategies.length >= 5}
               className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-500 hover:from-indigo-500 hover:to-cyan-400 disabled:opacity-40 text-white font-bold text-xs flex items-center gap-1 shadow-md transition-all"
@@ -673,7 +1117,7 @@ export function MiniLaxPrimeModal({
             </button>
           </div>
 
-          {/* ── Strategies List ── */}
+          {/* ── Strategy Cards List ── */}
           <div className="space-y-4">
             {strategies.map((strat, sIdx) => {
               const hasBarrier = needsBarrier(strat.tradeType);
@@ -682,7 +1126,7 @@ export function MiniLaxPrimeModal({
               return (
                 <div
                   key={strat.id}
-                  className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 space-y-4 hover:border-indigo-500/30 transition-all shadow-lg"
+                  className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 space-y-4 shadow-lg"
                 >
                   {/* Strategy Header */}
                   <div className="flex items-center justify-between pb-3 border-b border-white/10">
@@ -710,9 +1154,9 @@ export function MiniLaxPrimeModal({
                       </label>
                       {strategies.length > 1 && (
                         <button
+                          type="button"
                           onClick={() => removeStrategy(sIdx)}
                           className="p-1 rounded text-gray-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
-                          title="Remove strategy"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -729,17 +1173,18 @@ export function MiniLaxPrimeModal({
                     {strat.conditions.map((cond, cIdx) => (
                       <div
                         key={cond.id}
-                        className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-2"
+                        className="p-3 rounded-xl bg-black/50 border border-white/10 space-y-2"
                       >
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex items-center gap-2">
                           {cIdx > 0 && (
                             <select
                               value={cond.join}
                               onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, join: e.target.value as any })}
-                              className="bg-indigo-500/20 text-indigo-300 font-bold text-xs rounded px-2 py-1 border border-indigo-500/30"
+                              className="bg-indigo-950/80 text-indigo-300 font-bold text-xs rounded-lg px-2 py-1.5 border border-indigo-500/30"
+                              style={{ background: '#1e1b4b', color: '#c7d2fe' }}
                             >
-                              <option value="AND">AND</option>
-                              <option value="OR">OR</option>
+                              <option value="AND" style={{ background: '#0f172a', color: '#fff' }}>AND</option>
+                              <option value="OR" style={{ background: '#0f172a', color: '#fff' }}>OR</option>
                             </select>
                           )}
 
@@ -756,165 +1201,253 @@ export function MiniLaxPrimeModal({
                                 patch.rsiMaMode = true;
                                 patch.rsiBbMode = true;
                                 patch.rsiDivergenceMode = true;
+                              } else if (newType === 'DIGIT_PATTERN') {
+                                patch.patternBoxes = [{ triggers: [{ token: 'E' }] }];
+                                patch.patternBoxMode = 'OR';
+                                patch.patternRetrigger = 'any';
                               }
                               updateConditionInStrat(sIdx, cond.id, { ...cond, ...patch });
                             }}
-                            className="bg-white/5 border border-white/10 rounded-lg px-2.5 py-1 text-xs text-white font-bold"
+                            className="flex-1 min-w-[130px] bg-slate-900 border border-white/20 rounded-lg px-2.5 py-1.5 text-xs text-white font-bold"
+                            style={{ background: '#0f172a', color: '#ffffff' }}
                           >
                             {CONDITION_TYPES.map(ct => (
-                              <option key={ct.value} value={ct.value}>{ct.label}</option>
+                              <option key={ct.value} value={ct.value} style={{ background: '#0f172a', color: '#fff' }}>
+                                {ct.label}
+                              </option>
                             ))}
                           </select>
 
-                          {/* Specific controls based on condition type */}
-                          {(cond.type === 'EVEN_PCT' || cond.type === 'ODD_PCT' || cond.type === 'FALL_PCT' || cond.type === 'RISE_PCT') && (
-                            <div className="flex items-center gap-1.5 text-xs text-gray-300">
-                              <select
-                                value={cond.comparator}
-                                onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, comparator: e.target.value })}
-                                className="bg-white/5 border border-white/10 rounded px-1.5 py-1 text-xs text-white"
-                              >
-                                {COMPARATORS.map(c => <option key={c}>{c}</option>)}
-                              </select>
-                              <input
-                                type="number"
-                                min="0"
-                                max="100"
-                                value={cond.value}
-                                onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, value: +e.target.value })}
-                                className="w-14 bg-white/5 border border-white/10 rounded px-1.5 py-1 text-center text-white"
-                              />
-                              <span>% in last</span>
-                              <input
-                                type="number"
-                                min="1"
-                                max="1000"
-                                value={cond.period}
-                                onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, period: +e.target.value })}
-                                className="w-14 bg-white/5 border border-white/10 rounded px-1.5 py-1 text-center text-white"
-                              />
-                              <span>ticks</span>
-                            </div>
-                          )}
-
-                          {(cond.type === 'OVER_PCT' || cond.type === 'UNDER_PCT') && (
-                            <div className="flex items-center gap-1.5 text-xs text-gray-300">
-                              <span>(</span>
-                              <input
-                                type="number"
-                                min="0"
-                                max="9"
-                                value={cond.digitBarrier ?? 4}
-                                onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, digitBarrier: +e.target.value })}
-                                className="w-10 bg-white/5 border border-white/10 rounded px-1 text-center text-white"
-                              />
-                              <span>)</span>
-                              <select
-                                value={cond.comparator}
-                                onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, comparator: e.target.value })}
-                                className="bg-white/5 border border-white/10 rounded px-1.5 py-1 text-xs text-white"
-                              >
-                                {COMPARATORS.map(c => <option key={c}>{c}</option>)}
-                              </select>
-                              <input
-                                type="number"
-                                min="0"
-                                max="100"
-                                value={cond.value}
-                                onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, value: +e.target.value })}
-                                className="w-14 bg-white/5 border border-white/10 rounded px-1.5 py-1 text-center text-white"
-                              />
-                              <span>% in last</span>
-                              <input
-                                type="number"
-                                min="1"
-                                max="1000"
-                                value={cond.period}
-                                onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, period: +e.target.value })}
-                                className="w-14 bg-white/5 border border-white/10 rounded px-1.5 py-1 text-center text-white"
-                              />
-                              <span>ticks</span>
-                            </div>
-                          )}
-
-                          {cond.type === 'LAST_DIGITS' && (
-                            <div className="flex items-center gap-1.5 text-xs text-gray-300">
-                              <span>last</span>
-                              <input
-                                type="number"
-                                min="1"
-                                max="50"
-                                value={cond.lastN}
-                                onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, lastN: +e.target.value })}
-                                className="w-12 bg-white/5 border border-white/10 rounded px-1.5 py-1 text-center text-white"
-                              />
-                              <span>digits are</span>
-                              <select
-                                value={cond.digitValue}
-                                onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, digitValue: e.target.value })}
-                                className="bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-white"
-                              >
-                                {DIGIT_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                              </select>
-                            </div>
-                          )}
-
-                          {cond.type === 'RSI_SIGNAL' && (
-                            <div className="flex flex-wrap items-center gap-2 text-xs text-gray-300">
-                              <select
-                                value={cond.rsiSignalAction || 'AUTO'}
-                                onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, rsiSignalAction: e.target.value as any })}
-                                className="bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 rounded px-2 py-1 text-xs font-bold"
-                              >
-                                <option value="AUTO">AUTO (Matches Trade Type)</option>
-                                <option value="BUY">BUY Only</option>
-                                <option value="SELL">SELL Only</option>
-                              </select>
-                              <span>Ticks/Bar:</span>
-                              <input
-                                type="number"
-                                min="1"
-                                max="60"
-                                value={cond.rsiTicksPerCandle ?? 5}
-                                onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, rsiTicksPerCandle: +e.target.value })}
-                                className="w-12 bg-white/5 border border-white/10 rounded px-1 text-center text-white"
-                              />
-                              <span>RSI Len:</span>
-                              <input
-                                type="number"
-                                min="2"
-                                max="50"
-                                value={cond.rsiLength ?? 14}
-                                onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, rsiLength: +e.target.value })}
-                                className="w-12 bg-white/5 border border-white/10 rounded px-1 text-center text-white"
-                              />
-                              <span className="text-indigo-400 font-bold">Hold Window:</span>
-                              <input
-                                type="number"
-                                min="1"
-                                max="50"
-                                value={cond.rsiSignalHoldTicks ?? 10}
-                                onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, rsiSignalHoldTicks: +e.target.value })}
-                                className="w-12 bg-indigo-500/20 border border-indigo-500/40 rounded px-1 text-center text-indigo-300 font-bold"
-                                title="Signal Armed Memory (Ticks)"
-                              />
-                            </div>
-                          )}
-
                           {strat.conditions.length > 1 && (
                             <button
+                              type="button"
                               onClick={() => removeConditionFromStrat(sIdx, cond.id)}
-                              className="ml-auto text-gray-500 hover:text-rose-400 text-xs px-2 py-1"
+                              className="w-7 h-7 rounded-lg bg-white/5 hover:bg-rose-500/20 text-gray-400 hover:text-rose-300 flex items-center justify-center text-xs transition-colors shrink-0"
                               title="Delete condition"
                             >
                               ✕
                             </button>
                           )}
                         </div>
+
+                        {/* Parameter Row (Clean responsive container for non-builder types) */}
+                        {cond.type !== 'DIGIT_PATTERN' && cond.type !== 'RSI_SIGNAL' && (
+                          <div className="flex flex-wrap items-center gap-1.5 p-2 rounded-lg bg-white/5 border border-white/5 text-xs text-gray-300">
+                            {(cond.type === 'EVEN_PCT' || cond.type === 'ODD_PCT' || cond.type === 'FALL_PCT' || cond.type === 'RISE_PCT') && (
+                              <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-300">
+                                <select
+                                  value={cond.comparator}
+                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, comparator: e.target.value })}
+                                  className="bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-xs text-white"
+                                  style={{ background: '#0f172a', color: '#ffffff' }}
+                                >
+                                  {COMPARATORS.map(c => <option key={c} value={c} style={{ background: '#0f172a', color: '#fff' }}>{c}</option>)}
+                                </select>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  value={cond.value}
+                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, value: +e.target.value })}
+                                  className="w-14 bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-center text-white"
+                                  style={{ background: '#0f172a', color: '#ffffff' }}
+                                />
+                                <span>% in last</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="1000"
+                                  value={cond.period}
+                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, period: +e.target.value })}
+                                  className="w-14 bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-center text-white"
+                                  style={{ background: '#0f172a', color: '#ffffff' }}
+                                />
+                                <span>ticks</span>
+                              </div>
+                            )}
+
+                            {(cond.type === 'OVER_PCT' || cond.type === 'UNDER_PCT') && (
+                              <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-300">
+                                <span>(</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="9"
+                                  value={cond.digitBarrier ?? 4}
+                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, digitBarrier: +e.target.value })}
+                                  className="w-10 bg-slate-900 border border-white/10 rounded px-1 text-center text-white"
+                                  style={{ background: '#0f172a', color: '#ffffff' }}
+                                />
+                                <span>)</span>
+                                <select
+                                  value={cond.comparator}
+                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, comparator: e.target.value })}
+                                  className="bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-xs text-white"
+                                  style={{ background: '#0f172a', color: '#ffffff' }}
+                                >
+                                  {COMPARATORS.map(c => <option key={c} value={c} style={{ background: '#0f172a', color: '#fff' }}>{c}</option>)}
+                                </select>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  value={cond.value}
+                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, value: +e.target.value })}
+                                  className="w-14 bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-center text-white"
+                                  style={{ background: '#0f172a', color: '#ffffff' }}
+                                />
+                                <span>% in last</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="1000"
+                                  value={cond.period}
+                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, period: +e.target.value })}
+                                  className="w-14 bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-center text-white"
+                                  style={{ background: '#0f172a', color: '#ffffff' }}
+                                />
+                                <span>ticks</span>
+                              </div>
+                            )}
+
+                            {cond.type === 'LAST_DIGITS' && (
+                              <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-300">
+                                <span>last</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="50"
+                                  value={cond.lastN}
+                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, lastN: +e.target.value })}
+                                  className="w-12 bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-center text-white"
+                                  style={{ background: '#0f172a', color: '#ffffff' }}
+                                />
+                                <span>digits are</span>
+                                <select
+                                  value={cond.digitValue}
+                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, digitValue: e.target.value })}
+                                  className="bg-slate-900 border border-white/10 rounded px-2 py-1 text-xs text-white"
+                                  style={{ background: '#0f172a', color: '#ffffff' }}
+                                >
+                                  {DIGIT_OPTIONS.map(opt => <option key={opt.value} value={opt.value} style={{ background: '#0f172a', color: '#fff' }}>{opt.label}</option>)}
+                                </select>
+                                {(cond.digitValue === 'OVER' || cond.digitValue === 'UNDER' || cond.digitValue === 'EQUAL') && (
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={9}
+                                    value={cond.digitBarrier ?? 4}
+                                    onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, digitBarrier: +e.target.value })}
+                                    className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-1 text-center text-white"
+                                    style={{ background: '#0f172a', color: '#ffffff' }}
+                                  />
+                                )}
+                              </div>
+                            )}
+
+                            {cond.type === 'GREEN_BAR' && (
+                              <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-300">
+                                <span>IS ON DIGIT</span>
+                                <select
+                                  value={cond.barValue}
+                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, barValue: +e.target.value })}
+                                  className="bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white"
+                                  style={{ background: '#0f172a', color: '#ffffff' }}
+                                >
+                                  {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(d => <option key={d} value={d} style={{ background: '#0f172a', color: '#fff' }}>{d}</option>)}
+                                </select>
+                                <span>WITH PCT</span>
+                                <select
+                                  value={cond.comparator}
+                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, comparator: e.target.value })}
+                                  className="bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white"
+                                  style={{ background: '#0f172a', color: '#ffffff' }}
+                                >
+                                  {COMPARATORS.map(c => <option key={c} value={c} style={{ background: '#0f172a', color: '#fff' }}>{c}</option>)}
+                                </select>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  value={cond.value}
+                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, value: +e.target.value })}
+                                  className="w-12 bg-slate-900 border border-white/10 rounded px-1 text-center text-white"
+                                  style={{ background: '#0f172a', color: '#ffffff' }}
+                                />
+                                <span>% in last</span>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={1000}
+                                  value={cond.period}
+                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, period: +e.target.value })}
+                                  className="w-14 bg-slate-900 border border-white/10 rounded px-1 text-center text-white"
+                                  style={{ background: '#0f172a', color: '#ffffff' }}
+                                />
+                                <span>ticks</span>
+                              </div>
+                            )}
+
+                            {cond.type === 'DIGIT_APPEARS' && (
+                              <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-300">
+                                <span>DIGIT</span>
+                                {(cond.targetDigits || [cond.digitBarrier ?? 5]).map((d, di) => (
+                                  <span key={di} className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-bold font-mono">
+                                    {d}
+                                  </span>
+                                ))}
+                                <select
+                                  value={cond.comparator}
+                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, comparator: e.target.value })}
+                                  className="bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white"
+                                  style={{ background: '#0f172a', color: '#ffffff' }}
+                                >
+                                  {['>', '=', '<'].map(c => <option key={c} value={c} style={{ background: '#0f172a', color: '#fff' }}>{c}</option>)}
+                                </select>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  value={cond.value}
+                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, value: +e.target.value })}
+                                  className="w-12 bg-slate-900 border border-white/10 rounded px-1 text-center text-white"
+                                  style={{ background: '#0f172a', color: '#ffffff' }}
+                                />
+                                <span>times in last</span>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={1000}
+                                  value={cond.period}
+                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, period: +e.target.value })}
+                                  className="w-14 bg-slate-900 border border-white/10 rounded px-1 text-center text-white"
+                                  style={{ background: '#0f172a', color: '#ffffff' }}
+                                />
+                                <span>ticks</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Full Sub-Builders */}
+                        {cond.type === 'DIGIT_PATTERN' && (
+                          <AdvancedPatternBuilder
+                            cond={cond}
+                            onChange={updated => updateConditionInStrat(sIdx, cond.id, updated)}
+                          />
+                        )}
+
+                        {cond.type === 'RSI_SIGNAL' && (
+                          <RsiSignalBuilder
+                            cond={cond}
+                            onChange={updated => updateConditionInStrat(sIdx, cond.id, updated)}
+                          />
+                        )}
                       </div>
                     ))}
 
                     <button
+                      type="button"
                       onClick={() => addConditionToStrat(sIdx)}
                       className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 text-xs font-bold transition-all flex items-center gap-1"
                     >
@@ -938,10 +1471,13 @@ export function MiniLaxPrimeModal({
                         }
                         updateStrategy(sIdx, patch);
                       }}
-                      className="bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white font-bold"
+                      className="bg-slate-900 border border-white/20 rounded-xl px-3 py-1.5 text-xs text-white font-bold"
+                      style={{ background: '#0f172a', color: '#ffffff' }}
                     >
                       {TRADE_OPTIONS.map(opt => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        <option key={opt.value} value={opt.value} style={{ background: '#0f172a', color: '#fff' }}>
+                          {opt.label}
+                        </option>
                       ))}
                     </select>
 
@@ -954,7 +1490,8 @@ export function MiniLaxPrimeModal({
                           max="9"
                           value={strat.prediction}
                           onChange={e => updateStrategy(sIdx, { prediction: +e.target.value })}
-                          className="w-12 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-center text-white font-bold"
+                          className="w-12 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-center text-white font-bold"
+                          style={{ background: '#0f172a', color: '#ffffff' }}
                         />
                       </div>
                     )}
@@ -971,7 +1508,8 @@ export function MiniLaxPrimeModal({
                           if (isOnlyUD) val = Math.max(2, Math.min(5, val));
                           updateStrategy(sIdx, { ticks: val });
                         }}
-                        className="w-14 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-center text-white font-mono font-bold"
+                        className="w-14 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-center text-white font-mono font-bold"
+                        style={{ background: '#0f172a', color: '#ffffff' }}
                       />
                       <span className="text-gray-400 font-bold">
                         {isOnlyUD ? 'TICKS (2-5)' : 'TICKS'}
@@ -992,7 +1530,7 @@ export function MiniLaxPrimeModal({
                     </div>
                   </div>
 
-                  {/* Trade Pattern Sequence (if enabled) */}
+                  {/* Trade Pattern Sequence */}
                   {strat.useTradePattern && (
                     <div className="p-3 bg-black/40 border border-indigo-500/20 rounded-xl space-y-2">
                       <div className="text-[10px] text-gray-400">
@@ -1002,6 +1540,7 @@ export function MiniLaxPrimeModal({
                         {(strat.tradePattern || [true]).map((isTrade, pIdx) => (
                           <button
                             key={pIdx}
+                            type="button"
                             onClick={() => {
                               const next = [...(strat.tradePattern || [true])];
                               next[pIdx] = !next[pIdx];
@@ -1017,6 +1556,7 @@ export function MiniLaxPrimeModal({
                           </button>
                         ))}
                         <button
+                          type="button"
                           onClick={() => {
                             updateStrategy(sIdx, { tradePattern: [...(strat.tradePattern || [true]), true] });
                           }}
@@ -1027,6 +1567,7 @@ export function MiniLaxPrimeModal({
                         </button>
                         {(strat.tradePattern || []).length > 1 && (
                           <button
+                            type="button"
                             onClick={() => {
                               updateStrategy(sIdx, { tradePattern: (strat.tradePattern || []).slice(0, -1) });
                             }}
@@ -1047,23 +1588,25 @@ export function MiniLaxPrimeModal({
         </div>
 
         {/* ── Footer ── */}
-        <div className="p-4 md:p-5 border-t border-white/10 bg-slate-900/80 flex items-center justify-between gap-4">
+        <div className="p-3 sm:p-4 md:p-5 border-t border-white/10 bg-slate-900/95 flex items-center justify-between gap-3 flex-wrap">
           <div className="text-xs text-gray-400 hidden sm:block">
             Step settings are preserved and isolated from the main LaxPrime page.
           </div>
 
-          <div className="flex items-center gap-2.5 ml-auto">
+          <div className="flex items-center gap-2.5 w-full sm:w-auto ml-auto justify-end">
             <button
+              type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 font-bold text-xs transition-colors"
+              className="flex-1 sm:flex-initial min-h-[38px] px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 font-bold text-xs transition-colors text-center flex items-center justify-center cursor-pointer"
             >
               Cancel
             </button>
             <button
+              type="button"
               onClick={handleSave}
-              className="px-5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/20 transition-all flex items-center gap-1.5"
+              className="flex-1 sm:flex-initial min-h-[38px] px-5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
             >
-              <Check className="w-4 h-4" /> Save & Apply to Step
+              <Check className="w-4 h-4" /> Save & Apply
             </button>
           </div>
         </div>
