@@ -51,6 +51,8 @@ export interface PlaylistTradeStep {
     marketOverride?: string;        // Optional override (e.g. 'R_100', '1HZ100V', etc.)
     contractOverride?: ContractTypeKey | ''; // Optional override
     digitOverride?: number | null;  // Optional prediction override (0-9)
+    martingaleMul?: string;         // Optional martingale multiplier override
+    isMartingaleEnabled?: boolean;  // Optional martingale enabled override
     laxprimeConfig?: LaxPrimeStepConfig; // Dedicated LaxPrime settings snapshot per step
 }
 
@@ -404,6 +406,7 @@ export default function AutoTradePage() {
     const executePlaylistStepRef    = useRef<(stepIdx: number) => void>(() => {});
     const playlistCountdownTimerRef = useRef<NodeJS.Timeout | null>(null);
     const lastBotLogIdRef           = useRef<string | null>(null);
+    const processedBotLogKeysRef    = useRef<Set<string>>(new Set());
     const activeStepSourceRef       = useRef<'laxprime' | 'laxsniper-xv' | null>(null);
     const activeLaxPrimeStepRef     = useRef<{
         stepIdx: number;
@@ -924,6 +927,8 @@ export default function AutoTradePage() {
                     stopLoss: String(stepSL),
                     stopLossMode: stepSLMode,
                     tradingMode: stepTradingMode,
+                    martingale: stepConfig?.martingale || '2.1',
+                    isMartingaleEnabled: stepConfig?.isMartingaleEnabled ?? true,
                 };
 
                 if (stepConfig && stepConfig.strategies && stepConfig.strategies.length > 0) {
@@ -933,17 +938,33 @@ export default function AutoTradePage() {
                         ? [step.marketOverride]
                         : (stepConfig.selectedMarkets && stepConfig.selectedMarkets.length > 0 ? [...stepConfig.selectedMarkets] : ['1HZ10V', '1HZ100V']);
                     if (stepConfig.crossMarketDelay) patch.crossMarketDelay = stepConfig.crossMarketDelay;
-                    if (stepConfig.martingale) patch.martingale = stepConfig.martingale;
                     if (stepConfig.adaptiveSwitch) patch.adaptiveSwitch = JSON.parse(JSON.stringify(stepConfig.adaptiveSwitch));
-
-                    if (stepConfig.virtualSettings) {
-                        useDerivStore.getState().setVirtualSettings(stepConfig.virtualSettings as any);
-                    }
                 } else {
                     // Fallback to global LaxPrime state with market override if set
                     if (step.marketOverride) {
                         patch.selectedMarkets = [step.marketOverride];
                     }
+                }
+
+                if (stepConfig && stepConfig.virtualSettings) {
+                    const vs = stepConfig.virtualSettings;
+                    const isVirtActive = vs.startVirtualToReal || vs.isDoubleVirtual || vs.smartSettings?.enabled || vs.isVirtualMode;
+                    useDerivStore.getState().setVirtualSettings({
+                        ...(vs as any),
+                        isVirtualMode: isVirtActive ? true : vs.isVirtualMode,
+                        vDoubleStage: 'A',
+                        vStageBCompletedReps: 0,
+                        vConsecWinsB: 0,
+                        vConsecLossesB: 0,
+                        vVirtualWinsB: 0,
+                        vVirtualLossesB: 0,
+                        vSmartStage: 1,
+                        vSmartCount: 0,
+                        virtualWins: 0,
+                        virtualLosses: 0,
+                        vConsecWins: 0,
+                        vConsecLosses: 0,
+                    });
                 }
 
                 // Inner Compounding for this step
@@ -971,6 +992,8 @@ export default function AutoTradePage() {
                     initialStake: Number(stakeStr),
                     takeProfit: Number(takeProfit),
                     stopLoss: Number(stopLoss),
+                    martingaleMultiplier: step.martingaleMul ? Number(step.martingaleMul) : (isMartingaleEnabled ? Number(martingaleMul) : 1.0),
+                    isMartingaleEnabled: step.isMartingaleEnabled ?? isMartingaleEnabled,
                 };
                 if (step.marketOverride) patch.market = step.marketOverride;
                 if (step.contractOverride) patch.contractType = step.contractOverride;
@@ -1357,10 +1380,12 @@ export default function AutoTradePage() {
         }
         
         const nextStakeStr = nextStakeVal.toFixed(2);
-        setCurrentStake(nextStakeStr);
-        setRiskSettings({
-            initialStake: Number(nextStakeStr)
-        });
+        if (playlistStatusRef.current !== 'executing') {
+            setCurrentStake(nextStakeStr);
+            setRiskSettings({
+                initialStake: Number(nextStakeStr)
+            });
+        }
 
         setMktTrades(p => p + 1);
         setTriggersFired(p => p + 1);
@@ -1685,168 +1710,177 @@ export default function AutoTradePage() {
         }
         if (botTradeLogs.length === 0) return;
 
-        const latest = botTradeLogs[0];
-        if (!latest) return;
+        // Iterate through all logs in botTradeLogs (from oldest to newest) to ensure no trades are missed
+        for (let i = botTradeLogs.length - 1; i >= 0; i--) {
+            const log = botTradeLogs[i];
+            if (!log) continue;
 
-        const isWon = latest.result === 'WON';
-        const isLost = latest.result === 'LOST';
-        if (!isWon && !isLost) return; // Only process settled real trades
+            const isVirt = (log.id && log.id.startsWith('VIRT_')) || (log.result && log.result.includes('VIRT'));
+            const isWon = log.result === 'WON' || log.result === 'VIRT WON' || (isVirt && Number(log.profit) > 0);
+            const isLost = log.result === 'LOST' || log.result === 'VIRT LOST' || (isVirt && Number(log.profit) < 0);
 
-        const logKey = `${latest.id}::${latest.result}`;
-        if (lastBotLogIdRef.current === logKey) return;
-        lastBotLogIdRef.current = logKey;
+            if (!isWon && !isLost) continue; // Only process settled trades (skip pending/active)
 
-        const profit   = Number(latest.profit) || 0;
-        const stakeVal = Number(latest.stake) || Number(currentStake);
+            const logKey = `${log.id}::${log.result}`;
+            if (processedBotLogKeysRef.current.has(logKey)) continue;
+            processedBotLogKeysRef.current.add(logKey);
+            lastBotLogIdRef.current = logKey;
 
-        setSessionTrades(p => p + 1);
-        if (isWon) setSessionWins(p => p + 1); else setSessionLosses(p => p + 1);
+            const profit   = Number(log.profit) || 0;
+            const stakeVal = Number(log.stake) || Number(currentStake);
 
-        const nextProfit = sessionProfRef.current + profit;
-        sessionProfRef.current = nextProfit;
-        setSessionProfit(nextProfit);
+            if (!isVirt) {
+                setSessionTrades(p => p + 1);
+                if (isWon) setSessionWins(p => p + 1); else setSessionLosses(p => p + 1);
 
-        // Update compounded stake immediately for next step
-        const base = parseFloat(baseStake) || 0.50;
-        let nextStakeVal = base;
-        if (isCapitalCompound) {
-            const bal = useDerivStore.getState().account?.balance ?? (account?.balance || 0);
-            if (bal > 0) nextStakeVal = Math.max(0.35, Number((bal * (parseFloat(capitalPct) / 100)).toFixed(2)));
-        } else if (isCompounding && nextProfit > 0) {
-            const comp = base + nextProfit * (parseFloat(compoundPct) / 100);
-            nextStakeVal = Math.max(base, comp);
-        }
-        const nextStakeStr = nextStakeVal.toFixed(2);
-        setCurrentStake(nextStakeStr);
+                const nextProfit = sessionProfRef.current + profit;
+                sessionProfRef.current = nextProfit;
+                setSessionProfit(nextProfit);
 
-        setMktTrades(p => p + 1);
-        setTriggersFired(p => p + 1);
-
-        const actualMarket = latest.symbol || 'LaxPrime';
-        const mktLabel = TARGET_MARKETS.find(m => m.value === latest.symbol)?.label.replace(' Index', '') || actualMarket;
-
-        const record: AutoLXTradeRecord = {
-            id:           latest.id || uid(),
-            time:         new Date(latest.time || Date.now()).toLocaleTimeString([], { hour12: false }),
-            market:       actualMarket,
-            contractType: latest.contract || '—',
-            entrySpot:    latest.entrySpot || '—',
-            exitDigit:    latest.exitSpot ? Number(String(latest.exitSpot).slice(-1)) : null,
-            stake:        stakeVal,
-            profit,
-            result:       isWon ? 'WIN' : 'LOSS',
-            isVirtual:    false,
-            stepIdx:      selectedPreset === 'trade_playlist' ? playlistCurrentStepIdxRef.current : undefined,
-            stepLabel:    selectedPreset === 'trade_playlist'
-                ? (playlistStepsRef.current[playlistCurrentStepIdxRef.current]?.label || `Step ${playlistCurrentStepIdxRef.current + 1}`)
-                : undefined,
-        };
-
-        setTradeLog(prev => {
-            if (prev.some(r => String(r.id) === String(record.id))) return prev;
-            return [record, ...prev]; // No cap — user can scroll all trades
-        });
-
-
-        addAuditLog(
-            `[${mktLabel}] [${latest.contract || 'TRADE'}] ${isWon ? '✓ WIN' : '✗ LOSS'} | Exit: ${latest.exitSpot ?? '?'} | P/L: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}`,
-            isWon ? 'success' : 'error'
-        );
-
-        // ── Autonomous Trade Playlist mode settlement (LaxPrime) ──────────
-        if (selectedPreset === 'trade_playlist') {
-            // Check global take profit & stop loss limits across all steps
-            const curProfit = sessionProfRef.current;
-            const curWins = sessionWinsRef.current;
-            const curLosses = sessionLossesRef.current;
-
-            const reachedGlobalTP = globalTPModeRef.current === 'wins'
-                ? (Number(takeProfit) > 0 && curWins >= Number(takeProfit))
-                : (Number(takeProfit) > 0 && curProfit >= Number(takeProfit));
-
-            const reachedGlobalSL = globalSLModeRef.current === 'losses'
-                ? (Number(stopLoss) > 0 && curLosses >= Number(stopLoss))
-                : (Number(stopLoss) > 0 && curProfit <= -Math.abs(Number(stopLoss)));
-
-            if (reachedGlobalTP) {
-                const detail = globalTPModeRef.current === 'wins' ? `${curWins} >= ${takeProfit} Wins` : `$${curProfit.toFixed(2)} >= $${takeProfit}`;
-                addAuditLog(`🎯 Global Take Profit reached (${detail})! Halting all steps and completing session.`, 'success');
-                setPlaylistStatus('completed');
-                handleStop();
-                return;
-            }
-            if (reachedGlobalSL) {
-                const detail = globalSLModeRef.current === 'losses' ? `${curLosses} >= ${stopLoss} Losses` : `$${curProfit.toFixed(2)} <= -$${stopLoss}`;
-                addAuditLog(`🛑 Global Stop Loss hit (${detail})! Halting all steps and stopping session.`, 'error');
-                setPlaylistStatus('completed');
-                handleStop();
-                return;
+                // Update preview stake between steps or outside playlist execution (NEVER mid-step)
+                if (playlistStatusRef.current !== 'executing') {
+                    const base = parseFloat(baseStake) || 0.50;
+                    let nextStakeVal = base;
+                    if (isCapitalCompound) {
+                        const bal = useDerivStore.getState().account?.balance ?? (account?.balance || 0);
+                        if (bal > 0) nextStakeVal = Math.max(0.35, Number((bal * (parseFloat(capitalPct) / 100)).toFixed(2)));
+                    } else if (isCompounding && nextProfit > 0) {
+                        const comp = base + nextProfit * (parseFloat(compoundPct) / 100);
+                        nextStakeVal = Math.max(base, comp);
+                    }
+                    setCurrentStake(nextStakeVal.toFixed(2));
+                }
             }
 
-            if (activeStepSourceRef.current === 'laxprime' && playlistStatusRef.current === 'executing') {
-                const activeStep = activeLaxPrimeStepRef.current;
-                if (!activeStep) {
-                    handlePlaylistTradeSettled(profit, stakeVal, isWon, latest.exitSpot ? String(latest.exitSpot) : null, latest.contract || 'DIGITDIFF');
+            setMktTrades(p => p + 1);
+            setTriggersFired(p => p + 1);
+
+            const actualMarket = log.symbol || 'LaxPrime';
+            const mktLabel = TARGET_MARKETS.find(m => m.value === log.symbol)?.label.replace(' Index', '') || actualMarket;
+
+            const record: AutoLXTradeRecord = {
+                id:           log.id || uid(),
+                time:         new Date(log.time || Date.now()).toLocaleTimeString([], { hour12: false }),
+                market:       actualMarket,
+                contractType: log.contract || '—',
+                entrySpot:    log.entrySpot || '—',
+                exitDigit:    log.exitSpot && log.exitSpot !== '-' ? Number(String(log.exitSpot).slice(-1)) : null,
+                stake:        stakeVal,
+                profit,
+                result:       isWon ? 'WIN' : 'LOSS',
+                isVirtual:    isVirt,
+                stepIdx:      selectedPreset === 'trade_playlist' ? playlistCurrentStepIdxRef.current : undefined,
+                stepLabel:    selectedPreset === 'trade_playlist'
+                    ? (playlistStepsRef.current[playlistCurrentStepIdxRef.current]?.label || `Step ${playlistCurrentStepIdxRef.current + 1}`)
+                    : undefined,
+            };
+
+            setTradeLog(prev => {
+                if (prev.some(r => String(r.id) === String(record.id))) return prev;
+                return [record, ...prev]; // No cap — user can scroll all trades
+            });
+
+            addAuditLog(
+                `${isVirt ? '[VIRTUAL] ' : ''}[${mktLabel}] [${log.contract || 'TRADE'}] ${isWon ? '✓ WIN' : '✗ LOSS'} | Exit: ${log.exitSpot ?? '?'} | P/L: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}`,
+                isWon ? 'success' : 'error'
+            );
+
+            // ── Autonomous Trade Playlist mode settlement (LaxPrime) ──────────
+            // Note: Virtual trades do NOT settle the real playlist step!
+            if (!isVirt && selectedPreset === 'trade_playlist') {
+                // Check global take profit & stop loss limits across all steps
+                const curProfit = sessionProfRef.current;
+                const curWins = sessionWinsRef.current;
+                const curLosses = sessionLossesRef.current;
+
+                const reachedGlobalTP = globalTPModeRef.current === 'wins'
+                    ? (Number(takeProfit) > 0 && curWins >= Number(takeProfit))
+                    : (Number(takeProfit) > 0 && curProfit >= Number(takeProfit));
+
+                const reachedGlobalSL = globalSLModeRef.current === 'losses'
+                    ? (Number(stopLoss) > 0 && curLosses >= Number(stopLoss))
+                    : (Number(stopLoss) > 0 && curProfit <= -Math.abs(Number(stopLoss)));
+
+                if (reachedGlobalTP) {
+                    const detail = globalTPModeRef.current === 'wins' ? `${curWins} >= ${takeProfit} Wins` : `$${curProfit.toFixed(2)} >= $${takeProfit}`;
+                    addAuditLog(`🎯 Global Take Profit reached (${detail})! Halting all steps and completing session.`, 'success');
+                    setPlaylistStatus('completed');
+                    handleStop();
+                    return;
+                }
+                if (reachedGlobalSL) {
+                    const detail = globalSLModeRef.current === 'losses' ? `${curLosses} >= ${stopLoss} Losses` : `$${curProfit.toFixed(2)} <= -$${stopLoss}`;
+                    addAuditLog(`🛑 Global Stop Loss hit (${detail})! Halting all steps and stopping session.`, 'error');
+                    setPlaylistStatus('completed');
+                    handleStop();
                     return;
                 }
 
-                activeStep.stepProfit += profit;
-                if (isWon) activeStep.stepWins++; else activeStep.stepLosses++;
-
-                if (stepCapitalLossGuardRef.current && activeStep) {
-                    const liveCap = useDerivStore.getState().account?.balance ?? (account?.balance || 0);
-                    if (liveCap > 0 && activeStep.stepProfit <= - (liveCap * 0.5)) {
-                        addAuditLog(`🛑 EMERGENCY 50% CAPITAL GUARD: Step ${activeStep.stepIdx + 1} cumulative loss (-$${Math.abs(activeStep.stepProfit).toFixed(2)}) exceeded 50% of total capital ($${(liveCap * 0.5).toFixed(2)})! Emergency halt.`, 'error');
-                        setPlaylistStatus('completed');
-                        handleStop();
+                if (activeStepSourceRef.current === 'laxprime' && playlistStatusRef.current === 'executing') {
+                    const activeStep = activeLaxPrimeStepRef.current;
+                    if (!activeStep) {
+                        handlePlaylistTradeSettled(profit, stakeVal, isWon, log.exitSpot ? String(log.exitSpot) : null, log.contract || 'DIGITDIFF');
                         return;
                     }
-                }
 
-                // Inner Compounding: calculate next stake inside this step
-                if (activeStep.compoundProfits && isWon && activeStep.stepProfit > 0) {
-                    const nextInnerStake = Math.max(0.35, activeStep.initialStake + activeStep.stepProfit * (activeStep.compoundPct / 100));
-                    useBotStore.setState({ stake: nextInnerStake.toFixed(2) });
-                    addAuditLog(`📈 [Step ${activeStep.stepIdx + 1}] Inner Compounding active: Next stake $${nextInnerStake.toFixed(2)} (+${activeStep.compoundPct}% of profit)`, 'info');
-                }
+                    activeStep.stepProfit += profit;
+                    if (isWon) activeStep.stepWins++; else activeStep.stepLosses++;
 
-                // Check Step TP & SL termination
-                const reachedTP = activeStep.targetProfitMode === 'wins'
-                    ? activeStep.stepWins >= activeStep.targetProfit
-                    : activeStep.stepProfit >= activeStep.targetProfit;
+                    if (stepCapitalLossGuardRef.current && activeStep) {
+                        const liveCap = useDerivStore.getState().account?.balance ?? (account?.balance || 0);
+                        if (liveCap > 0 && activeStep.stepProfit <= - (liveCap * 0.5)) {
+                            addAuditLog(`🛑 EMERGENCY 50% CAPITAL GUARD: Step ${activeStep.stepIdx + 1} cumulative loss (-$${Math.abs(activeStep.stepProfit).toFixed(2)}) exceeded 50% of total capital ($${(liveCap * 0.5).toFixed(2)})! Emergency halt.`, 'error');
+                            setPlaylistStatus('completed');
+                            handleStop();
+                            return;
+                        }
+                    }
 
-                const reachedSL = activeStep.stopLossMode === 'losses'
-                    ? activeStep.stepLosses >= activeStep.stopLoss
-                    : activeStep.stepProfit <= -Math.abs(activeStep.stopLoss);
+                    // Inner Compounding: calculate next stake inside this step
+                    if (activeStep.compoundProfits && isWon && activeStep.stepProfit > 0) {
+                        const nextInnerStake = Math.max(0.35, activeStep.initialStake + activeStep.stepProfit * (activeStep.compoundPct / 100));
+                        useBotStore.setState({ stake: nextInnerStake.toFixed(2) });
+                        addAuditLog(`📈 [Step ${activeStep.stepIdx + 1}] Inner Compounding active: Next stake $${nextInnerStake.toFixed(2)} (+${activeStep.compoundPct}% of profit)`, 'info');
+                    }
 
-                const isSingleTrade = activeStep.tradingMode === 'once';
+                    // Check Step TP & SL termination
+                    const reachedTP = activeStep.targetProfitMode === 'wins'
+                        ? activeStep.stepWins >= activeStep.targetProfit
+                        : activeStep.stepProfit >= activeStep.targetProfit;
 
-                if (reachedTP || reachedSL || isSingleTrade) {
-                    const stepIsWon = activeStep.stepProfit >= 0;
-                    const reason = reachedTP ? '🎯 Target Profit' : reachedSL ? '🛑 Stop Loss' : '⚡ Single Trade';
-                    addAuditLog(
-                        `🏁 [Step ${activeStep.stepIdx + 1}] Finished (${reason}) | Step P/L: ${activeStep.stepProfit >= 0 ? '+' : ''}$${activeStep.stepProfit.toFixed(2)} (${activeStep.stepWins}W / ${activeStep.stepLosses}L)`,
-                        stepIsWon ? 'success' : 'warn'
-                    );
-                    handlePlaylistTradeSettled(
-                        activeStep.stepProfit,
-                        activeStep.initialStake,
-                        stepIsWon,
-                        latest.exitSpot ? String(latest.exitSpot) : null,
-                        latest.contract || 'DIGITDIFF'
-                    );
-                } else {
-                    // Step continues trading towards TP / SL!
-                    const progressStr = activeStep.targetProfitMode === 'wins'
-                        ? `${activeStep.stepWins}/${activeStep.targetProfit} Wins`
-                        : `$${activeStep.stepProfit.toFixed(2)} / $${activeStep.targetProfit} TP`;
-                    addAuditLog(
-                        `⏳ [Step ${activeStep.stepIdx + 1}] Continuing towards goal: ${progressStr} | Step P/L: ${activeStep.stepProfit >= 0 ? '+' : ''}$${activeStep.stepProfit.toFixed(2)}`,
-                        'info'
-                    );
+                    const reachedSL = activeStep.stopLossMode === 'losses'
+                        ? activeStep.stepLosses >= activeStep.stopLoss
+                        : activeStep.stepProfit <= -Math.abs(activeStep.stopLoss);
+
+                    const isSingleTrade = activeStep.tradingMode === 'once';
+
+                    if (reachedTP || reachedSL || isSingleTrade) {
+                        const stepIsWon = activeStep.stepProfit >= 0;
+                        const reason = reachedTP ? '🎯 Target Profit' : reachedSL ? '🛑 Stop Loss' : '⚡ Single Trade';
+                        addAuditLog(
+                            `🏁 [Step ${activeStep.stepIdx + 1}] Finished (${reason}) | Step P/L: ${activeStep.stepProfit >= 0 ? '+' : ''}$${activeStep.stepProfit.toFixed(2)} (${activeStep.stepWins}W / ${activeStep.stepLosses}L)`,
+                            stepIsWon ? 'success' : 'warn'
+                        );
+                        handlePlaylistTradeSettled(
+                            activeStep.stepProfit,
+                            activeStep.initialStake,
+                            stepIsWon,
+                            log.exitSpot ? String(log.exitSpot) : null,
+                            log.contract || 'DIGITDIFF'
+                        );
+                        return;
+                    } else {
+                        // Step continues trading towards TP / SL!
+                        const progressStr = activeStep.targetProfitMode === 'wins'
+                            ? `${activeStep.stepWins}/${activeStep.targetProfit} Wins`
+                            : `$${activeStep.stepProfit.toFixed(2)} / $${activeStep.targetProfit} TP`;
+                        addAuditLog(
+                            `⏳ [Step ${activeStep.stepIdx + 1}] Continuing towards goal: ${progressStr} | Step P/L: ${activeStep.stepProfit >= 0 ? '+' : ''}$${activeStep.stepProfit.toFixed(2)}`,
+                            'info'
+                        );
+                    }
                 }
             }
-            return;
         }
     }, [botTradeLogs, isRunningAuto, selectedPreset, isCompounding, compoundPct, isCapitalCompound, capitalPct, baseStake, account?.balance, currentStake, handlePlaylistTradeSettled, addAuditLog]);
 
@@ -2193,6 +2227,7 @@ export default function AutoTradePage() {
             // Snapshot existing trade logs so historical logs are never treated as new settlements
             const currentBotLogs = useBotStore.getState().tradeLogs;
             const currentDerivLogs = useDerivStore.getState().tradeLogs;
+            processedBotLogKeysRef.current = new Set(currentBotLogs.map(l => `${l.id}::${l.result}`));
             lastBotLogIdRef.current = currentBotLogs[0] ? `${currentBotLogs[0].id}::${currentBotLogs[0].result}` : '__INIT__';
             lastIdRef.current = currentDerivLogs[0] ? `${currentDerivLogs[0].requestId}::${currentDerivLogs[0].result}` : '__INIT__';
 
@@ -2321,6 +2356,7 @@ export default function AutoTradePage() {
     const handleStop = () => {
         setIsRunningAuto(false);
         setUptimeStart(null);
+        processedBotLogKeysRef.current.clear();
         // Cancel any pending scanner warmup so it doesn't restart the engine
         if (scannerWarmupRef.current) { clearTimeout(scannerWarmupRef.current);  scannerWarmupRef.current = null; }
         if (warmupCountRef.current)   { clearInterval(warmupCountRef.current);    warmupCountRef.current   = null; }
@@ -4639,7 +4675,13 @@ export default function AutoTradePage() {
                                                             <td className="px-3 py-2.5 font-mono text-gray-500">
                                                                 {trade.time}
                                                                 {trade.isVirtual && (
-                                                                    <span className="ml-1.5 text-[8px] font-black uppercase tracking-widest px-1 py-0.5 rounded bg-indigo-500/15 text-indigo-400 border border-indigo-500/20">SIM</span>
+                                                                    <span className={`ml-1.5 text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${
+                                                                        trade.result === 'WIN'
+                                                                            ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                                                                            : 'bg-rose-500/20 text-rose-400 border-rose-500/40'
+                                                                    }`}>
+                                                                        VIR
+                                                                    </span>
                                                                 )}
                                                             </td>
                                                             <td className="px-3 py-2.5">
@@ -4660,10 +4702,10 @@ export default function AutoTradePage() {
                                                             <td className="px-3 py-2.5 text-right">
                                                                 <span className={`font-black font-mono ${
                                                                     trade.isVirtual
-                                                                        ? 'text-indigo-400 opacity-70'
+                                                                        ? trade.result === 'WIN' ? 'text-emerald-400' : 'text-rose-400'
                                                                         : trade.profit >= 0 ? 'text-teal-400' : 'text-rose-400'
                                                                 }`}>
-                                                                    {trade.isVirtual ? '~' : ''}{trade.profit >= 0 ? '+' : ''}${trade.profit.toFixed(2)}
+                                                                    {trade.profit >= 0 ? '+' : ''}${trade.profit.toFixed(2)}
                                                                 </span>
                                                             </td>
                                                         </tr>

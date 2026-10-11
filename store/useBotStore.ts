@@ -706,7 +706,7 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
           // On loss in compounding mode: reset stake to baseStake and reset loss count
           ss.currentStake = Math.round(baseStake * 100) / 100;
           ss.lossCount = 0;
-        } else if (get().tradingMode === 'continuous') {
+        } else if (get().isMartingaleEnabled !== false && (get().tradingMode === 'continuous' || get().tradingMode === 'target')) {
           const rawNextStake = ss.currentStake * parseFloat(get().martingale || '2.1');
           const maxMartingaleCap = baseStake * Math.pow(parseFloat(get().martingale || '2.1'), 10);
           const nextStake = Math.round(Math.min(rawNextStake, maxMartingaleCap) * 100) / 100;
@@ -724,6 +724,8 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
           }
 
           ss.currentStake = nextStake;
+        } else {
+          ss.currentStake = Math.round(baseStake * 100) / 100;
         }
       } else {
         ss.lost++; ss.totalProfit += netProfit;
@@ -851,6 +853,7 @@ interface BotStoreState {
   stopLoss:       string;
   stopLossMode:   'loss' | 'losses';
   martingale:     string;
+  isMartingaleEnabled?: boolean;
   tradingMode:    string;
   strategies:     Strategy[];
   selectedMarkets: string[];
@@ -874,6 +877,7 @@ interface BotStoreState {
   setStopLoss:        (v: string) => void;
   setStopLossMode:    (mode: 'loss' | 'losses') => void;
   setMartingale:      (v: string) => void;
+  setIsMartingaleEnabled: (v: boolean) => void;
   setTradingMode:     (v: string) => void;
   setStrategies:      (s: Strategy[] | ((p: Strategy[]) => Strategy[])) => void;
   setSelectedMarkets: (m: string[] | ((p: string[]) => string[])) => void;
@@ -912,6 +916,7 @@ export const useBotStore = create<BotStoreState>()(
       stopLoss:        '100',
       stopLossMode:    'loss',
       martingale:      '2.1',
+      isMartingaleEnabled: true,
       tradingMode:     'continuous',
       strategies:      [createStrategy(0)],
       selectedMarkets: ['1HZ10V', '1HZ100V'],
@@ -941,6 +946,7 @@ export const useBotStore = create<BotStoreState>()(
       setStopLoss:        (v) => set({ stopLoss: v }),
       setStopLossMode:    (mode) => set({ stopLossMode: mode }),
       setMartingale:      (v) => set({ martingale: v }),
+      setIsMartingaleEnabled: (v) => set({ isMartingaleEnabled: v }),
       setTradingMode:     (v) => set({ tradingMode: v }),
       setStrategies: (s) => set(state => ({
         strategies: typeof s === 'function' ? s(state.strategies) : s,
@@ -2140,7 +2146,7 @@ export const useBotStore = create<BotStoreState>()(
               if (isCompounding) {
                 ss.currentStake = Math.round(baseStake * 100) / 100;
                 ss.lossCount = 0;
-              } else if (state.tradingMode === 'continuous') {
+              } else if (state.isMartingaleEnabled !== false && (state.tradingMode === 'continuous' || state.tradingMode === 'target')) {
                 const rawNextStake = ss.currentStake * parseFloat(state.martingale || '2.1');
                 const maxMartingaleCap = baseStake * Math.pow(parseFloat(state.martingale || '2.1'), 10);
                 const nextStake = Math.round(Math.min(rawNextStake, maxMartingaleCap) * 100) / 100;
@@ -2156,6 +2162,8 @@ export const useBotStore = create<BotStoreState>()(
                 }
 
                 ss.currentStake = nextStake;
+              } else {
+                ss.currentStake = Math.round(baseStake * 100) / 100;
               }
             }
           }
@@ -2236,6 +2244,7 @@ export const useBotStore = create<BotStoreState>()(
         stopLoss:        state.stopLoss,
         stopLossMode:    state.stopLossMode,
         martingale:      state.martingale,
+        isMartingaleEnabled: state.isMartingaleEnabled,
         tradingMode:     state.tradingMode,
         strategies:      state.strategies,
         selectedMarkets: state.selectedMarkets,
