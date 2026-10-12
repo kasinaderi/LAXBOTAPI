@@ -986,6 +986,11 @@ export default function AutoTradePage() {
                     ? `${stepTP} Wins TP / ${stepSL} Losses SL`
                     : `$${stepTP} TP / -$${stepSL} SL`;
                 addAuditLog(`🚀 [Step ${stepIdx + 1}/${currentSteps.length}] Starting LaxPrime | Stake: $${stakeStr} | Goal: ${goalSummary}${stepCompound ? ` | Inner Compounding (${stepCompoundPct}%)` : ''} | ${activeStrats.length} strats [${stratSummary}] on ${activeMkts.length} mkts`, 'info');
+
+                // Ensure scanner is actively running and subscribed to all step markets
+                activeMkts.forEach((m: string) => useScannerStore.getState().ensureScanner(m));
+                useScannerStore.getState().startScanning();
+
                 useBotStore.getState().startBot();
             } catch (err) {
                 addAuditLog(`❌ Error starting LaxPrime step: ${String(err)}`, 'error');
@@ -4548,7 +4553,8 @@ export default function AutoTradePage() {
 
                                     return recordedStepIndices.map(sIdx => {
                                         const stepTrades = tradeLog.filter(t => t.stepIdx === sIdx);
-                                        const stepProf = stepTrades.reduce((acc, t) => acc + (t.profit || 0), 0);
+                                        const realTrades = stepTrades.filter(t => !t.isVirtual);
+                                        const stepProf = realTrades.reduce((acc, t) => acc + (t.profit || 0), 0);
                                         const isSelected = tradeLogStepFilter === sIdx;
                                         return (
                                             <button
@@ -4563,8 +4569,8 @@ export default function AutoTradePage() {
                                             >
                                                 <span className="font-mono text-white">S{sIdx + 1}</span>
                                                 <span className="text-[8px] opacity-75 font-mono">({stepTrades.length})</span>
-                                                <span className={`font-mono text-[8px] ${stepProf >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                                    {stepProf >= 0 ? '+' : ''}${stepProf.toFixed(2)}
+                                                <span className={`font-mono text-[8px] ${realTrades.length === 0 ? 'text-gray-400' : stepProf >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                    {realTrades.length === 0 ? '$0.00' : `${stepProf >= 0 ? '+' : ''}$${stepProf.toFixed(2)}`}
                                                 </span>
                                             </button>
                                         );
@@ -4589,7 +4595,7 @@ export default function AutoTradePage() {
                                                 {selectedPreset === 'trade_playlist' && (
                                                     <th className="px-2 py-2.5 text-[9px] font-black uppercase tracking-widest text-gray-600 text-left">Step</th>
                                                 )}
-                                                {['Time', 'Market', 'Type', 'Exit', 'P/L'].map(h => (
+                                                {['Time', 'Market', 'Type', 'Stake', 'Exit', 'P/L'].map(h => (
                                                     <th key={h} className="px-3 py-2.5 text-[9px] font-black uppercase tracking-widest text-gray-600 text-left first:text-left last:text-right">{h}</th>
                                                 ))}
                                             </tr>
@@ -4603,7 +4609,7 @@ export default function AutoTradePage() {
                                                 if (displayTrades.length === 0) {
                                                     return (
                                                         <tr>
-                                                            <td colSpan={6} className="px-3 py-8 text-center text-gray-500 text-xs">
+                                                            <td colSpan={7} className="px-3 py-8 text-center text-gray-500 text-xs">
                                                                 No trades recorded for Step {Number(tradeLogStepFilter) + 1}
                                                             </td>
                                                         </tr>
@@ -4637,7 +4643,7 @@ export default function AutoTradePage() {
                                                     if (isPlaylist && tradeLogStepFilter === 'all' && sIdx != null && sIdx !== prevStepIdx && i > 0) {
                                                         rows.push(
                                                             <tr key={`divider-${i}`} className="border-t-2 border-white/10">
-                                                                <td colSpan={6} className="px-3 py-1.5">
+                                                                <td colSpan={7} className="px-3 py-1.5">
                                                                     <div className={`flex items-center gap-1.5 ${col?.text ?? 'text-gray-400'}`}>
                                                                         <div className={`h-px flex-1 ${col?.bg ?? 'bg-white/5'}`} />
                                                                         <span className="text-[8px] font-black uppercase tracking-widest opacity-80">
@@ -4695,6 +4701,9 @@ export default function AutoTradePage() {
                                                                 </div>
                                                             </td>
                                                             <td className="px-3 py-2.5 text-gray-400 font-mono">{trade.contractType}</td>
+                                                            <td className="px-3 py-2.5 font-mono text-gray-300 font-bold whitespace-nowrap">
+                                                                ${(trade.stake || 0).toFixed(2)}
+                                                            </td>
                                                             <td className="px-3 py-2.5">
                                                                 <span className={`w-6 h-6 inline-flex items-center justify-center rounded-lg font-black text-xs ${
                                                                     trade.result === 'WIN'  ? 'bg-teal-500/20 text-teal-400' :

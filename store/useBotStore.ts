@@ -989,6 +989,7 @@ export const useBotStore = create<BotStoreState>()(
         eng.adaptivePos   = { stepIndex: 0, repCount: 0 };
         eng.thenState     = {};
         eng.roundState    = {};
+        eng.lastTradeTime = 0;
         botTradeIds.clear();
         set({ adaptiveLiveStatus: '' });
 
@@ -1015,7 +1016,12 @@ export const useBotStore = create<BotStoreState>()(
           tradeWS.onEvent(onTradeWSEvent);
         }
 
-        set({ isRunning: true, botStatusMsg: 'Running. Waiting for conditions...', lastSignal: '' });
+        set({
+          isRunning: true,
+          botStatusMsg: 'Running. Waiting for conditions...',
+          lastSignal: '',
+          globalStats: { won: 0, lost: 0, totalProfit: 0, totalTrades: 0 },
+        });
 
         // Reset trade pattern sequence position to step 1 on fresh start
         eng.patternPos = {};
@@ -1468,23 +1474,6 @@ export const useBotStore = create<BotStoreState>()(
             useDerivStore.getState().setVirtualSettings({
               isVirtualMode: newVirtMode, vConsecWins, vConsecLosses, virtualWins, virtualLosses,
             });
-          }
-        }
-
-        // Stop-limit check — done once after all this tick's virtual settlements
-        if (resolved.length > 0) {
-          const live = get().globalStats;
-          const tpMode = state.targetProfitMode || 'profit';
-          const slMode = state.stopLossMode || 'loss';
-          if (tpMode === 'wins') {
-            if (live.won >= parseInt(targetProfit)) { get().stopBot('Target wins reached!'); return; }
-          } else {
-            if (live.totalProfit >= parseFloat(targetProfit)) { get().stopBot('Target profit reached!'); return; }
-          }
-          if (slMode === 'losses') {
-            if (live.lost >= parseInt(stopLoss)) { get().stopBot('Stop losses reached!'); return; }
-          } else {
-            if (live.totalProfit <= -parseFloat(stopLoss)) { get().stopBot('Stop loss reached!'); return; }
           }
         }
 
