@@ -1204,6 +1204,7 @@ export const useBotStore = create<BotStoreState>()(
           }
 
           eng.cooldown[`${stratId}_${vtSym}`] = now;
+          eng.lastTradeTime = now;
         }
 
         // ── Virtual streak tracking & stop-limit checks (once per round) ────────
@@ -1226,7 +1227,7 @@ export const useBotStore = create<BotStoreState>()(
           // Dual both-loss: counts as exactly 1 loss, not 2
           const isDualBothLoss  = roundContracts.length >= 2 && roundLost === roundContracts.length;
 
-          const vsV = derivState.virtualSettings;
+          const vsV = useDerivStore.getState().virtualSettings;
           let { vConsecWins, vConsecLosses, virtualWins, virtualLosses, vConsecWinsB = 0, vConsecLossesB = 0, vVirtualWinsB = 0, vVirtualLossesB = 0 } = vsV;
 
           if (isDualRoundPush) {
@@ -1452,7 +1453,7 @@ export const useBotStore = create<BotStoreState>()(
         // Legacy (no roundId) streak tracking — one per unsettled contract
         for (const rt of resolved) {
           if (!rt.roundId) {
-            const vsV = derivState.virtualSettings;
+            const vsV = useDerivStore.getState().virtualSettings;
             let { vConsecWins, vConsecLosses, virtualWins, virtualLosses } = vsV;
             if (rt.isWin) { vConsecWins++; vConsecLosses = 0; virtualWins++; }
             else          { vConsecWins = 0; vConsecLosses++; virtualLosses++; }
@@ -1546,9 +1547,7 @@ export const useBotStore = create<BotStoreState>()(
           //      fully updated before ANY next trade fires.
           //   2. No two strategies can race to update the ladder with stale stakes.
           const hasAnyActiveGlobally = eng.activeTrades.size > 0;
-          const hasVirt = eng.activeVirtual.some(
-            t => t.symbol === symbol
-          );
+          const hasVirt = eng.activeVirtual.length > 0;
           if (hasAnyActiveGlobally || hasVirt) continue;
 
           // Digit pattern retrigger guard
@@ -1850,6 +1849,12 @@ export const useBotStore = create<BotStoreState>()(
             }
           }
 
+          // ── Cross-market delay guard (strictly applies to both Real and Virtual trades) ──
+          const delayMs = parseFloat(state.crossMarketDelay || '1.5') * 1000;
+          if (now - eng.lastTradeTime < delayMs) {
+            continue;
+          }
+
           const roundId = `round_${stratId}_${now}_${Math.floor(Math.random() * 9999)}`;
           eng.roundState[roundId] = {
             totalCount: orders.length,
@@ -1892,6 +1897,7 @@ export const useBotStore = create<BotStoreState>()(
             });
 
             eng.cooldown[ck] = now;
+            eng.lastTradeTime = now;
             const labels = tradesToPlace.map(t => {
               const l = TRADE_OPTIONS.find(o => o.value === t.contractType)?.label || t.contractType;
               return t.count > 1 ? `${l} (x${t.count})` : l;
@@ -1912,12 +1918,6 @@ export const useBotStore = create<BotStoreState>()(
                 `⛔ Insufficient Balance: Required stake USD ${tradeStake.toFixed(2)} exceeds account balance USD ${balance.toFixed(2)}. Bot stopped to protect remaining funds.`
               );
               return;
-            }
-
-            const delayMs = parseFloat(state.crossMarketDelay || '1.5') * 1000;
-            if (now - eng.lastTradeTime < delayMs) {
-              delete eng.roundState[roundId];
-              continue;
             }
 
             const entryDigit = digits[digits.length - 1] ?? 0;
@@ -2224,6 +2224,7 @@ export const useBotStore = create<BotStoreState>()(
 
         eng.activeTrades.delete(requestId);
         eng.cooldown[`${stratId}_${symbol}`] = Date.now();
+        eng.lastTradeTime = Date.now();
       },
 
     }),

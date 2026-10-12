@@ -468,6 +468,11 @@ export default function AutoTradePage() {
     // React to virtual ↔ real mode switches triggered by the trade engine
     const prevVirtualModeRef = useRef(virtualSettings.isVirtualMode);
     useEffect(() => {
+        const isPlaylist = selectedPreset === 'trade_playlist' || selectedPresetRef.current === 'trade_playlist';
+        if (isPlaylist) {
+            prevVirtualModeRef.current = virtualSettings.isVirtualMode;
+            return;
+        }
         if (prevVirtualModeRef.current === virtualSettings.isVirtualMode) return;
 
         if (virtualSettings.isVirtualMode) {
@@ -2003,7 +2008,7 @@ export default function AutoTradePage() {
             }
         }, 8000);
 
-        if (cycleInterval !== 'continuous') {
+        if (cycleInterval !== 'continuous' && selectedPreset !== 'trade_playlist' && selectedPresetRef.current !== 'trade_playlist') {
             let intervalMs = 3_600_000;
             if (cycleInterval === '15m')  intervalMs = 900_000;
             else if (cycleInterval === '30m') intervalMs = 1_800_000;
