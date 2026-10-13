@@ -11,7 +11,7 @@ import {
     GitMerge, Shuffle, Layers, BarChart3, RefreshCw,
     Check, X, Minus, Search, Filter, Eye, Settings2,
     Target, ChevronRight, ArrowLeftRight, AlertTriangle, FlaskConical,
-    Copy, ArrowUp, ArrowDown, Repeat, Timer, ChevronDown, Sliders, Sparkles
+    Copy, ArrowUp, ArrowDown, Repeat, Timer, ChevronDown, Sliders, Sparkles, Download
 } from 'lucide-react';
 import { useDerivStore } from '@/store/useDerivStore';
 import { usePageSettings } from '@/store/usePageSettings';
@@ -184,21 +184,23 @@ const getTopAlternatingPairAndCount = (digits: number[]) => {
 };
 
 const getStepTradeType = (step: PlaylistTradeStep): string => {
+    if (!step) return '—';
     if (step.source === 'laxprime') {
         if (step.laxprimeConfig?.adaptiveSwitch?.enabled) {
             return step.laxprimeConfig.adaptiveSwitch.mode === 'adaptive' ? 'Adaptive' : 'Switcher';
         }
-        if (step.laxprimeConfig?.strategies && step.laxprimeConfig.strategies.length > 0) {
+        if (step.laxprimeConfig?.strategies && Array.isArray(step.laxprimeConfig.strategies) && step.laxprimeConfig.strategies.length > 0) {
             return step.laxprimeConfig.strategies.map(s => {
+                if (!s || !s.tradeType) return 'EVEN';
                 const opt = CONTRACT_OPTIONS.find(c => c.value === s.tradeType);
-                return opt ? opt.label.replace(' (CALL)', '').replace(' (PUT)', '') : s.tradeType.replace('DIGIT', '');
+                return opt ? opt.label.replace(' (CALL)', '').replace(' (PUT)', '') : String(s.tradeType).replace('DIGIT', '');
             }).join(' / ');
         }
         return 'EVEN';
     } else {
         if (step.contractOverride) {
             const opt = CONTRACT_OPTIONS.find(c => c.value === step.contractOverride);
-            return opt ? opt.label.replace(' (CALL)', '').replace(' (PUT)', '') : step.contractOverride.replace('DIGIT', '');
+            return opt ? opt.label.replace(' (CALL)', '').replace(' (PUT)', '') : String(step.contractOverride).replace('DIGIT', '');
         }
         return 'Differs';
     }
@@ -713,9 +715,9 @@ export default function AutoTradePage() {
             if (s.capitalPct)          setCapitalPct(s.capitalPct);
             // Autonomous Trade Playlist settings — restore all custom steps and delays on reload
             if (s.playlistSteps && Array.isArray(s.playlistSteps) && s.playlistSteps.length > 0) {
-                const cleaned = s.playlistSteps.map((step: PlaylistTradeStep) => ({
+                const cleaned = s.playlistSteps.filter(Boolean).map((step: PlaylistTradeStep) => ({
                     ...step,
-                    label: step.label ? step.label.replace(/\s*\(\s*copy\s*\)/gi, '').trim() : step.label,
+                    label: step?.label ? String(step.label).replace(/\s*\(\s*copy\s*\)/gi, '').trim() : (step?.label || ''),
                 }));
                 setPlaylistSteps(cleaned);
             }
@@ -781,6 +783,32 @@ export default function AutoTradePage() {
         const time = new Date().toLocaleTimeString([], { hour12: false });
         setAuditLogs(prev => [{ time, message, type }, ...prev].slice(0, 200));
     }, []);
+
+    // ── Export Trade Logs to CSV ──────────────────────────────────────────
+    const exportTradeLogsToCSV = useCallback(() => {
+        if (tradeLog.length === 0) return;
+        const headers = ['ID', 'Step', 'Time', 'Market', 'Type', 'Stake', 'Exit Digit', 'Profit', 'Result', 'Mode'];
+        const rows = tradeLog.map(t => [
+            t.id,
+            t.stepIdx != null ? `Step ${t.stepIdx + 1}` : 'N/A',
+            t.time,
+            t.market,
+            t.contractType,
+            (Number(t.stake) || 0).toFixed(2),
+            t.exitDigit ?? '',
+            (Number(t.profit) || 0).toFixed(2),
+            t.result,
+            t.isVirtual ? 'VIR' : 'REAL'
+        ]);
+        const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.map(val => `"${String(val).replace(/"/g, '""')}"`).join(','))].join('\n');
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement('a');
+        link.setAttribute('href', encodedUri);
+        link.setAttribute('download', `Masterbot_Trade_Logs_${new Date().toISOString().slice(0, 10)}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }, [tradeLog]);
 
     // ── Stake calculator ──────────────────────────────────────────────────
     const calcStake = useCallback((): string => {
@@ -1418,7 +1446,7 @@ export default function AutoTradePage() {
         };
         setTradeLog(prev => {
             if (prev.some(r => String(r.id) === String(record.id))) return prev;
-            return [record, ...prev]; // No cap — user can scroll all trades
+            return [record, ...prev].slice(0, 1000); // Capped at 1000 to prevent out-of-memory crashes on multi-day runs
         });
 
         addAuditLog(
@@ -1734,6 +1762,11 @@ export default function AutoTradePage() {
             const logKey = `${log.id}::${log.result}`;
             if (processedBotLogKeysRef.current.has(logKey)) continue;
             processedBotLogKeysRef.current.add(logKey);
+            // Prune if set grows too large over multi-day runs
+            if (processedBotLogKeysRef.current.size > 2000) {
+                const arr = Array.from(processedBotLogKeysRef.current);
+                processedBotLogKeysRef.current = new Set(arr.slice(arr.length - 1000));
+            }
             lastBotLogIdRef.current = logKey;
 
             const profit   = Number(log.profit) || 0;
@@ -1787,7 +1820,7 @@ export default function AutoTradePage() {
 
             setTradeLog(prev => {
                 if (prev.some(r => String(r.id) === String(record.id))) return prev;
-                return [record, ...prev]; // No cap — user can scroll all trades
+                return [record, ...prev].slice(0, 1000); // Capped at 1000 to prevent out-of-memory crashes on multi-day runs
             });
 
             addAuditLog(
@@ -4508,6 +4541,18 @@ export default function AutoTradePage() {
                                 ))}
                             </div>
 
+                            {/* Export CSV Button */}
+                            {tradeLog.length > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={exportTradeLogsToCSV}
+                                    title="Download full trade history as CSV"
+                                    className="shrink-0 mr-1.5 flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-teal-500/10 hover:bg-teal-500/20 border border-teal-500/20 hover:border-teal-500/35 text-teal-400 text-[10px] font-black uppercase tracking-wider transition-all active:scale-95 cursor-pointer">
+                                    <Download className="w-3 h-3" />
+                                    Export CSV
+                                </button>
+                            )}
+
                             {/* Reset Button */}
                             <button
                                 onClick={() => {
@@ -4602,9 +4647,11 @@ export default function AutoTradePage() {
                                         </thead>
                                         <tbody className="divide-y divide-white/3">
                                             {(() => {
-                                                const displayTrades = tradeLogStepFilter === 'all'
+                                                const rawTrades = tradeLogStepFilter === 'all'
                                                     ? tradeLog
                                                     : tradeLog.filter(t => t.stepIdx === tradeLogStepFilter);
+                                                const MAX_VISIBLE_ROWS = 300;
+                                                const displayTrades = rawTrades.slice(0, MAX_VISIBLE_ROWS);
 
                                                 if (displayTrades.length === 0) {
                                                     return (
@@ -4636,7 +4683,7 @@ export default function AutoTradePage() {
                                                     const sIdx = trade.stepIdx;
                                                     const col = sIdx != null ? STEP_COLORS[sIdx % STEP_COLORS.length] : null;
                                                     const shortLabel = trade.stepLabel
-                                                        ? trade.stepLabel.replace(/\s*\(\s*copy\s*\)/gi, '').replace(/\s*\(.*\)/, '').trim() // Strip "(Immediate)" / "(+Xm delay)"
+                                                        ? String(trade.stepLabel).replace(/\s*\(\s*copy\s*\)/gi, '').replace(/\s*\(.*\)/, '').trim() // Strip "(Immediate)" / "(+Xm delay)"
                                                         : sIdx != null ? `Step ${sIdx + 1}` : null;
 
                                                     // Inject a step-boundary divider row when the step changes (only when viewing ALL steps)
@@ -4657,6 +4704,9 @@ export default function AutoTradePage() {
                                                     }
                                                     prevStepIdx = sIdx;
 
+                                                    const tradeProfitNum = Number(trade.profit) || 0;
+                                                    const tradeStakeNum = Number(trade.stake) || 0;
+
                                                     rows.push(
                                                         <tr
                                                             key={trade.id}
@@ -4674,7 +4724,7 @@ export default function AutoTradePage() {
                                                                     {shortLabel && col ? (
                                                                         <span
                                                                             className={`inline-flex items-center px-1.5 py-0.5 rounded ${col.bg} border ${col.border} ${col.text} text-[8px] font-black whitespace-nowrap`}
-                                                                            title={trade.stepLabel?.replace(/\s*\(\s*copy\s*\)/gi, '').trim()}
+                                                                            title={trade.stepLabel ? String(trade.stepLabel).replace(/\s*\(\s*copy\s*\)/gi, '').trim() : ''}
                                                                         >
                                                                             S{(sIdx ?? 0) + 1}
                                                                         </span>
@@ -4702,7 +4752,7 @@ export default function AutoTradePage() {
                                                             </td>
                                                             <td className="px-3 py-2.5 text-gray-400 font-mono">{trade.contractType}</td>
                                                             <td className="px-3 py-2.5 font-mono text-gray-300 font-bold whitespace-nowrap">
-                                                                ${(trade.stake || 0).toFixed(2)}
+                                                                ${tradeStakeNum.toFixed(2)}
                                                             </td>
                                                             <td className="px-3 py-2.5">
                                                                 <span className={`w-6 h-6 inline-flex items-center justify-center rounded-lg font-black text-xs ${
@@ -4717,9 +4767,9 @@ export default function AutoTradePage() {
                                                                 <span className={`font-black font-mono ${
                                                                     trade.isVirtual
                                                                         ? trade.result === 'WIN' ? 'text-emerald-400' : 'text-rose-400'
-                                                                        : trade.profit >= 0 ? 'text-teal-400' : 'text-rose-400'
+                                                                        : tradeProfitNum >= 0 ? 'text-teal-400' : 'text-rose-400'
                                                                 }`}>
-                                                                    {trade.profit >= 0 ? '+' : ''}${trade.profit.toFixed(2)}
+                                                                    {tradeProfitNum >= 0 ? '+' : '-'}${Math.abs(tradeProfitNum).toFixed(2)}
                                                                 </span>
                                                             </td>
                                                         </tr>
