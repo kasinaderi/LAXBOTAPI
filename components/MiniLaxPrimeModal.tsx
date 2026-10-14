@@ -10,7 +10,7 @@ import {
 import {
   Strategy, Condition, PatternBox, PatternTrigger,
   AdaptiveSwitch, AdaptiveSwitchStep, SwitcherTradeConfig,
-  ALL_MARKETS, TRADE_OPTIONS,
+  ALL_MARKETS, TRADE_OPTIONS, normalizeContractType,
   createCondition, createStrategy, needsBarrier,
   useBotStore
 } from '@/store/useBotStore';
@@ -820,6 +820,7 @@ export function MiniLaxPrimeModal({
   };
 
   const handleSave = () => {
+    const isVS = Boolean(adaptiveSwitch.virtualSwitcher?.enabled);
     const configToSave: LaxPrimeStepConfig = {
       selectedMarkets: selectedMarkets.length > 0 ? selectedMarkets : ['1HZ10V', '1HZ100V'],
       strategies: strategies.length > 0 ? strategies : [createStrategy(0)],
@@ -833,8 +834,34 @@ export function MiniLaxPrimeModal({
       targetProfitMode,
       stopLoss,
       stopLossMode,
-      adaptiveSwitch,
-      virtualSettings: virtualMode,
+      adaptiveSwitch: {
+        ...adaptiveSwitch,
+        enabled: isVS ? true : adaptiveSwitch.enabled,
+        dualMode: isVS ? false : adaptiveSwitch.dualMode,
+        virtualSwitcher: adaptiveSwitch.virtualSwitcher ? {
+          ...adaptiveSwitch.virtualSwitcher,
+          virtualContract: {
+            ...adaptiveSwitch.virtualSwitcher.virtualContract,
+            contractType: normalizeContractType(adaptiveSwitch.virtualSwitcher.virtualContract?.contractType || 'DIGITEVEN'),
+          },
+          onVirtualWins: {
+            ...adaptiveSwitch.virtualSwitcher.onVirtualWins,
+            contractType: normalizeContractType(adaptiveSwitch.virtualSwitcher.onVirtualWins?.contractType || 'DIGITUNDER'),
+          },
+          onVirtualLosses: {
+            ...adaptiveSwitch.virtualSwitcher.onVirtualLosses,
+            contractType: normalizeContractType(adaptiveSwitch.virtualSwitcher.onVirtualLosses?.contractType || 'DIGITOVER'),
+          },
+        } : undefined,
+      },
+      virtualSettings: {
+        ...virtualMode,
+        isVirtualMode: isVS ? true : virtualMode.isVirtualMode,
+        startVirtualToReal: isVS ? false : virtualMode.startVirtualToReal,
+        startRealToVirtual: isVS ? false : virtualMode.startRealToVirtual,
+        isDoubleVirtual: isVS ? false : virtualMode.isDoubleVirtual,
+        smartSettings: isVS ? { ...(virtualMode.smartSettings || { enabled: false, type: 'sequence' as const, sequence: { step1Type: 'Wins' as const, step1Qty: 2, step1Mode: 'consecutive' as const, step2Type: 'Losses' as const, step2Qty: 2, step2Mode: 'consecutive' as const }, alternating: { count: 2 } }), enabled: false } : virtualMode.smartSettings,
+      },
     };
     onSave(configToSave);
     onClose();
@@ -1137,7 +1164,7 @@ export function MiniLaxPrimeModal({
 
             {showVirtualPanel && (
               <div className="space-y-3 mt-3 pt-3 border-t border-white/10">
-                {adaptiveSwitch.enabled && adaptiveSwitch.virtualSwitcher?.enabled && (
+                {Boolean(adaptiveSwitch.virtualSwitcher?.enabled) && (
                   <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300">
                     <span className="text-base">🔒</span>
                     <div>
@@ -1146,7 +1173,7 @@ export function MiniLaxPrimeModal({
                     </div>
                   </div>
                 )}
-                <div className={`space-y-3 ${adaptiveSwitch.enabled && adaptiveSwitch.virtualSwitcher?.enabled ? 'opacity-35 pointer-events-none' : ''}`}>
+                <div className={`space-y-3 ${Boolean(adaptiveSwitch.virtualSwitcher?.enabled) ? 'opacity-35 pointer-events-none' : ''}`}>
                 {/* === Virtual → Real Card === */}
                 <div className="bg-black/40 border border-white/10 rounded-xl p-3 space-y-2">
                   <div className="flex items-center justify-between">
@@ -1438,14 +1465,28 @@ export function MiniLaxPrimeModal({
                     returnToVirtual: { triggerType: 'wins' as const, mode: 'consec' as const, threshold: 1 },
                   };
 
-                  const updateVS = (patch: Partial<typeof vs>) =>
-                    setAdaptiveSwitch(prev => ({ ...prev, virtualSwitcher: { ...vs, ...patch } }));
-                  const updateVirtContract = (patch: Partial<typeof vs.virtualContract>) =>
-                    updateVS({ virtualContract: { ...vs.virtualContract, ...patch } });
-                  const updateWinRule  = (patch: Partial<typeof vs.onVirtualWins>)   =>
-                    updateVS({ onVirtualWins:   { ...vs.onVirtualWins,   ...patch } as typeof vs.onVirtualWins });
-                  const updateLossRule = (patch: Partial<typeof vs.onVirtualLosses>) =>
-                    updateVS({ onVirtualLosses: { ...vs.onVirtualLosses, ...patch } as typeof vs.onVirtualLosses });
+                  const updateVS = (patch: Partial<typeof vs>) => {
+                    setAdaptiveSwitch(prev => {
+                      const nextVS = { ...vs, ...patch };
+                      return {
+                        ...prev,
+                        enabled: nextVS.enabled ? true : prev.enabled,
+                        virtualSwitcher: nextVS,
+                      };
+                    });
+                  };
+                  const updateVirtContract = (patch: Partial<typeof vs.virtualContract>) => {
+                    const normPatch = patch.contractType ? { ...patch, contractType: normalizeContractType(patch.contractType) } : patch;
+                    updateVS({ virtualContract: { ...vs.virtualContract, ...normPatch } });
+                  };
+                  const updateWinRule  = (patch: Partial<typeof vs.onVirtualWins>)   => {
+                    const normPatch = patch.contractType ? { ...patch, contractType: normalizeContractType(patch.contractType) } : patch;
+                    updateVS({ onVirtualWins:   { ...vs.onVirtualWins,   ...normPatch } as typeof vs.onVirtualWins });
+                  };
+                  const updateLossRule = (patch: Partial<typeof vs.onVirtualLosses>) => {
+                    const normPatch = patch.contractType ? { ...patch, contractType: normalizeContractType(patch.contractType) } : patch;
+                    updateVS({ onVirtualLosses: { ...vs.onVirtualLosses, ...normPatch } as typeof vs.onVirtualLosses });
+                  };
                   const updateReturnRule = (patch: Partial<typeof vs.returnToVirtual>) =>
                     updateVS({ returnToVirtual: { ...vs.returnToVirtual, ...patch } });
 
@@ -2196,7 +2237,7 @@ export function MiniLaxPrimeModal({
 
                   {/* THEN TRADE Section */}
                   <div className="pt-3 border-t border-white/10 flex flex-wrap items-center gap-3">
-                    {adaptiveSwitch.enabled ? (
+                    {(adaptiveSwitch.enabled || adaptiveSwitch.virtualSwitcher?.enabled) ? (
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-black text-purple-400 uppercase tracking-wider flex items-center gap-1.5">
                           <Zap className="w-3.5 h-3.5 text-purple-400" />

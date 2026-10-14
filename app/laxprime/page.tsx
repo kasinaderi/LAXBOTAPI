@@ -15,6 +15,7 @@ import {
   TRADE_OPTIONS as BOT_TRADE_OPTIONS,
   createCondition, createStrategy, needsBarrier,
   botTradeIds,
+  normalizeContractType,
 } from '@/store/useBotStore';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2442,16 +2443,37 @@ export default function LaxPrimePage() {
                     returnToVirtual: { triggerType: 'wins' as const, mode: 'consec' as const, threshold: 1 },
                   };
 
-                  const updateVS = (patch: Partial<typeof vs>) =>
-                    setAdaptiveSwitch({ ...adaptiveSwitch, virtualSwitcher: { ...vs, ...patch } });
-                  const updateVirtContract = (patch: Partial<typeof vs.virtualContract>) =>
-                    updateVS({ virtualContract: { ...vs.virtualContract, ...patch } });
-                  const updateWinRule  = (patch: Partial<typeof vs.onVirtualWins>)   =>
-                    updateVS({ onVirtualWins:   { ...vs.onVirtualWins,   ...patch } });
-                  const updateLossRule = (patch: Partial<typeof vs.onVirtualLosses>) =>
-                    updateVS({ onVirtualLosses: { ...vs.onVirtualLosses, ...patch } });
+
+                  const updateVS = (patch: Partial<typeof vs>) => {
+                    const nextVS = { ...vs, ...patch };
+                    setAdaptiveSwitch({
+                      ...adaptiveSwitch,
+                      // If VS is being enabled, also enable the outer adaptive switch
+                      enabled: nextVS.enabled ? true : adaptiveSwitch.enabled,
+                      virtualSwitcher: nextVS,
+                    });
+                  };
+                  const updateVirtContract = (patch: Partial<typeof vs.virtualContract>) => {
+                    const normPatch = patch.contractType
+                      ? { ...patch, contractType: normalizeContractType(patch.contractType) }
+                      : patch;
+                    updateVS({ virtualContract: { ...vs.virtualContract, ...normPatch } });
+                  };
+                  const updateWinRule  = (patch: Partial<typeof vs.onVirtualWins>) => {
+                    const normPatch = patch.contractType
+                      ? { ...patch, contractType: normalizeContractType(patch.contractType) }
+                      : patch;
+                    updateVS({ onVirtualWins:   { ...vs.onVirtualWins,   ...normPatch } });
+                  };
+                  const updateLossRule = (patch: Partial<typeof vs.onVirtualLosses>) => {
+                    const normPatch = patch.contractType
+                      ? { ...patch, contractType: normalizeContractType(patch.contractType) }
+                      : patch;
+                    updateVS({ onVirtualLosses: { ...vs.onVirtualLosses, ...normPatch } });
+                  };
                   const updateReturnRule = (patch: Partial<typeof vs.returnToVirtual>) =>
                     updateVS({ returnToVirtual: { ...vs.returnToVirtual, ...patch } });
+
 
                   const winNeedsBarrier = needsBarrier(vs.onVirtualWins?.contractType || 'DIGITUNDER');
                   const lossNeedsBarrier = needsBarrier(vs.onVirtualLosses?.contractType || 'DIGITOVER');
@@ -3356,7 +3378,7 @@ export default function LaxPrimePage() {
                   index={i}
                   onChange={updated => setStrategies(p => p.map(x => x.id === updated.id ? updated : x))}
                   onRemove={() => setStrategies(p => p.filter(x => x.id !== s.id))}
-                  adaptiveSwitchEnabled={adaptiveSwitch.enabled}
+                  adaptiveSwitchEnabled={adaptiveSwitch.enabled || !!adaptiveSwitch.virtualSwitcher?.enabled}
                 />
               ))}
             </div>

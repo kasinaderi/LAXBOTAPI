@@ -16,7 +16,7 @@ import {
 import { useDerivStore } from '@/store/useDerivStore';
 import { usePageSettings } from '@/store/usePageSettings';
 import { useScannerStore } from '@/store/useScannerStore';
-import { useBotStore } from '@/store/useBotStore';
+import { useBotStore, normalizeContractType } from '@/store/useBotStore';
 import { ticksToDecimals } from '@/lib/deriv/constants';
 import { tradeEngine } from '@/lib/deriv/trade-engine';
 import { tradeWS } from '@/lib/deriv/trade-ws';
@@ -984,10 +984,14 @@ export default function AutoTradePage() {
 
                 if (stepConfig && stepConfig.virtualSettings) {
                     const vs = stepConfig.virtualSettings;
-                    const isVirtActive = vs.startVirtualToReal || vs.isDoubleVirtual || vs.smartSettings?.enabled || vs.isVirtualMode;
+                    const isVSActive = Boolean(stepConfig.adaptiveSwitch?.virtualSwitcher?.enabled);
+                    const isVirtActive = isVSActive || vs.startVirtualToReal || vs.isDoubleVirtual || vs.smartSettings?.enabled || vs.isVirtualMode;
                     useDerivStore.getState().setVirtualSettings({
                         ...(vs as any),
                         isVirtualMode: isVirtActive ? true : vs.isVirtualMode,
+                        startVirtualToReal: isVSActive ? false : vs.startVirtualToReal,
+                        startRealToVirtual: isVSActive ? false : vs.startRealToVirtual,
+                        isDoubleVirtual: isVSActive ? false : vs.isDoubleVirtual,
                         vDoubleStage: 'A',
                         vStageBCompletedReps: 0,
                         vConsecWinsB: 0,
@@ -1808,7 +1812,7 @@ export default function AutoTradePage() {
                 id:           log.id || uid(),
                 time:         new Date(log.time || Date.now()).toLocaleTimeString([], { hour12: false }),
                 market:       actualMarket,
-                contractType: log.contract || '—',
+                contractType: normalizeContractType(log.contract || (log as any).contractType || (isVirt ? 'DIGITEVEN' : '—')),
                 entrySpot:    log.entrySpot || '—',
                 exitDigit:    log.exitSpot && log.exitSpot !== '-' ? Number(String(log.exitSpot).slice(-1)) : null,
                 stake:        stakeVal,

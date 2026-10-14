@@ -228,6 +228,22 @@ export const TRADE_OPTIONS = [
   { value: 'RUNLOW',     label: '↓ ONLY DOWNS' },
 ];
 
+export function normalizeContractType(raw: string | undefined | null): string {
+  if (!raw) return 'DIGITEVEN';
+  const u = String(raw).toUpperCase().trim();
+  if (u === 'EVEN' || u === 'DIGITEVEN') return 'DIGITEVEN';
+  if (u === 'ODD' || u === 'DIGITODD') return 'DIGITODD';
+  if (u === 'OVER' || u === 'DIGITOVER') return 'DIGITOVER';
+  if (u === 'UNDER' || u === 'DIGITUNDER') return 'DIGITUNDER';
+  if (u === 'MATCH' || u === 'MATCHES' || u === 'DIGITMATCH') return 'DIGITMATCH';
+  if (u === 'DIFF' || u === 'DIFFERS' || u === 'DIGITDIFF') return 'DIGITDIFF';
+  if (u === 'RISE' || u === 'CALL') return 'CALL';
+  if (u === 'FALL' || u === 'PUT') return 'PUT';
+  if (u === 'RUNHIGH' || u === 'ONLY UPS') return 'RUNHIGH';
+  if (u === 'RUNLOW' || u === 'ONLY DOWNS') return 'RUNLOW';
+  return u;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // FACTORY HELPERS (exported)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -694,7 +710,7 @@ let _onTickUnsub: (() => void) | null = null;
 function processVirtualSwitcherResult(isWin: boolean, get: () => any, set: (state: any) => void) {
   const state = get();
   const aSw = state.adaptiveSwitch;
-  if (!aSw?.enabled || !aSw.virtualSwitcher?.enabled) return;
+  if (!aSw?.virtualSwitcher?.enabled) return;
 
   const vs = aSw.virtualSwitcher;
   // Only process virtual outcome if in virtual phase
@@ -726,10 +742,11 @@ function processVirtualSwitcherResult(isWin: boolean, get: () => any, set: (stat
 
   if (winRule && winCount >= winRule.threshold) {
     triggeredRule = 'wins';
+    const normType = normalizeContractType(winRule.contractType || 'DIGITUNDER');
     activeContract = {
-      contractType: winRule.contractType || 'DIGITUNDER',
-      barrier: winRule.barrier,
-      ticks: winRule.ticks || 1,
+      contractType: normType,
+      barrier: needsBarrier(normType) ? (winRule.barrier ?? 4) : undefined,
+      ticks: Math.max(1, winRule.ticks || 1),
       market: winRule.market,
     };
     if (winRule.market) {
@@ -737,10 +754,11 @@ function processVirtualSwitcherResult(isWin: boolean, get: () => any, set: (stat
     }
   } else if (lossRule && lossCount >= lossRule.threshold) {
     triggeredRule = 'losses';
+    const normType = normalizeContractType(lossRule.contractType || 'DIGITOVER');
     activeContract = {
-      contractType: lossRule.contractType || 'DIGITOVER',
-      barrier: lossRule.barrier,
-      ticks: lossRule.ticks || 1,
+      contractType: normType,
+      barrier: needsBarrier(normType) ? (lossRule.barrier ?? 5) : undefined,
+      ticks: Math.max(1, lossRule.ticks || 1),
       market: lossRule.market,
     };
     if (lossRule.market) {
@@ -750,19 +768,25 @@ function processVirtualSwitcherResult(isWin: boolean, get: () => any, set: (stat
 
   if (triggeredRule && activeContract) {
     // 🚀 SWITCH TO REAL TRADING!
-    useDerivStore.getState().setVirtualSettings({ isVirtualMode: false });
+    useDerivStore.getState().setVirtualSettings({
+      isVirtualMode: false,
+      startVirtualToReal: false,
+      startRealToVirtual: false,
+      isDoubleVirtual: false,
+    });
     const lbl = TRADE_OPTIONS.find(o => o.value === activeContract!.contractType)?.label || activeContract.contractType;
     const barText = activeContract.barrier !== undefined && needsBarrier(activeContract.contractType) ? ` ${activeContract.barrier}` : '';
     set({
       botStatusMsg: `⚡ Virtual Switcher: ${triggeredRule === 'wins' ? winRule.threshold + ' V-Wins' : lossRule.threshold + ' V-Losses'} met! Switched to REAL (${lbl}${barText})${activeContract.market ? ` on ${activeContract.market}` : ''}.`,
       adaptiveSwitch: {
         ...aSw,
+        enabled: true,
         virtualSwitcher: {
           ...vs,
           _phase: 'real',
           _activeRule: triggeredRule,
           _activeContract: activeContract,
-          _originalMarkets: vs._originalMarkets || state.selectedMarkets,
+          _originalMarkets: (vs._originalMarkets && vs._originalMarkets.length > 0) ? vs._originalMarkets : [...state.selectedMarkets],
           _consecWins: 0,
           _consecLosses: 0,
           _totalWins: totalW,
@@ -796,7 +820,7 @@ function processVirtualSwitcherResult(isWin: boolean, get: () => any, set: (stat
 function processVirtualSwitcherRealResult(isWin: boolean, get: () => any, set: (state: any) => void) {
   const state = get();
   const aSw = state.adaptiveSwitch;
-  if (!aSw?.enabled || !aSw.virtualSwitcher?.enabled) return;
+  if (!aSw?.virtualSwitcher?.enabled) return;
 
   const vs = aSw.virtualSwitcher;
   if (vs._phase !== 'real') return;
@@ -829,13 +853,22 @@ function processVirtualSwitcherRealResult(isWin: boolean, get: () => any, set: (
 
   if (count >= retRule.threshold) {
     // 🔄 SWITCH BACK TO VIRTUAL TRADING!
-    useDerivStore.getState().setVirtualSettings({ isVirtualMode: true });
-    const originalMarkets = vs._originalMarkets || state.selectedMarkets;
+    useDerivStore.getState().setVirtualSettings({
+      isVirtualMode: true,
+      startVirtualToReal: false,
+      startRealToVirtual: false,
+      isDoubleVirtual: false,
+    });
+    const originalMarkets = (vs._originalMarkets && vs._originalMarkets.length > 0) ? vs._originalMarkets : state.selectedMarkets;
+    const vc = vs.virtualContract || { contractType: 'DIGITEVEN', ticks: 1 };
+    const virtContract = normalizeContractType(vc.contractType || (vc as any).type || 'DIGITEVEN');
+    const virtLabel = TRADE_OPTIONS.find(o => o.value === virtContract)?.label || virtContract;
     set({
       selectedMarkets: originalMarkets,
-      botStatusMsg: `🎯 Virtual Switcher: Target (${retRule.threshold} ${retRule.mode === 'consec' ? 'consecutive ' : 'total '}${retRule.triggerType}) met! Switched BACK to VIRTUAL.`,
+      botStatusMsg: `🎯 Virtual Switcher: Target (${retRule.threshold} ${retRule.mode === 'consec' ? 'consecutive ' : 'total '}${retRule.triggerType}) met! Switched BACK to VIRTUAL (${virtLabel}).`,
       adaptiveSwitch: {
         ...aSw,
+        enabled: true,
         virtualSwitcher: {
           ...vs,
           _phase: 'virtual',
@@ -843,11 +876,13 @@ function processVirtualSwitcherRealResult(isWin: boolean, get: () => any, set: (
           _activeContract: null,
           _consecWins: 0,
           _consecLosses: 0,
+          _totalWins: 0,
+          _totalLosses: 0,
           _rConsecWins: 0,
           _rConsecLosses: 0,
-          _rTotalWins: rTotalW,
-          _rTotalLosses: rTotalL,
-          _rTotalTrades: rTotalTrades,
+          _rTotalWins: 0,
+          _rTotalLosses: 0,
+          _rTotalTrades: 0,
         },
       },
     });
@@ -1221,11 +1256,12 @@ export const useBotStore = create<BotStoreState>()(
 
         // Reset Virtual Switcher runtime counters
         const curASw = get().adaptiveSwitch;
-        const isVSActive = Boolean(curASw?.enabled && curASw?.virtualSwitcher?.enabled);
+        const isVSActive = Boolean(curASw?.virtualSwitcher?.enabled);
         if (curASw?.virtualSwitcher) {
           set({
             adaptiveSwitch: {
               ...curASw,
+              enabled: isVSActive ? true : curASw.enabled,
               virtualSwitcher: {
                 ...curASw.virtualSwitcher,
                 _phase: 'virtual',
@@ -1251,6 +1287,9 @@ export const useBotStore = create<BotStoreState>()(
         const isVirtActive = isVSActive || vsCurrent.startVirtualToReal || vsCurrent.isDoubleVirtual || vsCurrent.smartSettings?.enabled;
         useDerivStore.getState().setVirtualSettings({
           isVirtualMode: isVirtActive ? true : vsCurrent.isVirtualMode,
+          startVirtualToReal: isVSActive ? false : vsCurrent.startVirtualToReal,
+          startRealToVirtual: isVSActive ? false : vsCurrent.startRealToVirtual,
+          isDoubleVirtual: isVSActive ? false : vsCurrent.isDoubleVirtual,
           vDoubleStage: 'A',
           vStageBCompletedReps: 0,
           vConsecWinsB: 0,
@@ -1393,7 +1432,8 @@ export const useBotStore = create<BotStoreState>()(
 
           if (vt.ticksCount >= vt.duration) {
             let win = false;
-            switch (vt.contractType) {
+            const cType = normalizeContractType(vt.contractType);
+            switch (cType) {
               case 'DIGITEVEN':  win = exitDigit % 2 === 0; break;
               case 'DIGITODD':   win = exitDigit % 2 !== 0; break;
               case 'DIGITOVER':  win = exitDigit > (vt.barrier ?? 4); break;
@@ -1416,6 +1456,9 @@ export const useBotStore = create<BotStoreState>()(
                       priceSlice.every((q, i) => i === 0 || q < priceSlice[i - 1]);
                 break;
               }
+              default:
+                win = exitDigit % 2 === 0;
+                break;
             }
             resolved.push({ ...vt, isWin: win, exitDigit, exitPrice });
           } else {
@@ -1703,9 +1746,12 @@ export const useBotStore = create<BotStoreState>()(
               }
             }
           }
-          const isVsActiveSettlement = Boolean(get().adaptiveSwitch?.enabled && get().adaptiveSwitch?.virtualSwitcher?.enabled);
+          const isVsActiveSettlement = Boolean(get().adaptiveSwitch?.virtualSwitcher?.enabled);
           useDerivStore.getState().setVirtualSettings({
             isVirtualMode: isVsActiveSettlement ? useDerivStore.getState().virtualSettings.isVirtualMode : newVirtMode,
+            startVirtualToReal: isVsActiveSettlement ? false : vsV.startVirtualToReal,
+            startRealToVirtual: isVsActiveSettlement ? false : vsV.startRealToVirtual,
+            isDoubleVirtual: isVsActiveSettlement ? false : vsV.isDoubleVirtual,
             vConsecWins, vConsecLosses, virtualWins, virtualLosses,
             vDoubleStage, vConsecWinsB, vConsecLossesB, vVirtualWinsB, vVirtualLossesB, vStageBCompletedReps,
             vResultHistory: newHistory,
@@ -1720,7 +1766,7 @@ export const useBotStore = create<BotStoreState>()(
             let { vConsecWins, vConsecLosses, virtualWins, virtualLosses } = vsV;
             if (rt.isWin) { vConsecWins++; vConsecLosses = 0; virtualWins++; }
             else          { vConsecWins = 0; vConsecLosses++; virtualLosses++; }
-            const isVsSingle = Boolean(get().adaptiveSwitch?.enabled && get().adaptiveSwitch?.virtualSwitcher?.enabled);
+            const isVsSingle = Boolean(get().adaptiveSwitch?.virtualSwitcher?.enabled);
             let newVirtMode = isVsSingle ? useDerivStore.getState().virtualSettings.isVirtualMode : vsV.isVirtualMode;
             if (vsV.startVirtualToReal && !isVsSingle) {
               const streak = vsV.vTriggerType === 'losses' ? vConsecLosses : vConsecWins;
@@ -1731,6 +1777,9 @@ export const useBotStore = create<BotStoreState>()(
             }
             useDerivStore.getState().setVirtualSettings({
               isVirtualMode: isVsSingle ? useDerivStore.getState().virtualSettings.isVirtualMode : newVirtMode,
+              startVirtualToReal: isVsSingle ? false : vsV.startVirtualToReal,
+              startRealToVirtual: isVsSingle ? false : vsV.startRealToVirtual,
+              isDoubleVirtual: isVsSingle ? false : vsV.isDoubleVirtual,
               vConsecWins, vConsecLosses, virtualWins, virtualLosses,
             });
           }
@@ -1987,30 +2036,35 @@ export const useBotStore = create<BotStoreState>()(
           const aSwitch = state.adaptiveSwitch;
           let tradesToPlace: { contractType: string; barrier?: number; count: number; ticks?: number }[] = [];
 
-          if (aSwitch.enabled && aSwitch.virtualSwitcher?.enabled) {
-            const vs = aSwitch.virtualSwitcher;
+          const isVSActive = Boolean(aSwitch.virtualSwitcher?.enabled);
+          if (isVSActive) {
+            const vs = aSwitch.virtualSwitcher!;
             if (isVirtual) {
               const vc = vs.virtualContract || { contractType: 'DIGITEVEN', ticks: 1 };
+              const targetContract = normalizeContractType(vc.contractType || (vc as any).type || 'DIGITEVEN');
+              const targetTicks = Math.max(1, vc.ticks || s.ticks || 1);
               tradesToPlace = [{
-                contractType: vc.contractType,
-                barrier: needsBarrier(vc.contractType) ? (vc.barrier ?? 4) : undefined,
+                contractType: targetContract,
+                barrier: needsBarrier(targetContract) ? (vc.barrier ?? 4) : undefined,
                 count: 1,
-                ticks: vc.ticks || s.ticks,
+                ticks: targetTicks,
               }];
-              const lbl = TRADE_OPTIONS.find(o => o.value === vc.contractType)?.label || vc.contractType;
-              const barText = vc.barrier !== undefined && needsBarrier(vc.contractType) ? ` ${vc.barrier}` : '';
+              const lbl = TRADE_OPTIONS.find(o => o.value === targetContract)?.label || targetContract;
+              const barText = vc.barrier !== undefined && needsBarrier(targetContract) ? ` ${vc.barrier}` : '';
               const mMode = vs.onVirtualWins?.mode === 'consec' ? 'Streak' : 'Total';
               set({ adaptiveLiveStatus: `🧪 V-SWITCHER [Virtual]: Testing ${lbl}${barText} (${mMode}: ${vs._consecWins || 0}W / ${vs._consecLosses || 0}L)` });
             } else {
               const ac = vs._activeContract || { contractType: vs.onVirtualWins?.contractType || 'DIGITUNDER', barrier: vs.onVirtualWins?.barrier, ticks: vs.onVirtualWins?.ticks || 1 };
+              const targetContract = normalizeContractType(ac.contractType || (ac as any).type || 'DIGITUNDER');
+              const targetTicks = Math.max(1, ac.ticks || s.ticks || 1);
               tradesToPlace = [{
-                contractType: ac.contractType,
-                barrier: needsBarrier(ac.contractType) ? (ac.barrier ?? 4) : undefined,
+                contractType: targetContract,
+                barrier: needsBarrier(targetContract) ? (ac.barrier ?? 4) : undefined,
                 count: 1,
-                ticks: ac.ticks || s.ticks,
+                ticks: targetTicks,
               }];
-              const lbl = TRADE_OPTIONS.find(o => o.value === ac.contractType)?.label || ac.contractType;
-              const barText = ac.barrier !== undefined && needsBarrier(ac.contractType) ? ` ${ac.barrier}` : '';
+              const lbl = TRADE_OPTIONS.find(o => o.value === targetContract)?.label || targetContract;
+              const barText = ac.barrier !== undefined && needsBarrier(targetContract) ? ` ${ac.barrier}` : '';
               const rRule = vs.returnToVirtual || { triggerType: 'wins', mode: 'consec', threshold: 1 };
               const rCount = rRule.triggerType === 'wins' ? (rRule.mode === 'consec' ? vs._rConsecWins || 0 : vs._rTotalWins || 0)
                 : rRule.triggerType === 'losses' ? (rRule.mode === 'consec' ? vs._rConsecLosses || 0 : vs._rTotalLosses || 0)
@@ -2121,9 +2175,10 @@ export const useBotStore = create<BotStoreState>()(
           const orders: { contractType: string; barrier?: number; ticks: number }[] = [];
           for (const item of tradesToPlace) {
             const cnt = Math.max(1, Math.min(20, item.count || 1));
-            const itemTicks = item.ticks || s.ticks;
+            const itemTicks = item.ticks || s.ticks || 1;
+            const normC = normalizeContractType(item.contractType);
             for (let i = 0; i < cnt; i++) {
-              orders.push({ contractType: item.contractType, barrier: item.barrier, ticks: itemTicks });
+              orders.push({ contractType: normC, barrier: item.barrier, ticks: itemTicks });
             }
           }
 
@@ -2151,22 +2206,23 @@ export const useBotStore = create<BotStoreState>()(
               const fakeId = `VIRT_${now}_${si}_${idx}_${Math.floor(Math.random() * 9999)}`;
               const entryPrice = quotes[quotes.length - 1] || 0;
               const entryDigit = digits[digits.length - 1] ?? 0;
+              const normC = normalizeContractType(order.contractType);
 
               eng.activeVirtual.push({
                 requestId: fakeId, stratId, symbol,
-                stake: tradeStake, contractType: order.contractType, barrier: order.barrier,
+                stake: tradeStake, contractType: normC, barrier: order.barrier,
                 entryPrice, duration: order.ticks, ticksCount: 0,
                 lastEpoch: regime.lastEpoch || 0,
                 roundId,
               });
 
-              const isFullSpotVirt = order.contractType === 'CALL' || order.contractType === 'PUT' ||
-                                     order.contractType === 'RUNHIGH' || order.contractType === 'RUNLOW';
+              const isFullSpotVirt = normC === 'CALL' || normC === 'PUT' ||
+                                     normC === 'RUNHIGH' || normC === 'RUNLOW';
               const entrySpotDisplay = isFullSpotVirt ? String(entryPrice) : String(entryDigit);
 
               get().addLog({
                 id: fakeId, time: now, symbol, strategyIndex: si,
-                contract: order.contractType, stake: tradeStake,
+                contract: normC, stake: tradeStake,
                 result: 'VIRTUAL', profit: 0,
                 entrySpot: entrySpotDisplay,
                 exitSpot:  '-',
@@ -2464,7 +2520,7 @@ export const useBotStore = create<BotStoreState>()(
           if (roundIsWin) { rConsecWins++; rConsecLosses = 0; realWins++; }
           else            { rConsecWins = 0; rConsecLosses++; realLosses++; }
 
-          const isVsActive = Boolean(get().adaptiveSwitch?.enabled && get().adaptiveSwitch?.virtualSwitcher?.enabled);
+          const isVsActive = Boolean(get().adaptiveSwitch?.virtualSwitcher?.enabled);
           if (isVsActive && !roundJustSettled) {
             processVirtualSwitcherRealResult(roundIsWin, get, set);
           }
@@ -2479,6 +2535,9 @@ export const useBotStore = create<BotStoreState>()(
           }
           derivState.setVirtualSettings({
             isVirtualMode: isVsActive ? useDerivStore.getState().virtualSettings.isVirtualMode : newIsVirtual,
+            startVirtualToReal: isVsActive ? false : vsState.startVirtualToReal,
+            startRealToVirtual: isVsActive ? false : vsState.startRealToVirtual,
+            isDoubleVirtual: isVsActive ? false : vsState.isDoubleVirtual,
             rConsecWins, rConsecLosses, realWins, realLosses,
           });
         }
