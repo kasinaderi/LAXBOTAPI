@@ -1137,6 +1137,16 @@ export function MiniLaxPrimeModal({
 
             {showVirtualPanel && (
               <div className="space-y-3 mt-3 pt-3 border-t border-white/10">
+                {adaptiveSwitch.enabled && adaptiveSwitch.virtualSwitcher?.enabled && (
+                  <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300">
+                    <span className="text-base">🔒</span>
+                    <div>
+                      <div className="text-[11px] font-bold text-amber-400">Virtual System Locked by Switcher</div>
+                      <div className="text-[9px] text-gray-400">Virtual Trade Switcher is active in the Switcher settings. Standard virtual triggers and double virtual gates are locked to prevent collisions.</div>
+                    </div>
+                  </div>
+                )}
+                <div className={`space-y-3 ${adaptiveSwitch.enabled && adaptiveSwitch.virtualSwitcher?.enabled ? 'opacity-35 pointer-events-none' : ''}`}>
                 {/* === Virtual → Real Card === */}
                 <div className="bg-black/40 border border-white/10 rounded-xl p-3 space-y-2">
                   <div className="flex items-center justify-between">
@@ -1377,6 +1387,7 @@ export function MiniLaxPrimeModal({
                     <span className="text-gray-400">Streak {virtualMode.rConsecWins || 0}W / {virtualMode.rConsecLosses || 0}L</span>
                   </div>
                 </div>
+                </div>
               </div>
             )}
           </div>
@@ -1417,199 +1428,42 @@ export function MiniLaxPrimeModal({
 
             {showSwitcherPanel && (
               <div className="mt-4 pt-4 border-t border-white/10 space-y-3">
-                {/* Switcher Mode Tabs */}
-                <div className="flex bg-black/30 rounded-xl p-1 border border-white/8 gap-1">
-                  <button type="button"
-                    onClick={() => setAdaptiveSwitch(prev => ({ ...prev, mode: 'sequence' }))}
-                    className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
-                      (adaptiveSwitch.mode || 'sequence') === 'sequence' ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'
-                    }`}>📋 SEQUENCE STEPS</button>
-                  <button type="button"
-                    onClick={() => setAdaptiveSwitch(prev => ({ ...prev, mode: 'adaptive' }))}
-                    className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
-                      adaptiveSwitch.mode === 'adaptive' ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'
-                    }`}>⚡ ADAPTIVE CONTRACTS</button>
-                </div>
-
-                {/* Dual Contracts System toggle */}
-                <div className="flex items-center justify-between bg-purple-500/8 border border-purple-500/20 rounded-xl p-2.5">
-                  <div>
-                    <span className="text-[10px] font-bold text-purple-300">⚡ DUAL CONTRACTS SYSTEM</span>
-                    <p className="text-[9px] text-gray-500 mt-0.5">Fires exactly 2 contracts on the same tick. Martingale only acts on both-loss.</p>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer ml-2">
-                    <input type="checkbox" className="sr-only peer" checked={!!adaptiveSwitch.dualMode}
-                      onChange={e => setAdaptiveSwitch(prev => ({ ...prev, dualMode: e.target.checked }))} />
-                    <div className="w-8 h-4 bg-slate-700 peer-checked:bg-purple-600 rounded-full transition-colors" />
-                    <div className="absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full transition-transform peer-checked:translate-x-4" />
-                  </label>
-                </div>
-
-                {/* ADAPTIVE CONTRACTS Panel */}
-                {adaptiveSwitch.mode === 'adaptive' && (() => {
-                  const ac = adaptiveSwitch.adaptiveContracts || {
-                    contractA: { type: 'DIGITEVEN', barrier: 4, ticks: 5 },
-                    contractB: { type: 'DIGITODD', barrier: 4, ticks: 5 },
-                    activeSide: 'A' as 'A' | 'B',
-                    startSide: 'A' as 'A' | 'B',
-                  };
-                  const activeSide = ac.activeSide || ac.startSide || 'A';
-                  const startSide = ac.startSide || 'A';
-                  const updateAC = (patch: any) => setAdaptiveSwitch(prev => ({ ...prev, adaptiveContracts: { ...ac, ...patch } }));
-
-                  return (
-                    <div className="space-y-3 bg-purple-500/5 border border-purple-500/20 rounded-xl p-3">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <span className="text-[10px] font-bold text-purple-300">AUTO-SWITCH ON LOSS</span>
-                          <p className="text-[9px] text-gray-500 mt-0.5">Switches instantly when a loss occurs</p>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
-                            activeSide === 'A' ? 'text-indigo-300 bg-indigo-500/20 border-indigo-500/30' : 'text-rose-300 bg-rose-500/20 border-rose-500/30'
-                          }`}>● CONTRACT {activeSide}</span>
-                          <button type="button" onClick={() => updateAC({ activeSide: activeSide === 'A' ? 'B' : 'A' })}
-                            className="text-[9px] font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 px-1.5 py-0.5 rounded cursor-pointer">⇌</button>
-                        </div>
-                      </div>
-
-                      {/* Start Side */}
-                      <div className="flex items-center gap-2 text-[10px]">
-                        <span className="text-gray-400 font-bold">Start:</span>
-                        <button type="button" onClick={() => updateAC({ startSide: 'A', activeSide: 'A' })}
-                          className={`px-2 py-0.5 rounded text-[9px] font-bold border-none ${ startSide === 'A' ? 'bg-indigo-600 text-white' : 'bg-white/5 text-gray-400'} cursor-pointer`}>Contract A</button>
-                        <button type="button" onClick={() => updateAC({ startSide: 'B', activeSide: 'B' })}
-                          className={`px-2 py-0.5 rounded text-[9px] font-bold border-none ${ startSide === 'B' ? 'bg-indigo-600 text-white' : 'bg-white/5 text-gray-400'} cursor-pointer`}>Contract B</button>
-                      </div>
-
-                      {/* Contract A & B grid */}
-                      <div className="grid grid-cols-2 gap-2">
-                        {/* Contract A */}
-                        <div className={`flex flex-col gap-1.5 p-2.5 rounded-xl border ${ activeSide === 'A' ? 'border-indigo-500 bg-indigo-500/10' : 'border-white/8 bg-white/2' }`}>
-                          <span className="text-[10px] font-bold text-indigo-300">CONTRACT A{activeSide === 'A' ? ' ✓' : ''}</span>
-                          <select value={ac.contractA?.type || 'DIGITEVEN'} onChange={e => updateAC({ contractA: { ...ac.contractA, type: e.target.value } })}
-                            className="w-full bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }}>
-                            {TRADE_OPTIONS.map(opt => <option key={opt.value} value={opt.value} style={{ background: '#0f172a' }}>{opt.label}</option>)}
-                          </select>
-                          {needsBarrier(ac.contractA?.type || 'DIGITEVEN') && (
-                            <div className="flex items-center gap-1">
-                              <span className="text-[9px] text-gray-400">Barrier:</span>
-                              <input type="number" min={0} max={9} value={ac.contractA?.barrier ?? 4} onChange={e => updateAC({ contractA: { ...ac.contractA, barrier: Math.min(9, Math.max(0, +e.target.value || 0)) } })}
-                                className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
-                            </div>
-                          )}
-                          <div className="flex items-center gap-1">
-                            <span className="text-[9px] text-purple-400 font-bold">Ticks:</span>
-                            <input type="number" min={1} max={100} value={ac.contractA?.ticks ?? 5} onChange={e => updateAC({ contractA: { ...ac.contractA, ticks: Math.max(1, +e.target.value || 1) } })}
-                              className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
-                          </div>
-                        </div>
-                        {/* Contract B */}
-                        <div className={`flex flex-col gap-1.5 p-2.5 rounded-xl border ${ activeSide === 'B' ? 'border-indigo-500 bg-indigo-500/10' : 'border-white/8 bg-white/2' }`}>
-                          <span className="text-[10px] font-bold text-indigo-300">CONTRACT B{activeSide === 'B' ? ' ✓' : ''}</span>
-                          <select value={ac.contractB?.type || 'DIGITODD'} onChange={e => updateAC({ contractB: { ...ac.contractB, type: e.target.value } })}
-                            className="w-full bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }}>
-                            {TRADE_OPTIONS.map(opt => <option key={opt.value} value={opt.value} style={{ background: '#0f172a' }}>{opt.label}</option>)}
-                          </select>
-                          {needsBarrier(ac.contractB?.type || 'DIGITODD') && (
-                            <div className="flex items-center gap-1">
-                              <span className="text-[9px] text-gray-400">Barrier:</span>
-                              <input type="number" min={0} max={9} value={ac.contractB?.barrier ?? 4} onChange={e => updateAC({ contractB: { ...ac.contractB, barrier: Math.min(9, Math.max(0, +e.target.value || 0)) } })}
-                                className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
-                            </div>
-                          )}
-                          <div className="flex items-center gap-1">
-                            <span className="text-[9px] text-purple-400 font-bold">Ticks:</span>
-                            <input type="number" min={1} max={100} value={ac.contractB?.ticks ?? 5} onChange={e => updateAC({ contractB: { ...ac.contractB, ticks: Math.max(1, +e.target.value || 1) } })}
-                              className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* SEQUENCE STEPS Panel */}
-                {(adaptiveSwitch.mode || 'sequence') === 'sequence' && (
-                  <div className="space-y-2">
-                    {adaptiveSwitch.steps.map((step, idx) => (
-                      <div key={idx} className="flex items-center gap-3 bg-black/40 p-2.5 rounded-xl border border-white/5 text-xs">
-                        <span className="font-bold text-gray-400 w-14 shrink-0">Step {idx + 1}:</span>
-                        <select
-                          value={step.contractType || 'DIGITEVEN'}
-                          onChange={e => {
-                            const newType = e.target.value;
-                            setAdaptiveSwitch(prev => ({
-                              ...prev,
-                              steps: prev.steps.map((s, i) => i === idx ? { ...s, contractType: newType } : s),
-                            }));
-                          }}
-                          className="flex-1 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-white text-xs" style={{ background: '#0f172a', color: '#fff' }}
-                        >
-                          {TRADE_OPTIONS.map(opt => (
-                            <option key={opt.value} value={opt.value} style={{ background: '#0f172a' }}>{opt.label}</option>
-                          ))}
-                        </select>
-                        <div className="flex items-center gap-1.5 ml-auto">
-                          <span className="text-gray-500 text-[10px]">Reps:</span>
-                          <input
-                            type="number"
-                            min="1"
-                            max="20"
-                            value={step.reps}
-                            onChange={e => {
-                              const reps = Math.max(1, +e.target.value || 1);
-                              setAdaptiveSwitch(prev => ({
-                                ...prev,
-                                steps: prev.steps.map((s, i) => i === idx ? { ...s, reps } : s),
-                              }));
-                            }}
-                            className="w-12 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-center text-white text-xs" style={{ background: '#0f172a', color: '#fff' }}
-                          />
-                        </div>
-                        {adaptiveSwitch.steps.length > 1 && (
-                          <button type="button" onClick={() => setAdaptiveSwitch(prev => ({ ...prev, steps: prev.steps.filter((_, i) => i !== idx) }))}
-                            className="text-rose-400 hover:text-rose-300 text-xs font-bold">✕</button>
-                        )}
-                      </div>
-                    ))}
-                    <button type="button"
-                      onClick={() => setAdaptiveSwitch(prev => ({ ...prev, steps: [...prev.steps, { contractType: 'DIGITEVEN', reps: 2 }] }))}
-                      className="w-full py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-[10px] font-bold border border-white/10">
-                      + Add Step
-                    </button>
-                  </div>
-                )}
-
                 {/* ── Virtual Trade Switcher ── */}
                 {(() => {
                   const vs = adaptiveSwitch.virtualSwitcher || {
                     enabled: false,
-                    onVirtualWins: { contractType: 'DIGITEVEN', threshold: 3, mode: 'consec' as const },
-                    onVirtualLosses: { contractType: 'DIGITODD', threshold: 3, mode: 'consec' as const },
+                    virtualContract: { contractType: 'DIGITEVEN', ticks: 1 },
+                    onVirtualWins:   { contractType: 'DIGITUNDER', barrier: 4, ticks: 1, threshold: 3, mode: 'consec' as const },
+                    onVirtualLosses: { contractType: 'DIGITOVER',  barrier: 5, ticks: 1, threshold: 3, mode: 'consec' as const },
+                    returnToVirtual: { triggerType: 'wins' as const, mode: 'consec' as const, threshold: 1 },
                   };
+
                   const updateVS = (patch: Partial<typeof vs>) =>
                     setAdaptiveSwitch(prev => ({ ...prev, virtualSwitcher: { ...vs, ...patch } }));
-                  const updateWinRule = (patch: Partial<typeof vs.onVirtualWins>) =>
-                    updateVS({ onVirtualWins: { ...vs.onVirtualWins, ...patch } });
+                  const updateVirtContract = (patch: Partial<typeof vs.virtualContract>) =>
+                    updateVS({ virtualContract: { ...vs.virtualContract, ...patch } });
+                  const updateWinRule  = (patch: Partial<typeof vs.onVirtualWins>)   =>
+                    updateVS({ onVirtualWins:   { ...vs.onVirtualWins,   ...patch } as typeof vs.onVirtualWins });
                   const updateLossRule = (patch: Partial<typeof vs.onVirtualLosses>) =>
-                    updateVS({ onVirtualLosses: { ...vs.onVirtualLosses, ...patch } });
+                    updateVS({ onVirtualLosses: { ...vs.onVirtualLosses, ...patch } as typeof vs.onVirtualLosses });
+                  const updateReturnRule = (patch: Partial<typeof vs.returnToVirtual>) =>
+                    updateVS({ returnToVirtual: { ...vs.returnToVirtual, ...patch } });
+
+                  const winNeedsBarrier  = needsBarrier(vs.onVirtualWins?.contractType  || 'DIGITUNDER');
+                  const lossNeedsBarrier = needsBarrier(vs.onVirtualLosses?.contractType || 'DIGITOVER');
+                  const virtNeedsBarrier = needsBarrier(vs.virtualContract?.contractType  || 'DIGITEVEN');
+
+                  const phaseBadge = vs._phase === 'real'
+                    ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-emerald-500/15 text-emerald-400 border-emerald-500/30">⚡ REAL TRADING</span>
+                    : <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-purple-500/15 text-purple-400 border-purple-500/30">🧪 VIRTUAL TESTING</span>;
 
                   return (
-                    <div className="rounded-xl border border-amber-500/25 bg-amber-500/4 p-3 mt-1">
+                    <div className="rounded-xl border border-amber-500/25 bg-amber-500/4 p-3">
                       {/* Header */}
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-[11px] font-black text-amber-400 tracking-wide">🎯 VIRTUAL TRADE SWITCHER</span>
-                          {vs.enabled && vs._activeRule && (
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
-                              vs._activeRule === 'wins'
-                                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                                : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
-                            }`}>
-                              ● {vs._activeRule === 'wins' ? 'WIN RULE' : 'LOSS RULE'} ACTIVE
-                            </span>
-                          )}
+                          {vs.enabled && phaseBadge}
                         </div>
                         <label className="relative inline-flex items-center cursor-pointer">
                           <input type="checkbox" className="sr-only peer" checked={!!vs.enabled}
@@ -1621,59 +1475,92 @@ export function MiniLaxPrimeModal({
 
                       {vs.enabled && (
                         <div className="mt-3 space-y-3">
-                          <p className="text-[9px] text-gray-500 leading-relaxed">
-                            After N virtual wins/losses, switch what real contract or market is traded next.
-                          </p>
-
-                          {/* Counters */}
-                          <div className="flex gap-4 text-[10px] pb-2 border-b border-white/5">
-                            <span className="text-emerald-400 font-bold">✓ Wins: {vs._totalWins || 0} (streak: {vs._consecWins || 0})</span>
-                            <span className="text-rose-400 font-bold">✗ Losses: {vs._totalLosses || 0} (streak: {vs._consecLosses || 0})</span>
+                          {/* Live telemetry */}
+                          <div className="flex gap-3 text-[10px] pb-2 border-b border-white/5 flex-wrap">
+                            <span className="text-purple-400 font-bold">Phase: {vs._phase || 'virtual'}</span>
+                            <span className="text-emerald-400 font-bold">V-Wins: {vs._totalWins || 0} ({vs._consecWins || 0} consec)</span>
+                            <span className="text-rose-400 font-bold">V-Loss: {vs._totalLosses || 0} ({vs._consecLosses || 0} consec)</span>
+                            <span className="text-cyan-400 font-bold">Real: {vs._rTotalTrades || 0}</span>
                           </div>
 
-                          {/* WIN rule card */}
-                          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-2.5 space-y-2">
-                            <span className="text-[10px] font-bold text-emerald-400">After Virtual Wins → Trade:</span>
+                          {/* ── Section 1: Virtual Test Contract ── */}
+                          <div className="rounded-lg border border-purple-500/20 bg-purple-500/5 p-2.5 space-y-2">
+                            <span className="text-[10px] font-bold text-purple-300">1. Virtual Test Contract</span>
                             <div className="flex flex-wrap items-center gap-1.5">
-                              <select value={vs.onVirtualWins.contractType}
-                                onChange={e => updateWinRule({ contractType: e.target.value })}
-                                className="flex-1 bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white text-[10px]"
-                                style={{ background: '#0f172a', color: '#fff', minWidth: '90px' }}>
+                              <select value={vs.virtualContract?.contractType || 'DIGITEVEN'}
+                                onChange={e => updateVirtContract({ contractType: e.target.value })}
+                                className="flex-1 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-white text-[9px]"
+                                style={{ background: '#0f172a', color: '#fff' }}>
                                 {TRADE_OPTIONS.map(opt => <option key={opt.value} value={opt.value} style={{ background: '#0f172a' }}>{opt.label}</option>)}
                               </select>
-                              {needsBarrier(vs.onVirtualWins.contractType) && (
+                              {virtNeedsBarrier && (
                                 <div className="flex items-center gap-1">
                                   <span className="text-[9px] text-gray-400">Bar:</span>
-                                  <input type="number" min={0} max={9} value={vs.onVirtualWins.barrier ?? 4}
-                                    onChange={e => updateWinRule({ barrier: Math.min(9, Math.max(0, +e.target.value || 0)) })}
-                                    className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]"
+                                  <input type="number" min={0} max={9}
+                                    value={vs.virtualContract?.barrier ?? 4}
+                                    onChange={e => updateVirtContract({ barrier: Math.min(9, Math.max(0, +e.target.value || 0)) })}
+                                    className="w-8 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px]"
                                     style={{ background: '#0f172a', color: '#fff' }} />
                                 </div>
                               )}
                               <div className="flex items-center gap-1">
-                                <span className="text-[9px] text-gray-400">After:</span>
-                                <input type="number" min={1} max={99} value={vs.onVirtualWins.threshold}
-                                  onChange={e => updateWinRule({ threshold: Math.max(1, +e.target.value || 1) })}
-                                  className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]"
+                                <span className="text-[9px] text-purple-400 font-bold">Ticks:</span>
+                                <input type="number" min={1} max={100}
+                                  value={vs.virtualContract?.ticks ?? 1}
+                                  onChange={e => updateVirtContract({ ticks: Math.max(1, +e.target.value || 1) })}
+                                  className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px]"
                                   style={{ background: '#0f172a', color: '#fff' }} />
-                                <span className="text-[9px] text-gray-500">wins</span>
-                              </div>
-                              <div className="flex gap-1">
-                                {(['consec', 'total'] as const).map(m => (
-                                  <button key={m} type="button" onClick={() => updateWinRule({ mode: m })}
-                                    className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-all ${
-                                      vs.onVirtualWins.mode === m
-                                        ? 'bg-emerald-500 text-black'
-                                        : 'bg-white/5 text-gray-400'
-                                    }`}>
-                                    {m === 'consec' ? 'Streak' : 'Total'}
-                                  </button>
-                                ))}
                               </div>
                             </div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[9px] text-gray-500 shrink-0">Market:</span>
-                              <select value={vs.onVirtualWins.market || ''}
+                          </div>
+
+                          {/* ── Section 2: On Virtual Wins → Real ── */}
+                          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-2.5 space-y-2">
+                            <span className="text-[10px] font-bold text-emerald-300">2. On Virtual Wins → Trade Real</span>
+                            <div className="flex flex-wrap items-center gap-1.5 text-[9px]">
+                              <span className="text-gray-400">After</span>
+                              <input type="number" min={1} max={99}
+                                value={vs.onVirtualWins?.threshold ?? 3}
+                                onChange={e => updateWinRule({ threshold: Math.max(1, +e.target.value || 1) })}
+                                className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px]"
+                                style={{ background: '#0f172a', color: '#fff' }} />
+                              <span className="text-gray-400">wins</span>
+                              {(['consec', 'total'] as const).map(m => (
+                                <button key={m} type="button" onClick={() => updateWinRule({ mode: m })}
+                                  className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-all ${
+                                    (vs.onVirtualWins?.mode || 'consec') === m ? 'bg-emerald-500 text-black' : 'bg-white/5 text-gray-400'
+                                  }`}>
+                                  {m === 'consec' ? 'Streak' : 'Total'}
+                                </button>
+                              ))}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5 text-[9px]">
+                              <span className="text-gray-400">Real Contract:</span>
+                              <select value={vs.onVirtualWins?.contractType || 'DIGITUNDER'}
+                                onChange={e => updateWinRule({ contractType: e.target.value })}
+                                className="flex-1 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-white text-[9px]"
+                                style={{ background: '#0f172a', color: '#fff' }}>
+                                {TRADE_OPTIONS.map(opt => <option key={opt.value} value={opt.value} style={{ background: '#0f172a' }}>{opt.label}</option>)}
+                              </select>
+                              {winNeedsBarrier && (
+                                <input type="number" min={0} max={9}
+                                  value={vs.onVirtualWins?.barrier ?? 4}
+                                  onChange={e => updateWinRule({ barrier: Math.min(9, Math.max(0, +e.target.value || 0)) })}
+                                  className="w-8 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px]"
+                                  style={{ background: '#0f172a', color: '#fff' }} />
+                              )}
+                              <div className="flex items-center gap-1">
+                                <span className="text-purple-400 font-bold">Ticks:</span>
+                                <input type="number" min={1} max={100}
+                                  value={vs.onVirtualWins?.ticks ?? 1}
+                                  onChange={e => updateWinRule({ ticks: Math.max(1, +e.target.value || 1) })}
+                                  className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px]"
+                                  style={{ background: '#0f172a', color: '#fff' }} />
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[9px]">
+                              <span className="text-gray-500 shrink-0">Market:</span>
+                              <select value={vs.onVirtualWins?.market || ''}
                                 onChange={e => updateWinRule({ market: e.target.value || undefined })}
                                 className="flex-1 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-white text-[9px]"
                                 style={{ background: '#0f172a', color: '#fff' }}>
@@ -1683,49 +1570,53 @@ export function MiniLaxPrimeModal({
                             </div>
                           </div>
 
-                          {/* LOSS rule card */}
+                          {/* ── Section 3: On Virtual Losses → Real ── */}
                           <div className="rounded-lg border border-rose-500/20 bg-rose-500/5 p-2.5 space-y-2">
-                            <span className="text-[10px] font-bold text-rose-400">After Virtual Losses → Trade:</span>
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <select value={vs.onVirtualLosses.contractType}
+                            <span className="text-[10px] font-bold text-rose-300">3. On Virtual Losses → Trade Real</span>
+                            <div className="flex flex-wrap items-center gap-1.5 text-[9px]">
+                              <span className="text-gray-400">After</span>
+                              <input type="number" min={1} max={99}
+                                value={vs.onVirtualLosses?.threshold ?? 3}
+                                onChange={e => updateLossRule({ threshold: Math.max(1, +e.target.value || 1) })}
+                                className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px]"
+                                style={{ background: '#0f172a', color: '#fff' }} />
+                              <span className="text-gray-400">losses</span>
+                              {(['consec', 'total'] as const).map(m => (
+                                <button key={m} type="button" onClick={() => updateLossRule({ mode: m })}
+                                  className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-all ${
+                                    (vs.onVirtualLosses?.mode || 'consec') === m ? 'bg-rose-500 text-black' : 'bg-white/5 text-gray-400'
+                                  }`}>
+                                  {m === 'consec' ? 'Streak' : 'Total'}
+                                </button>
+                              ))}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5 text-[9px]">
+                              <span className="text-gray-400">Real Contract:</span>
+                              <select value={vs.onVirtualLosses?.contractType || 'DIGITOVER'}
                                 onChange={e => updateLossRule({ contractType: e.target.value })}
-                                className="flex-1 bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white text-[10px]"
-                                style={{ background: '#0f172a', color: '#fff', minWidth: '90px' }}>
+                                className="flex-1 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-white text-[9px]"
+                                style={{ background: '#0f172a', color: '#fff' }}>
                                 {TRADE_OPTIONS.map(opt => <option key={opt.value} value={opt.value} style={{ background: '#0f172a' }}>{opt.label}</option>)}
                               </select>
-                              {needsBarrier(vs.onVirtualLosses.contractType) && (
-                                <div className="flex items-center gap-1">
-                                  <span className="text-[9px] text-gray-400">Bar:</span>
-                                  <input type="number" min={0} max={9} value={vs.onVirtualLosses.barrier ?? 4}
-                                    onChange={e => updateLossRule({ barrier: Math.min(9, Math.max(0, +e.target.value || 0)) })}
-                                    className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]"
-                                    style={{ background: '#0f172a', color: '#fff' }} />
-                                </div>
+                              {lossNeedsBarrier && (
+                                <input type="number" min={0} max={9}
+                                  value={vs.onVirtualLosses?.barrier ?? 5}
+                                  onChange={e => updateLossRule({ barrier: Math.min(9, Math.max(0, +e.target.value || 0)) })}
+                                  className="w-8 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px]"
+                                  style={{ background: '#0f172a', color: '#fff' }} />
                               )}
                               <div className="flex items-center gap-1">
-                                <span className="text-[9px] text-gray-400">After:</span>
-                                <input type="number" min={1} max={99} value={vs.onVirtualLosses.threshold}
-                                  onChange={e => updateLossRule({ threshold: Math.max(1, +e.target.value || 1) })}
-                                  className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]"
+                                <span className="text-purple-400 font-bold">Ticks:</span>
+                                <input type="number" min={1} max={100}
+                                  value={vs.onVirtualLosses?.ticks ?? 1}
+                                  onChange={e => updateLossRule({ ticks: Math.max(1, +e.target.value || 1) })}
+                                  className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px]"
                                   style={{ background: '#0f172a', color: '#fff' }} />
-                                <span className="text-[9px] text-gray-500">losses</span>
-                              </div>
-                              <div className="flex gap-1">
-                                {(['consec', 'total'] as const).map(m => (
-                                  <button key={m} type="button" onClick={() => updateLossRule({ mode: m })}
-                                    className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-all ${
-                                      vs.onVirtualLosses.mode === m
-                                        ? 'bg-rose-500 text-black'
-                                        : 'bg-white/5 text-gray-400'
-                                    }`}>
-                                    {m === 'consec' ? 'Streak' : 'Total'}
-                                  </button>
-                                ))}
                               </div>
                             </div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[9px] text-gray-500 shrink-0">Market:</span>
-                              <select value={vs.onVirtualLosses.market || ''}
+                            <div className="flex items-center gap-1.5 text-[9px]">
+                              <span className="text-gray-500 shrink-0">Market:</span>
+                              <select value={vs.onVirtualLosses?.market || ''}
                                 onChange={e => updateLossRule({ market: e.target.value || undefined })}
                                 className="flex-1 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-white text-[9px]"
                                 style={{ background: '#0f172a', color: '#fff' }}>
@@ -1734,12 +1625,214 @@ export function MiniLaxPrimeModal({
                               </select>
                             </div>
                           </div>
+
+                          {/* ── Section 4: Return to Virtual ── */}
+                          <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-2.5 space-y-2">
+                            <span className="text-[10px] font-bold text-cyan-300">4. Return to Virtual After</span>
+                            <div className="flex flex-wrap items-center gap-1.5 text-[9px]">
+                              <input type="number" min={1} max={99}
+                                value={vs.returnToVirtual?.threshold ?? 1}
+                                onChange={e => updateReturnRule({ threshold: Math.max(1, +e.target.value || 1) })}
+                                className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px]"
+                                style={{ background: '#0f172a', color: '#fff' }} />
+                              {(['consec', 'total'] as const).map(m => (
+                                <button key={m} type="button" onClick={() => updateReturnRule({ mode: m })}
+                                  className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-all ${
+                                    (vs.returnToVirtual?.mode || 'consec') === m ? 'bg-cyan-500 text-black' : 'bg-white/5 text-gray-400'
+                                  }`}>
+                                  {m === 'consec' ? 'Streak' : 'Total'}
+                                </button>
+                              ))}
+                              <select value={vs.returnToVirtual?.triggerType || 'wins'}
+                                onChange={e => updateReturnRule({ triggerType: e.target.value as 'wins' | 'losses' | 'trades' })}
+                                className="bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-white text-[9px]"
+                                style={{ background: '#0f172a', color: '#fff' }}>
+                                <option value="wins" style={{ background: '#0f172a' }}>Wins</option>
+                                <option value="losses" style={{ background: '#0f172a' }}>Losses</option>
+                                <option value="trades" style={{ background: '#0f172a' }}>Trades</option>
+                              </select>
+                              <span className="text-gray-400">in real mode</span>
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>
                   );
                 })()}
 
+                {/* Standard Switcher Modes (Paused when Virtual Switcher is active) */}
+                {adaptiveSwitch.virtualSwitcher?.enabled ? (
+                  <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-[10px] text-gray-400">
+                    <span className="text-amber-400 font-bold">🔒 Standard Switcher Modes Paused: </span>
+                    Adaptive Contracts and Sequence Steps are inactive while Virtual Trade Switcher is running.
+                  </div>
+                ) : (
+                  <>
+                    {/* Switcher Mode Tabs */}
+                    <div className="flex bg-black/30 rounded-xl p-1 border border-white/8 gap-1">
+                      <button type="button"
+                        onClick={() => setAdaptiveSwitch(prev => ({ ...prev, mode: 'sequence' }))}
+                        className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                          (adaptiveSwitch.mode || 'sequence') === 'sequence' ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'
+                        }`}>📋 SEQUENCE STEPS</button>
+                      <button type="button"
+                        onClick={() => setAdaptiveSwitch(prev => ({ ...prev, mode: 'adaptive' }))}
+                        className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                          adaptiveSwitch.mode === 'adaptive' ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'
+                        }`}>⚡ ADAPTIVE CONTRACTS</button>
+                    </div>
+
+                    {/* Dual Contracts System toggle */}
+                    <div className="flex items-center justify-between bg-purple-500/8 border border-purple-500/20 rounded-xl p-2.5">
+                      <div>
+                        <span className="text-[10px] font-bold text-purple-300">⚡ DUAL CONTRACTS SYSTEM</span>
+                        <p className="text-[9px] text-gray-500 mt-0.5">Fires exactly 2 contracts on the same tick. Martingale only acts on both-loss.</p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer ml-2">
+                        <input type="checkbox" className="sr-only peer" checked={!!adaptiveSwitch.dualMode}
+                          onChange={e => setAdaptiveSwitch(prev => ({ ...prev, dualMode: e.target.checked }))} />
+                        <div className="w-8 h-4 bg-slate-700 peer-checked:bg-purple-600 rounded-full transition-colors" />
+                        <div className="absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full transition-transform peer-checked:translate-x-4" />
+                      </label>
+                    </div>
+
+                    {/* ADAPTIVE CONTRACTS Panel */}
+                    {adaptiveSwitch.mode === 'adaptive' && (() => {
+                      const ac = adaptiveSwitch.adaptiveContracts || {
+                        contractA: { type: 'DIGITEVEN', barrier: 4, ticks: 5 },
+                        contractB: { type: 'DIGITODD', barrier: 4, ticks: 5 },
+                        activeSide: 'A' as 'A' | 'B',
+                        startSide: 'A' as 'A' | 'B',
+                      };
+                      const activeSide = ac.activeSide || ac.startSide || 'A';
+                      const startSide = ac.startSide || 'A';
+                      const updateAC = (patch: any) => setAdaptiveSwitch(prev => ({ ...prev, adaptiveContracts: { ...ac, ...patch } }));
+
+                      return (
+                        <div className="space-y-3 bg-purple-500/5 border border-purple-500/20 rounded-xl p-3">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <span className="text-[10px] font-bold text-purple-300">AUTO-SWITCH ON LOSS</span>
+                              <p className="text-[9px] text-gray-500 mt-0.5">Switches instantly when a loss occurs</p>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                                activeSide === 'A' ? 'text-indigo-300 bg-indigo-500/20 border-indigo-500/30' : 'text-rose-300 bg-rose-500/20 border-rose-500/30'
+                              }`}>● CONTRACT {activeSide}</span>
+                              <button type="button" onClick={() => updateAC({ activeSide: activeSide === 'A' ? 'B' : 'A' })}
+                                className="text-[9px] font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 px-1.5 py-0.5 rounded cursor-pointer">⇌</button>
+                            </div>
+                          </div>
+
+                          {/* Start Side */}
+                          <div className="flex items-center gap-2 text-[10px]">
+                            <span className="text-gray-400 font-bold">Start:</span>
+                            <button type="button" onClick={() => updateAC({ startSide: 'A', activeSide: 'A' })}
+                              className={`px-2 py-0.5 rounded text-[9px] font-bold border-none ${ startSide === 'A' ? 'bg-indigo-600 text-white' : 'bg-white/5 text-gray-400'} cursor-pointer`}>Contract A</button>
+                            <button type="button" onClick={() => updateAC({ startSide: 'B', activeSide: 'B' })}
+                              className={`px-2 py-0.5 rounded text-[9px] font-bold border-none ${ startSide === 'B' ? 'bg-indigo-600 text-white' : 'bg-white/5 text-gray-400'} cursor-pointer`}>Contract B</button>
+                          </div>
+
+                          {/* Contract A & B grid */}
+                          <div className="grid grid-cols-2 gap-2">
+                            {/* Contract A */}
+                            <div className={`flex flex-col gap-1.5 p-2.5 rounded-xl border ${ activeSide === 'A' ? 'border-indigo-500 bg-indigo-500/10' : 'border-white/8 bg-white/2' }`}>
+                              <span className="text-[10px] font-bold text-indigo-300">CONTRACT A{activeSide === 'A' ? ' ✓' : ''}</span>
+                              <select value={ac.contractA?.type || 'DIGITEVEN'} onChange={e => updateAC({ contractA: { ...ac.contractA, type: e.target.value } })}
+                                className="w-full bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }}>
+                                {TRADE_OPTIONS.map(opt => <option key={opt.value} value={opt.value} style={{ background: '#0f172a' }}>{opt.label}</option>)}
+                              </select>
+                              {needsBarrier(ac.contractA?.type || 'DIGITEVEN') && (
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[9px] text-gray-400">Barrier:</span>
+                                  <input type="number" min={0} max={9} value={ac.contractA?.barrier ?? 4} onChange={e => updateAC({ contractA: { ...ac.contractA, barrier: Math.min(9, Math.max(0, +e.target.value || 0)) } })}
+                                    className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
+                                </div>
+                              )}
+                              <div className="flex items-center gap-1">
+                                <span className="text-[9px] text-purple-400 font-bold">Ticks:</span>
+                                <input type="number" min={1} max={100} value={ac.contractA?.ticks ?? 5} onChange={e => updateAC({ contractA: { ...ac.contractA, ticks: Math.max(1, +e.target.value || 1) } })}
+                                  className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
+                              </div>
+                            </div>
+                            {/* Contract B */}
+                            <div className={`flex flex-col gap-1.5 p-2.5 rounded-xl border ${ activeSide === 'B' ? 'border-indigo-500 bg-indigo-500/10' : 'border-white/8 bg-white/2' }`}>
+                              <span className="text-[10px] font-bold text-indigo-300">CONTRACT B{activeSide === 'B' ? ' ✓' : ''}</span>
+                              <select value={ac.contractB?.type || 'DIGITODD'} onChange={e => updateAC({ contractB: { ...ac.contractB, type: e.target.value } })}
+                                className="w-full bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }}>
+                                {TRADE_OPTIONS.map(opt => <option key={opt.value} value={opt.value} style={{ background: '#0f172a' }}>{opt.label}</option>)}
+                              </select>
+                              {needsBarrier(ac.contractB?.type || 'DIGITODD') && (
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[9px] text-gray-400">Barrier:</span>
+                                  <input type="number" min={0} max={9} value={ac.contractB?.barrier ?? 4} onChange={e => updateAC({ contractB: { ...ac.contractB, barrier: Math.min(9, Math.max(0, +e.target.value || 0)) } })}
+                                    className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
+                                </div>
+                              )}
+                              <div className="flex items-center gap-1">
+                                <span className="text-[9px] text-purple-400 font-bold">Ticks:</span>
+                                <input type="number" min={1} max={100} value={ac.contractB?.ticks ?? 5} onChange={e => updateAC({ contractB: { ...ac.contractB, ticks: Math.max(1, +e.target.value || 1) } })}
+                                  className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* SEQUENCE STEPS Panel */}
+                    {(adaptiveSwitch.mode || 'sequence') === 'sequence' && (
+                      <div className="space-y-2">
+                        {adaptiveSwitch.steps.map((step, idx) => (
+                          <div key={idx} className="flex items-center gap-3 bg-black/40 p-2.5 rounded-xl border border-white/5 text-xs">
+                            <span className="font-bold text-gray-400 w-14 shrink-0">Step {idx + 1}:</span>
+                            <select
+                              value={step.contractType || 'DIGITEVEN'}
+                              onChange={e => {
+                                const newType = e.target.value;
+                                setAdaptiveSwitch(prev => ({
+                                  ...prev,
+                                  steps: prev.steps.map((s, i) => i === idx ? { ...s, contractType: newType } : s),
+                                }));
+                              }}
+                              className="flex-1 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-white text-xs" style={{ background: '#0f172a', color: '#fff' }}
+                            >
+                              {TRADE_OPTIONS.map(opt => (
+                                <option key={opt.value} value={opt.value} style={{ background: '#0f172a' }}>{opt.label}</option>
+                              ))}
+                            </select>
+                            <div className="flex items-center gap-1.5 ml-auto">
+                              <span className="text-gray-500 text-[10px]">Reps:</span>
+                              <input
+                                type="number"
+                                min="1"
+                                max="20"
+                                value={step.reps}
+                                onChange={e => {
+                                  const reps = Math.max(1, +e.target.value || 1);
+                                  setAdaptiveSwitch(prev => ({
+                                    ...prev,
+                                    steps: prev.steps.map((s, i) => i === idx ? { ...s, reps } : s),
+                                  }));
+                                }}
+                                className="w-12 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-center text-white text-xs" style={{ background: '#0f172a', color: '#fff' }}
+                              />
+                            </div>
+                            {adaptiveSwitch.steps.length > 1 && (
+                              <button type="button" onClick={() => setAdaptiveSwitch(prev => ({ ...prev, steps: prev.steps.filter((_, i) => i !== idx) }))}
+                                className="text-rose-400 hover:text-rose-300 text-xs font-bold">✕</button>
+                            )}
+                          </div>
+                        ))}
+                        <button type="button"
+                          onClick={() => setAdaptiveSwitch(prev => ({ ...prev, steps: [...prev.steps, { contractType: 'DIGITEVEN', reps: 2 }] }))}
+                          className="w-full py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-[10px] font-bold border border-white/10">
+                          + Add Step
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -2103,47 +2196,61 @@ export function MiniLaxPrimeModal({
 
                   {/* THEN TRADE Section */}
                   <div className="pt-3 border-t border-white/10 flex flex-wrap items-center gap-3">
-                    <span className="text-xs font-black text-cyan-400 uppercase tracking-wider">
-                      THEN TRADE:
-                    </span>
-
-                    <select
-                      value={strat.tradeType}
-                      onChange={e => {
-                        const newType = e.target.value;
-                        const patch: any = { tradeType: newType };
-                        if (newType === 'RUNHIGH' || newType === 'RUNLOW') {
-                          patch.ticks = Math.max(2, Math.min(5, strat.ticks));
-                        }
-                        updateStrategy(sIdx, patch);
-                      }}
-                      className="bg-slate-900 border border-white/20 rounded-xl px-3 py-1.5 text-xs text-white font-bold"
-                      style={{ background: '#0f172a', color: '#ffffff' }}
-                    >
-                      {TRADE_OPTIONS.map(opt => (
-                        <option key={opt.value} value={opt.value} style={{ background: '#0f172a', color: '#fff' }}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-
-                    {hasBarrier && (
-                      <div className="flex items-center gap-1.5 text-xs">
-                        <span className="text-amber-400 font-bold">BARRIER:</span>
-                        <input
-                          type="number"
-                          min="0"
-                          max="9"
-                          value={strat.prediction}
-                          onChange={e => updateStrategy(sIdx, { prediction: +e.target.value })}
-                          className="w-12 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-center text-white font-bold"
-                          style={{ background: '#0f172a', color: '#ffffff' }}
-                        />
+                    {adaptiveSwitch.enabled ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-black text-purple-400 uppercase tracking-wider flex items-center gap-1.5">
+                          <Zap className="w-3.5 h-3.5 text-purple-400" />
+                          SWITCHER ACTIVE
+                        </span>
+                        <span className="text-[10px] text-indigo-300 font-bold">
+                          → contract determined by Switcher
+                        </span>
                       </div>
+                    ) : (
+                      <>
+                        <span className="text-xs font-black text-cyan-400 uppercase tracking-wider">
+                          THEN TRADE:
+                        </span>
+
+                        <select
+                          value={strat.tradeType}
+                          onChange={e => {
+                            const newType = e.target.value;
+                            const patch: any = { tradeType: newType };
+                            if (newType === 'RUNHIGH' || newType === 'RUNLOW') {
+                              patch.ticks = Math.max(2, Math.min(5, strat.ticks));
+                            }
+                            updateStrategy(sIdx, patch);
+                          }}
+                          className="bg-slate-900 border border-white/20 rounded-xl px-3 py-1.5 text-xs text-white font-bold"
+                          style={{ background: '#0f172a', color: '#ffffff' }}
+                        >
+                          {TRADE_OPTIONS.map(opt => (
+                            <option key={opt.value} value={opt.value} style={{ background: '#0f172a', color: '#fff' }}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+
+                        {hasBarrier && (
+                          <div className="flex items-center gap-1.5 text-xs">
+                            <span className="text-amber-400 font-bold">BARRIER:</span>
+                            <input
+                              type="number"
+                              min="0"
+                              max="9"
+                              value={strat.prediction}
+                              onChange={e => updateStrategy(sIdx, { prediction: +e.target.value })}
+                              className="w-12 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-center text-white font-bold"
+                              style={{ background: '#0f172a', color: '#ffffff' }}
+                            />
+                          </div>
+                        )}
+                      </>
                     )}
 
-                    <div className="flex items-center gap-1.5 text-xs">
-                      <span className="text-gray-400">FOR:</span>
+                    <div className="flex items-center gap-1.5 text-xs ml-auto">
+                      <span className="text-gray-400 font-bold">FOR:</span>
                       <input
                         type="number"
                         min={isOnlyUD ? 2 : 1}
@@ -2163,21 +2270,23 @@ export function MiniLaxPrimeModal({
                     </div>
 
                     {/* Trade Pattern Toggle */}
-                    <div className="ml-auto flex items-center gap-2">
-                      <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={strat.useTradePattern}
-                          onChange={e => updateStrategy(sIdx, { useTradePattern: e.target.checked })}
-                          className="accent-indigo-500"
-                        />
-                        <span className="text-indigo-300 font-bold">Trade Pattern (T/S)</span>
-                      </label>
-                    </div>
+                    {!adaptiveSwitch.enabled && (
+                      <div className="ml-auto flex items-center gap-2">
+                        <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={strat.useTradePattern}
+                            onChange={e => updateStrategy(sIdx, { useTradePattern: e.target.checked })}
+                            className="accent-indigo-500"
+                          />
+                          <span className="text-indigo-300 font-bold">Trade Pattern (T/S)</span>
+                        </label>
+                      </div>
+                    )}
                   </div>
 
                   {/* Trade Pattern Sequence */}
-                  {strat.useTradePattern && (
+                  {!adaptiveSwitch.enabled && strat.useTradePattern && (
                     <div className="p-3 bg-black/40 border border-indigo-500/20 rounded-xl space-y-2">
                       <div className="text-[10px] text-gray-400">
                         Click cell to toggle: <span className="text-emerald-400 font-bold">T=TRADE</span> / <span className="text-amber-400 font-bold">S=SKIP</span>

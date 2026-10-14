@@ -187,6 +187,9 @@ const getStepTradeType = (step: PlaylistTradeStep): string => {
     if (!step) return '—';
     if (step.source === 'laxprime') {
         if (step.laxprimeConfig?.adaptiveSwitch?.enabled) {
+            if (step.laxprimeConfig.adaptiveSwitch.virtualSwitcher?.enabled) {
+                return 'V-Switcher';
+            }
             return step.laxprimeConfig.adaptiveSwitch.mode === 'adaptive' ? 'Adaptive' : 'Switcher';
         }
         if (step.laxprimeConfig?.strategies && Array.isArray(step.laxprimeConfig.strategies) && step.laxprimeConfig.strategies.length > 0) {
