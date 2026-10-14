@@ -108,6 +108,15 @@ export interface AdaptiveContractConfig {
   ticks?: number;
 }
 
+export interface VirtualSwitcherRule {
+  contractType: string;  // e.g. 'DIGITEVEN', 'DIGITOVER', 'CALL', etc.
+  barrier?: number;      // barrier digit for OVER/UNDER contracts
+  ticks?: number;        // tick duration override
+  market?: string;       // optional market symbol override (e.g. '1HZ100V')
+  threshold: number;     // how many virtual wins/losses before switching
+  mode: 'consec' | 'total'; // evaluate consecutive or total within window
+}
+
 export interface AdaptiveSwitch {
   enabled: boolean;
   dualMode: boolean;  // Fire exactly 2 contracts per entry; martingale only on both-loss
@@ -119,6 +128,18 @@ export interface AdaptiveSwitch {
     startSide?: 'A' | 'B';
   };
   steps: AdaptiveSwitchStep[];
+  // Virtual Trade Switcher — switches real contract/market based on virtual trade outcomes
+  virtualSwitcher?: {
+    enabled: boolean;
+    onVirtualWins: VirtualSwitcherRule;   // contract to trade after N virtual wins
+    onVirtualLosses: VirtualSwitcherRule; // contract to trade after N virtual losses
+    // Runtime counters (not persisted — reset on bot stop)
+    _consecWins?: number;
+    _consecLosses?: number;
+    _totalWins?: number;
+    _totalLosses?: number;
+    _activeRule?: 'wins' | 'losses' | null;
+  };
 }
 
 export interface TradeLog {

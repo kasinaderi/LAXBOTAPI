@@ -1580,9 +1580,170 @@ export function MiniLaxPrimeModal({
                     </button>
                   </div>
                 )}
+
+                {/* ── Virtual Trade Switcher ── */}
+                {(() => {
+                  const vs = adaptiveSwitch.virtualSwitcher || {
+                    enabled: false,
+                    onVirtualWins: { contractType: 'DIGITEVEN', threshold: 3, mode: 'consec' as const },
+                    onVirtualLosses: { contractType: 'DIGITODD', threshold: 3, mode: 'consec' as const },
+                  };
+                  const updateVS = (patch: Partial<typeof vs>) =>
+                    setAdaptiveSwitch(prev => ({ ...prev, virtualSwitcher: { ...vs, ...patch } }));
+                  const updateWinRule = (patch: Partial<typeof vs.onVirtualWins>) =>
+                    updateVS({ onVirtualWins: { ...vs.onVirtualWins, ...patch } });
+                  const updateLossRule = (patch: Partial<typeof vs.onVirtualLosses>) =>
+                    updateVS({ onVirtualLosses: { ...vs.onVirtualLosses, ...patch } });
+
+                  return (
+                    <div className="rounded-xl border border-amber-500/25 bg-amber-500/4 p-3 mt-1">
+                      {/* Header */}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-black text-amber-400 tracking-wide">🎯 VIRTUAL TRADE SWITCHER</span>
+                          {vs.enabled && vs._activeRule && (
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                              vs._activeRule === 'wins'
+                                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                                : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                            }`}>
+                              ● {vs._activeRule === 'wins' ? 'WIN RULE' : 'LOSS RULE'} ACTIVE
+                            </span>
+                          )}
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input type="checkbox" className="sr-only peer" checked={!!vs.enabled}
+                            onChange={e => updateVS({ enabled: e.target.checked })} />
+                          <div className="w-8 h-4 bg-slate-700 peer-checked:bg-amber-500 rounded-full transition-colors" />
+                          <div className="absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full transition-transform peer-checked:translate-x-4" />
+                        </label>
+                      </div>
+
+                      {vs.enabled && (
+                        <div className="mt-3 space-y-3">
+                          <p className="text-[9px] text-gray-500 leading-relaxed">
+                            After N virtual wins/losses, switch what real contract or market is traded next.
+                          </p>
+
+                          {/* Counters */}
+                          <div className="flex gap-4 text-[10px] pb-2 border-b border-white/5">
+                            <span className="text-emerald-400 font-bold">✓ Wins: {vs._totalWins || 0} (streak: {vs._consecWins || 0})</span>
+                            <span className="text-rose-400 font-bold">✗ Losses: {vs._totalLosses || 0} (streak: {vs._consecLosses || 0})</span>
+                          </div>
+
+                          {/* WIN rule card */}
+                          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-2.5 space-y-2">
+                            <span className="text-[10px] font-bold text-emerald-400">After Virtual Wins → Trade:</span>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <select value={vs.onVirtualWins.contractType}
+                                onChange={e => updateWinRule({ contractType: e.target.value })}
+                                className="flex-1 bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white text-[10px]"
+                                style={{ background: '#0f172a', color: '#fff', minWidth: '90px' }}>
+                                {TRADE_OPTIONS.map(opt => <option key={opt.value} value={opt.value} style={{ background: '#0f172a' }}>{opt.label}</option>)}
+                              </select>
+                              {needsBarrier(vs.onVirtualWins.contractType) && (
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[9px] text-gray-400">Bar:</span>
+                                  <input type="number" min={0} max={9} value={vs.onVirtualWins.barrier ?? 4}
+                                    onChange={e => updateWinRule({ barrier: Math.min(9, Math.max(0, +e.target.value || 0)) })}
+                                    className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]"
+                                    style={{ background: '#0f172a', color: '#fff' }} />
+                                </div>
+                              )}
+                              <div className="flex items-center gap-1">
+                                <span className="text-[9px] text-gray-400">After:</span>
+                                <input type="number" min={1} max={99} value={vs.onVirtualWins.threshold}
+                                  onChange={e => updateWinRule({ threshold: Math.max(1, +e.target.value || 1) })}
+                                  className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]"
+                                  style={{ background: '#0f172a', color: '#fff' }} />
+                                <span className="text-[9px] text-gray-500">wins</span>
+                              </div>
+                              <div className="flex gap-1">
+                                {(['consec', 'total'] as const).map(m => (
+                                  <button key={m} type="button" onClick={() => updateWinRule({ mode: m })}
+                                    className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-all ${
+                                      vs.onVirtualWins.mode === m
+                                        ? 'bg-emerald-500 text-black'
+                                        : 'bg-white/5 text-gray-400'
+                                    }`}>
+                                    {m === 'consec' ? 'Streak' : 'Total'}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] text-gray-500 shrink-0">Market:</span>
+                              <select value={vs.onVirtualWins.market || ''}
+                                onChange={e => updateWinRule({ market: e.target.value || undefined })}
+                                className="flex-1 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-white text-[9px]"
+                                style={{ background: '#0f172a', color: '#fff' }}>
+                                <option value="" style={{ background: '#0f172a' }}>— Same active market —</option>
+                                {ALL_MARKETS.map(m => <option key={m.value} value={m.value} style={{ background: '#0f172a' }}>{m.label}</option>)}
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* LOSS rule card */}
+                          <div className="rounded-lg border border-rose-500/20 bg-rose-500/5 p-2.5 space-y-2">
+                            <span className="text-[10px] font-bold text-rose-400">After Virtual Losses → Trade:</span>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <select value={vs.onVirtualLosses.contractType}
+                                onChange={e => updateLossRule({ contractType: e.target.value })}
+                                className="flex-1 bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white text-[10px]"
+                                style={{ background: '#0f172a', color: '#fff', minWidth: '90px' }}>
+                                {TRADE_OPTIONS.map(opt => <option key={opt.value} value={opt.value} style={{ background: '#0f172a' }}>{opt.label}</option>)}
+                              </select>
+                              {needsBarrier(vs.onVirtualLosses.contractType) && (
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[9px] text-gray-400">Bar:</span>
+                                  <input type="number" min={0} max={9} value={vs.onVirtualLosses.barrier ?? 4}
+                                    onChange={e => updateLossRule({ barrier: Math.min(9, Math.max(0, +e.target.value || 0)) })}
+                                    className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]"
+                                    style={{ background: '#0f172a', color: '#fff' }} />
+                                </div>
+                              )}
+                              <div className="flex items-center gap-1">
+                                <span className="text-[9px] text-gray-400">After:</span>
+                                <input type="number" min={1} max={99} value={vs.onVirtualLosses.threshold}
+                                  onChange={e => updateLossRule({ threshold: Math.max(1, +e.target.value || 1) })}
+                                  className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]"
+                                  style={{ background: '#0f172a', color: '#fff' }} />
+                                <span className="text-[9px] text-gray-500">losses</span>
+                              </div>
+                              <div className="flex gap-1">
+                                {(['consec', 'total'] as const).map(m => (
+                                  <button key={m} type="button" onClick={() => updateLossRule({ mode: m })}
+                                    className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-all ${
+                                      vs.onVirtualLosses.mode === m
+                                        ? 'bg-rose-500 text-black'
+                                        : 'bg-white/5 text-gray-400'
+                                    }`}>
+                                    {m === 'consec' ? 'Streak' : 'Total'}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] text-gray-500 shrink-0">Market:</span>
+                              <select value={vs.onVirtualLosses.market || ''}
+                                onChange={e => updateLossRule({ market: e.target.value || undefined })}
+                                className="flex-1 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-white text-[9px]"
+                                style={{ background: '#0f172a', color: '#fff' }}>
+                                <option value="" style={{ background: '#0f172a' }}>— Same active market —</option>
+                                {ALL_MARKETS.map(m => <option key={m.value} value={m.value} style={{ background: '#0f172a' }}>{m.label}</option>)}
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
               </div>
             )}
           </div>
+
 
           {/* ── Strategy Builder Header ── */}
           <div className="flex items-center justify-between">

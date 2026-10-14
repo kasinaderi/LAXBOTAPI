@@ -2967,6 +2967,182 @@ export default function LaxPrimePage() {
                 </div>
                 )}
 
+                {/* ─── VIRTUAL TRADE SWITCHER ─── */}
+                {(() => {
+                  const vs = adaptiveSwitch.virtualSwitcher || {
+                    enabled: false,
+                    onVirtualWins: { contractType: 'DIGITEVEN', threshold: 3, mode: 'consec' as const },
+                    onVirtualLosses: { contractType: 'DIGITODD', threshold: 3, mode: 'consec' as const },
+                  };
+                  const updateVS = (patch: Partial<typeof vs>) =>
+                    setAdaptiveSwitch({ ...adaptiveSwitch, virtualSwitcher: { ...vs, ...patch } });
+                  const updateWinRule = (patch: Partial<typeof vs.onVirtualWins>) =>
+                    updateVS({ onVirtualWins: { ...vs.onVirtualWins, ...patch } });
+                  const updateLossRule = (patch: Partial<typeof vs.onVirtualLosses>) =>
+                    updateVS({ onVirtualLosses: { ...vs.onVirtualLosses, ...patch } });
+
+                  return (
+                    <div style={{
+                      margin: '10px 0',
+                      border: '1px solid rgba(251,191,36,0.25)',
+                      borderRadius: '8px',
+                      background: 'rgba(251,191,36,0.04)',
+                      padding: '10px 12px',
+                    }}>
+                      {/* Header row */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: vs.enabled ? '10px' : 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                          <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#fbbf24', letterSpacing: '0.5px' }}>
+                            🎯 VIRTUAL TRADE SWITCHER
+                          </span>
+                          {vs.enabled && vs._activeRule && (
+                            <span style={{
+                              fontSize: '9px', fontWeight: 'bold',
+                              background: vs._activeRule === 'wins' ? 'rgba(74,222,128,0.15)' : 'rgba(248,113,113,0.15)',
+                              color: vs._activeRule === 'wins' ? '#4ade80' : '#f87171',
+                              padding: '1px 6px', borderRadius: '4px',
+                              border: `1px solid ${vs._activeRule === 'wins' ? 'rgba(74,222,128,0.3)' : 'rgba(248,113,113,0.3)'}`,
+                            }}>
+                              ● {vs._activeRule === 'wins' ? 'WIN RULE ACTIVE' : 'LOSS RULE ACTIVE'}
+                            </span>
+                          )}
+                        </div>
+                        <label className="lp-vp-sw">
+                          <input type="checkbox" checked={!!vs.enabled}
+                            onChange={e => updateVS({ enabled: e.target.checked })} />
+                          <span className="lp-vp-sw-track" />
+                        </label>
+                      </div>
+
+                      {vs.enabled && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', lineHeight: 1.4 }}>
+                            After N virtual wins/losses, switch what real contract or market is traded next.
+                          </span>
+
+                          {/* Live counters */}
+                          <div style={{ display: 'flex', gap: '16px', fontSize: '10px', paddingBottom: '6px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                            <span style={{ color: '#4ade80', fontWeight: 'bold' }}>
+                              ✓ Wins: {vs._totalWins || 0} (streak: {vs._consecWins || 0})
+                            </span>
+                            <span style={{ color: '#f87171', fontWeight: 'bold' }}>
+                              ✗ Losses: {vs._totalLosses || 0} (streak: {vs._consecLosses || 0})
+                            </span>
+                          </div>
+
+                          {/* WIN rule card */}
+                          <div style={{
+                            background: 'rgba(74,222,128,0.05)', border: '1px solid rgba(74,222,128,0.2)',
+                            borderRadius: '6px', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: '6px',
+                          }}>
+                            <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#4ade80' }}>After Virtual Wins → Trade:</span>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' }}>
+                              <select className="lp-sel" style={{ height: '24px', fontSize: '11px', flex: '1 1 100px' }}
+                                value={vs.onVirtualWins.contractType}
+                                onChange={e => updateWinRule({ contractType: e.target.value })}>
+                                {TRADE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                              </select>
+                              {needsBarrier(vs.onVirtualWins.contractType) && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                  <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)' }}>Barrier:</span>
+                                  <input className="lp-num" type="number" min={0} max={9}
+                                    value={vs.onVirtualWins.barrier ?? 4}
+                                    style={{ width: '30px', height: '22px', fontSize: '11px', textAlign: 'center' }}
+                                    onChange={e => updateWinRule({ barrier: Math.min(9, Math.max(0, +e.target.value || 0)) })} />
+                                </div>
+                              )}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)' }}>After:</span>
+                                <input className="lp-num" type="number" min={1} max={99}
+                                  value={vs.onVirtualWins.threshold}
+                                  style={{ width: '30px', height: '22px', fontSize: '11px', textAlign: 'center' }}
+                                  onChange={e => updateWinRule({ threshold: Math.max(1, +e.target.value || 1) })} />
+                                <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.35)' }}>wins</span>
+                              </div>
+                              <div style={{ display: 'flex', gap: '3px' }}>
+                                {(['consec', 'total'] as const).map(m => (
+                                  <button key={m} onClick={() => updateWinRule({ mode: m })}
+                                    style={{
+                                      fontSize: '9px', fontWeight: 'bold', padding: '2px 6px',
+                                      borderRadius: '4px', border: 'none', cursor: 'pointer',
+                                      background: vs.onVirtualWins.mode === m ? '#4ade80' : 'rgba(255,255,255,0.07)',
+                                      color: vs.onVirtualWins.mode === m ? '#000' : 'rgba(255,255,255,0.5)',
+                                    }}>
+                                    {m === 'consec' ? 'Streak' : 'Total'}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)' }}>Market override:</span>
+                              <select className="lp-sel" style={{ height: '22px', fontSize: '10px', flex: 1 }}
+                                value={vs.onVirtualWins.market || ''}
+                                onChange={e => updateWinRule({ market: e.target.value || undefined })}>
+                                <option value="">— Same active market —</option>
+                                {ALL_MARKETS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* LOSS rule card */}
+                          <div style={{
+                            background: 'rgba(248,113,113,0.05)', border: '1px solid rgba(248,113,113,0.2)',
+                            borderRadius: '6px', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: '6px',
+                          }}>
+                            <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#f87171' }}>After Virtual Losses → Trade:</span>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' }}>
+                              <select className="lp-sel" style={{ height: '24px', fontSize: '11px', flex: '1 1 100px' }}
+                                value={vs.onVirtualLosses.contractType}
+                                onChange={e => updateLossRule({ contractType: e.target.value })}>
+                                {TRADE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                              </select>
+                              {needsBarrier(vs.onVirtualLosses.contractType) && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                  <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)' }}>Barrier:</span>
+                                  <input className="lp-num" type="number" min={0} max={9}
+                                    value={vs.onVirtualLosses.barrier ?? 4}
+                                    style={{ width: '30px', height: '22px', fontSize: '11px', textAlign: 'center' }}
+                                    onChange={e => updateLossRule({ barrier: Math.min(9, Math.max(0, +e.target.value || 0)) })} />
+                                </div>
+                              )}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)' }}>After:</span>
+                                <input className="lp-num" type="number" min={1} max={99}
+                                  value={vs.onVirtualLosses.threshold}
+                                  style={{ width: '30px', height: '22px', fontSize: '11px', textAlign: 'center' }}
+                                  onChange={e => updateLossRule({ threshold: Math.max(1, +e.target.value || 1) })} />
+                                <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.35)' }}>losses</span>
+                              </div>
+                              <div style={{ display: 'flex', gap: '3px' }}>
+                                {(['consec', 'total'] as const).map(m => (
+                                  <button key={m} onClick={() => updateLossRule({ mode: m })}
+                                    style={{
+                                      fontSize: '9px', fontWeight: 'bold', padding: '2px 6px',
+                                      borderRadius: '4px', border: 'none', cursor: 'pointer',
+                                      background: vs.onVirtualLosses.mode === m ? '#f87171' : 'rgba(255,255,255,0.07)',
+                                      color: vs.onVirtualLosses.mode === m ? '#000' : 'rgba(255,255,255,0.5)',
+                                    }}>
+                                    {m === 'consec' ? 'Streak' : 'Total'}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)' }}>Market override:</span>
+                              <select className="lp-sel" style={{ height: '22px', fontSize: '10px', flex: 1 }}
+                                value={vs.onVirtualLosses.market || ''}
+                                onChange={e => updateLossRule({ market: e.target.value || undefined })}>
+                                <option value="">— Same active market —</option>
+                                {ALL_MARKETS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {/* Preview sequence */}
                 <div className="lp-sw-preview" style={{ marginTop: '10px' }}>
                   {adaptiveSwitch.mode === 'adaptive' ? (() => {
