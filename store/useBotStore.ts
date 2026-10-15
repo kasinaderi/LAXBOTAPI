@@ -330,7 +330,8 @@ export function needsBarrier(contractType: string): boolean {
 }
 
 export function checkIsOpposite(contractType: string, prediction: number, digit: number, quote: number, prevQuote: number): boolean {
-  switch (contractType) {
+  const norm = normalizeContractType(contractType);
+  switch (norm) {
     // Digit contracts: wait for the OTHER digit outcome before retriggering
     case 'DIGITEVEN':  return digit % 2 !== 0;   // after EVEN → wait for ODD
     case 'DIGITODD':   return digit % 2 === 0;   // after ODD  → wait for EVEN
@@ -1472,6 +1473,8 @@ export const useBotStore = create<BotStoreState>()(
           lockLosses: 0,
           lockProfit: 0,
         };
+        eng.thenState = {};
+        eng.waitingForOpposite = {};
         set({ isRunning: false, botStatusMsg: reason ? `Stopped: ${reason}` : 'Bot stopped.' });
       },
 
@@ -1493,6 +1496,7 @@ export const useBotStore = create<BotStoreState>()(
           lockLosses: 0,
           lockProfit: 0,
         };
+        eng.thenState     = {};
         eng.retrigger     = {};
 
         eng.waitingForOpposite = {};
@@ -1969,32 +1973,33 @@ export const useBotStore = create<BotStoreState>()(
           const ss = eng.strategyState[GLOBAL_KEY];
 
           // ── 1-second cooldown per strategy+market ─────────────────────────
-          // Bypass cooldown when locked in no_recheck OR continuous_check mode.
-          // In both modes, every tick must be processed so the trade pattern
-          // advances correctly. On 1s markets the tick interval equals the
-          // cooldown window (1000ms), so stamping cooldown=now on a pattern skip
-          // would drop the very next tick. Cooldown is only set after an actual
-          // trade fires (see trade placement below).
-          const isLockedForCooldown = Boolean(
-            cLock?.enabled && eng.lockState.locked
-          );
-          if (!isLockedForCooldown && now - (eng.cooldown[ck] || 0) < 1000) continue;
+          // Cooldown ONLY applies when Continuous Lock is NOT active.
+          // When Continuous Lock is enabled, the bot scans markets freely and,
+          // once locked, executes on every single tick without cooldown delay.
+          if (!cLock?.enabled && now - (eng.cooldown[ck] || 0) < 1000) continue;
+
+          // When Continuous Lock is enabled in 'no_recheck' mode and already locked,
+          // we bypass ALL entry condition guards (noContradiction, patternRetrigger,
+          // THEN/THENALL, and evalStrategy) — initial trigger is already met.
+          const isLockNoRecheck = Boolean(cLock?.enabled && eng.lockState.locked && cLock.mode === 'no_recheck');
 
           // ── No Contradiction (Wait for Opposite) guard ─────────────────────
-          const lock = eng.waitingForOpposite[ck];
-          if (s.noContradiction && lock) {
-            const currentDigit = digits[digits.length - 1] ?? 0;
-            const currentQuote = quotes[quotes.length - 1] ?? 0;
-            const prevQuote    = quotes[quotes.length - 2] ?? 0;
+          if (!isLockNoRecheck) {
+            const lock = eng.waitingForOpposite[ck];
+            if (s.noContradiction && lock) {
+              const currentDigit = digits[digits.length - 1] ?? 0;
+              const currentQuote = quotes[quotes.length - 1] ?? 0;
+              const prevQuote    = quotes[quotes.length - 2] ?? 0;
 
-            const lType = typeof lock === 'object' && lock !== null ? lock.contractType : s.tradeType;
-            const lPred = typeof lock === 'object' && lock !== null ? lock.prediction : s.prediction;
+              const lType = typeof lock === 'object' && lock !== null ? lock.contractType : s.tradeType;
+              const lPred = typeof lock === 'object' && lock !== null ? lock.prediction : s.prediction;
 
-            const isOpposite = checkIsOpposite(lType, lPred, currentDigit, currentQuote, prevQuote);
-            if (isOpposite) {
-              eng.waitingForOpposite[ck] = null;
-            } else {
-              continue;
+              const isOpposite = checkIsOpposite(lType, lPred, currentDigit, currentQuote, prevQuote);
+              if (isOpposite) {
+                eng.waitingForOpposite[ck] = null;
+              } else {
+                continue;
+              }
             }
           }
 
@@ -2009,9 +2014,9 @@ export const useBotStore = create<BotStoreState>()(
           const hasVirt = eng.activeVirtual.length > 0;
           if (hasAnyActiveGlobally || hasVirt) continue;
 
-          // Digit pattern retrigger guard
+          // Digit pattern retrigger guard (bypassed when locked in no_recheck mode)
           const dpCond = s.conditions.find(c => c.type === 'DIGIT_PATTERN');
-          if (dpCond && dpCond.patternRetrigger !== 'any') {
+          if (!isLockNoRecheck && dpCond && dpCond.patternRetrigger !== 'any') {
             const rtKey = `${stratId}_${symbol}`;
             if (!eng.retrigger[rtKey]) {
               eng.retrigger[rtKey] = { lastWasTrue: false, waitingForOpposite: false };
@@ -2046,7 +2051,7 @@ export const useBotStore = create<BotStoreState>()(
           const dpCondForMode = s.conditions.find(c => c.type === 'DIGIT_PATTERN');
           const boxMode = dpCondForMode?.patternBoxMode ?? 'OR';
 
-          if (dpCondForMode && (boxMode === 'THEN' || boxMode === 'THENALL')) {
+          if (!isLockNoRecheck && dpCondForMode && (boxMode === 'THEN' || boxMode === 'THENALL')) {
             const timeout   = dpCondForMode.thenTimeout   ?? 20;
             const maxTrades = dpCondForMode.thenMaxTrades ?? 3;
 
@@ -2107,7 +2112,10 @@ export const useBotStore = create<BotStoreState>()(
                 }
 
                 // Evaluate Box 2 on the locked market
-                const box2Pass = evaluateOneBox(dpCondForMode, 1, digits, quotes);
+                const otherCondsPass = s.conditions
+                  .filter(c => c.type !== 'DIGIT_PATTERN')
+                  .every(c => evaluateCondition(c, digits, quotes, symbol, s.tradeType));
+                const box2Pass = otherCondsPass && evaluateOneBox(dpCondForMode, 1, digits, quotes);
                 if (!box2Pass) {
                   const rem = timeout - ts.ticksWaited;
                   set({ botStatusMsg: `⏳ THEN: waiting for Box 2 on ${ts.lockedSymbol} (${rem} ticks left)` });
@@ -2138,12 +2146,15 @@ export const useBotStore = create<BotStoreState>()(
                 }
 
                 // Evaluate Box 2 on this market
-                const box2Pass = evaluateOneBox(dpCondForMode, 1, digits, quotes);
+                const otherCondsPass = s.conditions
+                  .filter(c => c.type !== 'DIGIT_PATTERN')
+                  .every(c => evaluateCondition(c, digits, quotes, symbol, s.tradeType));
+                const box2Pass = otherCondsPass && evaluateOneBox(dpCondForMode, 1, digits, quotes);
                 if (!box2Pass) continue;
 
                 // ✅ Box 2 matched on this market — fire trade
                 ts.tradesThisRound++;
-                if (ts.tradesThisRound >= maxTrades) {
+                if (cLock?.enabled || ts.tradesThisRound >= maxTrades) {
                   ts.phase = 'scanning_box1';
                   ts.lockedSymbol = null;
                 }
@@ -2151,20 +2162,17 @@ export const useBotStore = create<BotStoreState>()(
               }
             }
 
-          } else {
+          } else if (!isLockNoRecheck) {
             // ── Normal OR mode ─────────────────────────────────────────────
             // When Continuous Lock is enabled in 'no_recheck' mode and already locked,
             // we bypass condition evaluation — initial trigger is already met.
-            const isLockNoRecheck = Boolean(cLock?.enabled && eng.lockState.locked && cLock.mode === 'no_recheck');
-            if (!isLockNoRecheck) {
-              if (!evalStrategy(s, digits, quotes, symbol)) {
-                // Reset no_contra edge when pattern clears
-                if (dpCond && dpCond.patternRetrigger === 'no_contra') {
-                  const rtKey = `${stratId}_${symbol}`;
-                  if (eng.retrigger[rtKey]) eng.retrigger[rtKey].lastWasTrue = false;
-                }
-                continue;
+            if (!evalStrategy(s, digits, quotes, symbol)) {
+              // Reset no_contra edge when pattern clears
+              if (dpCond && dpCond.patternRetrigger === 'no_contra') {
+                const rtKey = `${stratId}_${symbol}`;
+                if (eng.retrigger[rtKey]) eng.retrigger[rtKey].lastWasTrue = false;
               }
+              continue;
             }
           }
 
@@ -2186,23 +2194,21 @@ export const useBotStore = create<BotStoreState>()(
             set({ botStatusMsg: `🔒 TRIGGER HIT on ${mLabel}! Locked to Strategy ${si + 1} (${cLock.mode === 'no_recheck' ? 'No Re-check' : 'Check Each Entry'})` });
           }
 
-          // Trade pattern pipeline check
-          if (cLock?.enabled && cLock.useTradePattern && cLock.tradePattern && cLock.tradePattern.length > 0) {
-            const pat = cLock.tradePattern;
+          // ── TRADE PATTERN EXECUTION ────────────────────────────────────────
+          if (cLock?.enabled) {
+            // When Continuous Lock is ON, Continuous Lock's trade pattern is the ONLY pattern.
+            // Strategy-level trade pattern is strictly ignored.
+            const pat = cLock.tradePattern && cLock.tradePattern.length > 0 ? cLock.tradePattern : [true];
             const pos = eng.lockState.patternIndex % pat.length;
             const shouldTrade = pat[pos];
             eng.lockState.patternIndex = (pos + 1) % pat.length;
             if (!shouldTrade) {
-              // ── Pattern SKIP in locked mode ──────────────────────────────
-              // Do NOT set eng.cooldown[ck] here. On 1s markets the tick
-              // interval is exactly 1000ms, so stamping cooldown=now would
-              // cause the next tick to be blocked by the `< 1000` guard.
-              // Cooldown is set only after an actual trade fires (below).
               const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
               set({ botStatusMsg: `⏭ Locked Pattern SKIP: Strategy ${si + 1} on ${mLabel} (step ${pos + 1}/${pat.length})` });
               continue;
             }
           } else if (s.useTradePattern && s.tradePattern && s.tradePattern.length > 0) {
+            // Normal mode (Continuous Lock is OFF): strategy-level trade pattern applies
             if (eng.patternPos[stratId] === undefined) eng.patternPos[stratId] = 0;
             const pos = eng.patternPos[stratId] % s.tradePattern.length;
             const shouldTrade = s.tradePattern[pos];
@@ -2215,19 +2221,6 @@ export const useBotStore = create<BotStoreState>()(
             }
           }
 
-          // ── TRIGGER FIRED ─────────────────────────────────────────────────
-          // Lock was already activated above — this fallback only fires if
-          // somehow cLock is enabled but the early block was not reached (e.g.
-          // THEN/THENALL paths that skip the else-branch above).
-          if (cLock?.enabled && !eng.lockState.locked) {
-            eng.lockState.locked = true;
-            eng.lockState.stratId = stratId;
-            eng.lockState.stratIndex = si;
-            eng.lockState.symbol = symbol;
-            eng.lockState.initialTriggered = true;
-            const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
-            set({ botStatusMsg: `🔒 TRIGGER HIT on ${mLabel}! Locked to Strategy ${si + 1} (${cLock.mode === 'no_recheck' ? 'No Re-check' : 'Check Each Entry'})` });
-          }
           get()._flashSignal(symbol);
 
 
@@ -2395,10 +2388,12 @@ export const useBotStore = create<BotStoreState>()(
             }
           }
 
-          // ── Cross-market delay guard (strictly applies to both Real and Virtual trades) ──
-          const delayMs = parseFloat(state.crossMarketDelay || '1.5') * 1000;
-          if (now - eng.lastTradeTime < delayMs) {
-            continue;
+          // ── Cross-market delay guard (only applies when NOT locked in Continuous Lock) ──
+          if (!cLock?.enabled) {
+            const delayMs = parseFloat(state.crossMarketDelay || '1.5') * 1000;
+            if (now - eng.lastTradeTime < delayMs) {
+              continue;
+            }
           }
 
           const roundId = `round_${stratId}_${now}_${Math.floor(Math.random() * 9999)}`;
@@ -2692,6 +2687,8 @@ export const useBotStore = create<BotStoreState>()(
             eng.lockState.lockWins = 0;
             eng.lockState.lockLosses = 0;
             eng.lockState.lockProfit = 0;
+            eng.thenState = {};
+            eng.waitingForOpposite = {};
             set({ botStatusMsg: `🔓 UNLOCKED from ${lockedMktLabel} — ${unlockReason}. Rescanning all markets...` });
           }
         }

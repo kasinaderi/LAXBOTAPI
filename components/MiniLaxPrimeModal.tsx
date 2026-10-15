@@ -2721,7 +2721,7 @@ export function MiniLaxPrimeModal({
                     </div>
 
                     {/* Trade Pattern Toggle */}
-                    {!adaptiveSwitch.enabled && (
+                    {!adaptiveSwitch.enabled && !continuousLock?.enabled && (
                       <div className="ml-auto flex items-center gap-2">
                         <label className="flex items-center gap-1.5 text-xs cursor-pointer">
                           <input
@@ -2734,10 +2734,15 @@ export function MiniLaxPrimeModal({
                         </label>
                       </div>
                     )}
+                    {continuousLock?.enabled && (
+                      <div className="ml-auto flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-300 font-bold">
+                        <span>🔒 Continuous Lock Active</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Trade Pattern Sequence */}
-                  {!adaptiveSwitch.enabled && strat.useTradePattern && (
+                  {!adaptiveSwitch.enabled && !continuousLock?.enabled && strat.useTradePattern && (
                     <div className="p-3 bg-black/40 border border-indigo-500/20 rounded-xl space-y-2">
                       <div className="text-[10px] text-gray-400">
                         Click cell to toggle: <span className="text-emerald-400 font-bold">T=TRADE</span> / <span className="text-amber-400 font-bold">S=SKIP</span>

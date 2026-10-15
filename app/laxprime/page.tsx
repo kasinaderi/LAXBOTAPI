@@ -1310,7 +1310,8 @@ function StrategyBlock({ strategy, index, onChange, onRemove, adaptiveSwitchEnab
   const updateCond = (id: string, updated: Condition) =>
     u({ conditions: strategy.conditions.map(c => c.id === id ? updated : c) });
 
-  const { selectedMarkets, adaptiveSwitch } = useBotStore();
+  const { selectedMarkets, adaptiveSwitch, continuousLock } = useBotStore();
+  const continuousLockEnabled = Boolean(continuousLock?.enabled);
 
   const isUsingOnlyUpDown = (() => {
     if (adaptiveSwitchEnabled) {
@@ -1445,8 +1446,8 @@ function StrategyBlock({ strategy, index, onChange, onRemove, adaptiveSwitchEnab
         </div>
       )}
 
-      {/* Trade Pattern toggle - hidden when adaptive switch is active */}
-      {!adaptiveSwitchEnabled && (
+      {/* Trade Pattern toggle - hidden when adaptive switch or continuous lock is active */}
+      {!adaptiveSwitchEnabled && !continuousLockEnabled && (
         <div className="lp-tpb-row">
           <label className="lp-tpb-lbl-check">
             <input type="checkbox" checked={!!strategy.useTradePattern}
@@ -1468,11 +1469,17 @@ function StrategyBlock({ strategy, index, onChange, onRemove, adaptiveSwitchEnab
           )}
         </div>
       )}
-      {!adaptiveSwitchEnabled && strategy.useTradePattern && showPattern && (
+      {!adaptiveSwitchEnabled && !continuousLockEnabled && strategy.useTradePattern && showPattern && (
         <TradePatternBuilder
           pattern={strategy.tradePattern || [true]}
           onChange={p => u({ tradePattern: p })}
         />
+      )}
+      {continuousLockEnabled && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 10px', background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.25)', borderRadius: '6px', fontSize: '10px', color: '#fbbf24', margin: '6px 0' }}>
+          <Layers size={12} style={{ color: '#f59e0b', flexShrink: 0 }} />
+          <span>🔒 <strong>Continuous Lock Active</strong> — Strategy Trade Pattern is disabled. Using Locked Trade Pattern loop.</span>
+        </div>
       )}
       {/* No Contradiction — hidden, always active */}
       <button className="lp-add-cond-btn" onClick={addCond}>+ CONDITION</button>
