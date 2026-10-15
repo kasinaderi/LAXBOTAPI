@@ -1969,7 +1969,16 @@ export const useBotStore = create<BotStoreState>()(
           const ss = eng.strategyState[GLOBAL_KEY];
 
           // ── 1-second cooldown per strategy+market ─────────────────────────
-          if (now - (eng.cooldown[ck] || 0) < 1000) continue;
+          // Bypass cooldown when locked in no_recheck OR continuous_check mode.
+          // In both modes, every tick must be processed so the trade pattern
+          // advances correctly. On 1s markets the tick interval equals the
+          // cooldown window (1000ms), so stamping cooldown=now on a pattern skip
+          // would drop the very next tick. Cooldown is only set after an actual
+          // trade fires (see trade placement below).
+          const isLockedForCooldown = Boolean(
+            cLock?.enabled && eng.lockState.locked
+          );
+          if (!isLockedForCooldown && now - (eng.cooldown[ck] || 0) < 1000) continue;
 
           // ── No Contradiction (Wait for Opposite) guard ─────────────────────
           const lock = eng.waitingForOpposite[ck];
@@ -2159,6 +2168,24 @@ export const useBotStore = create<BotStoreState>()(
             }
           }
 
+          // ── EARLY LOCK ACTIVATION ──────────────────────────────────────────
+          // This MUST run before the trade pattern check. On the trigger tick,
+          // if the first pattern step is S (skip), the `continue` below would
+          // exit before the old lock block at the bottom — leaving locked=false.
+          // On every subsequent tick isLockNoRecheck would remain false, causing
+          // evalStrategy to run (which fails) and the bot to wait for another
+          // trigger digit before advancing the pattern.
+          if (cLock?.enabled && !eng.lockState.locked) {
+            eng.lockState.locked = true;
+            eng.lockState.stratId = stratId;
+            eng.lockState.stratIndex = si;
+            eng.lockState.symbol = symbol;
+            eng.lockState.initialTriggered = true;
+            eng.lockState.patternIndex = 0;
+            const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
+            set({ botStatusMsg: `🔒 TRIGGER HIT on ${mLabel}! Locked to Strategy ${si + 1} (${cLock.mode === 'no_recheck' ? 'No Re-check' : 'Check Each Entry'})` });
+          }
+
           // Trade pattern pipeline check
           if (cLock?.enabled && cLock.useTradePattern && cLock.tradePattern && cLock.tradePattern.length > 0) {
             const pat = cLock.tradePattern;
@@ -2166,7 +2193,11 @@ export const useBotStore = create<BotStoreState>()(
             const shouldTrade = pat[pos];
             eng.lockState.patternIndex = (pos + 1) % pat.length;
             if (!shouldTrade) {
-              eng.cooldown[ck] = now;
+              // ── Pattern SKIP in locked mode ──────────────────────────────
+              // Do NOT set eng.cooldown[ck] here. On 1s markets the tick
+              // interval is exactly 1000ms, so stamping cooldown=now would
+              // cause the next tick to be blocked by the `< 1000` guard.
+              // Cooldown is set only after an actual trade fires (below).
               const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
               set({ botStatusMsg: `⏭ Locked Pattern SKIP: Strategy ${si + 1} on ${mLabel} (step ${pos + 1}/${pat.length})` });
               continue;
@@ -2185,6 +2216,9 @@ export const useBotStore = create<BotStoreState>()(
           }
 
           // ── TRIGGER FIRED ─────────────────────────────────────────────────
+          // Lock was already activated above — this fallback only fires if
+          // somehow cLock is enabled but the early block was not reached (e.g.
+          // THEN/THENALL paths that skip the else-branch above).
           if (cLock?.enabled && !eng.lockState.locked) {
             eng.lockState.locked = true;
             eng.lockState.stratId = stratId;
