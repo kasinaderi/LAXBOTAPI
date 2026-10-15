@@ -2188,10 +2188,8 @@ export const useBotStore = create<BotStoreState>()(
           }
 
           // ── EARLY LOCK ACTIVATION ──────────────────────────────────────────
-          // When the trigger condition first fires, lock the market & strategy and
-          // start the pattern on the VERY NEXT tick. The trigger tick itself does NOT
-          // count as a pattern step (S or T). This gives exact S-S-S-T rhythm starting
-          // from the tick immediately after the trigger digit/condition.
+          // When the trigger condition fires, lock onto this market & strategy,
+          // and immediately execute Step 1 (pos 0) of the trade pattern on this tick.
           if (cLock?.enabled && !eng.lockState.locked) {
             eng.lockState.locked = true;
             eng.lockState.stratId = stratId;
@@ -2200,9 +2198,7 @@ export const useBotStore = create<BotStoreState>()(
             eng.lockState.initialTriggered = true;
             eng.lockState.patternIndex = 0;
             const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
-            set({ botStatusMsg: `🔒 TRIGGER HIT on ${mLabel}! Locked to Strategy ${si + 1} (${cLock.mode === 'no_recheck' ? 'No Re-check' : 'Check Each Entry'}) — pattern starts next tick` });
-            // Trigger tick does NOT consume a pattern step — continue to next tick
-            continue;
+            set({ botStatusMsg: `🔒 TRIGGER HIT on ${mLabel}! Locked to Strategy ${si + 1} (${cLock.mode === 'no_recheck' ? 'No Re-check' : 'Check Each Entry'})` });
           }
 
           // ── TRADE PATTERN EXECUTION ────────────────────────────────────────
