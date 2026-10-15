@@ -2025,9 +2025,10 @@ export const useBotStore = create<BotStoreState>()(
             continue;
           }
 
-          // Digit pattern retrigger guard (bypassed when locked in no_recheck mode)
+          // Digit pattern retrigger guard (bypassed when locked in no_recheck mode, and ONLY applies to normal OR mode)
           const dpCond = s.conditions.find(c => c.type === 'DIGIT_PATTERN');
-          if (!isLockNoRecheck && dpCond && dpCond.patternRetrigger !== 'any') {
+          const dpBoxMode = dpCond?.patternBoxMode ?? 'OR';
+          if (!isLockNoRecheck && dpCond && dpBoxMode === 'OR' && dpCond.patternRetrigger !== 'any') {
             const rtKey = `${stratId}_${symbol}`;
             if (!eng.retrigger[rtKey]) {
               eng.retrigger[rtKey] = { lastWasTrue: false, waitingForOpposite: false };
@@ -2063,8 +2064,8 @@ export const useBotStore = create<BotStoreState>()(
           const boxMode = dpCondForMode?.patternBoxMode ?? 'OR';
 
           if (!isLockNoRecheck && dpCondForMode && (boxMode === 'THEN' || boxMode === 'THENALL')) {
-            const timeout   = dpCondForMode.thenTimeout   ?? 20;
-            const maxTrades = dpCondForMode.thenMaxTrades ?? 3;
+            const timeout   = Math.max(1, dpCondForMode.thenTimeout   ?? 20);
+            const maxTrades = Math.max(1, dpCondForMode.thenMaxTrades ?? 3);
 
             // Initialise thenState for this strategy if needed
             if (!eng.thenState[stratId]) {
@@ -2092,7 +2093,7 @@ export const useBotStore = create<BotStoreState>()(
                 ts.tradesThisRound = 0;
                 ts.lastTickEpoch = 0;
                 const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
-                set({ botStatusMsg: `⏳ THEN: Box 1 matched on ${mLabel} — waiting for Box 2` });
+                set({ botStatusMsg: `⏳ ${boxMode}: Box 1 matched on ${mLabel} — waiting for Box 2 (${timeout} ticks timeout)` });
               }
               // Either way: no trade fires in phase 1
               continue;
@@ -2105,20 +2106,17 @@ export const useBotStore = create<BotStoreState>()(
                 // Skip all other markets entirely — no tick counting, no evaluation
                 if (symbol !== ts.lockedSymbol) continue;
 
-                // Count one real tick on the locked market only.
-                // Use the market's latest epoch to deduplicate in case the scan
-                // loop calls this symbol more than once in the same tick.
-                const thisEpoch = regime?.lastEpoch ?? now;
-                if (thisEpoch !== ts.lastTickEpoch) {
-                  ts.ticksWaited++;
-                  ts.lastTickEpoch = thisEpoch;
-                }
+                // Count one real tick on every incoming tick of the locked market
+                ts.ticksWaited++;
 
                 // Check timeout on the locked market's ticks
-                if (ts.ticksWaited > timeout) {
+                if (ts.ticksWaited >= timeout) {
+                  const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
                   ts.phase = 'scanning_box1';
                   ts.lockedSymbol = null;
-                  set({ botStatusMsg: `⌛ THEN timeout after ${timeout} ticks — rescanning Box 1` });
+                  ts.ticksWaited = 0;
+                  ts.tradesThisRound = 0;
+                  set({ botStatusMsg: `⌛ THEN timeout after ${timeout} ticks on ${mLabel} — rescanning Box 1 across all markets` });
                   continue;
                 }
 
@@ -2128,31 +2126,37 @@ export const useBotStore = create<BotStoreState>()(
                   .every(c => evaluateCondition(c, digits, quotes, symbol, s.tradeType));
                 const box2Pass = otherCondsPass && evaluateOneBox(dpCondForMode, 1, digits, quotes);
                 if (!box2Pass) {
-                  const rem = timeout - ts.ticksWaited;
-                  set({ botStatusMsg: `⏳ THEN: waiting for Box 2 on ${ts.lockedSymbol} (${rem} ticks left)` });
+                  const rem = Math.max(0, timeout - ts.ticksWaited);
+                  const mLabel = ALL_MARKETS.find(m => m.value === ts.lockedSymbol)?.label || ts.lockedSymbol;
+                  set({ botStatusMsg: `⏳ THEN: waiting for Box 2 on ${mLabel} (${rem} ticks left)` });
                   continue;
                 }
 
                 // ✅ Box 2 matched — fire trade, reset state
                 ts.phase = 'scanning_box1';
                 ts.lockedSymbol = null;
+                ts.ticksWaited = 0;
+                ts.tradesThisRound = 0;
                 // Fall through to trade-firing code below
 
               } else {
                 // ── THENALL: watch ALL markets for Box 2 ────────────────────
-                // Increment the shared tick counter once per unique tick epoch
-                // across all markets (first market in the scan that sees a new epoch wins)
+                // The anchor market where Box 1 was found (ts.lockedSymbol) advances the tick count.
+                // If it's a single market or the anchor market ticks, advance ticksWaited.
+                // We also advance if a new epoch arrives to ensure ticksWaited never stalls.
                 const thisEpoch = regime?.lastEpoch ?? now;
-                if (thisEpoch !== ts.lastTickEpoch) {
+                if (symbol === ts.lockedSymbol || thisEpoch !== ts.lastTickEpoch) {
                   ts.ticksWaited++;
                   ts.lastTickEpoch = thisEpoch;
                 }
 
                 // Timeout check
-                if (ts.ticksWaited > timeout) {
+                if (ts.ticksWaited >= timeout) {
                   ts.phase = 'scanning_box1';
                   ts.lockedSymbol = null;
-                  set({ botStatusMsg: `⌛ THENALL timeout after ${timeout} ticks — rescanning Box 1` });
+                  ts.ticksWaited = 0;
+                  ts.tradesThisRound = 0;
+                  set({ botStatusMsg: `⌛ THENALL timeout after ${timeout} ticks — rescanning Box 1 across all markets` });
                   continue;
                 }
 
@@ -2161,13 +2165,19 @@ export const useBotStore = create<BotStoreState>()(
                   .filter(c => c.type !== 'DIGIT_PATTERN')
                   .every(c => evaluateCondition(c, digits, quotes, symbol, s.tradeType));
                 const box2Pass = otherCondsPass && evaluateOneBox(dpCondForMode, 1, digits, quotes);
-                if (!box2Pass) continue;
+                if (!box2Pass) {
+                  const rem = Math.max(0, timeout - ts.ticksWaited);
+                  set({ botStatusMsg: `⏳ THENALL: waiting for Box 2 across markets (${rem} ticks left)` });
+                  continue;
+                }
 
                 // ✅ Box 2 matched on this market — fire trade
                 ts.tradesThisRound++;
                 if (cLock?.enabled || ts.tradesThisRound >= maxTrades) {
                   ts.phase = 'scanning_box1';
                   ts.lockedSymbol = null;
+                  ts.ticksWaited = 0;
+                  ts.tradesThisRound = 0;
                 }
                 // Fall through to trade-firing code below
               }
