@@ -2012,7 +2012,18 @@ export const useBotStore = create<BotStoreState>()(
           //   2. No two strategies can race to update the ladder with stale stakes.
           const hasAnyActiveGlobally = eng.activeTrades.size > 0;
           const hasVirt = eng.activeVirtual.length > 0;
-          if (hasAnyActiveGlobally || hasVirt) continue;
+          if (hasAnyActiveGlobally || hasVirt) {
+            // ── Mode 1 no_recheck: keep the pattern marching on EVERY real tick ──
+            // Without this, ticks consumed while a trade is settling do NOT advance
+            // the pattern index, shifting subsequent S/T positions by the number of
+            // blocked ticks and causing the wrong tick to be traded.
+            if (isLockNoRecheck && cLock?.enabled) {
+              const pat = cLock.tradePattern && cLock.tradePattern.length > 0 ? cLock.tradePattern : [true];
+              const pos = eng.lockState.patternIndex % pat.length;
+              eng.lockState.patternIndex = (pos + 1) % pat.length;
+            }
+            continue;
+          }
 
           // Digit pattern retrigger guard (bypassed when locked in no_recheck mode)
           const dpCond = s.conditions.find(c => c.type === 'DIGIT_PATTERN');
@@ -2177,12 +2188,10 @@ export const useBotStore = create<BotStoreState>()(
           }
 
           // ── EARLY LOCK ACTIVATION ──────────────────────────────────────────
-          // This MUST run before the trade pattern check. On the trigger tick,
-          // if the first pattern step is S (skip), the `continue` below would
-          // exit before the old lock block at the bottom — leaving locked=false.
-          // On every subsequent tick isLockNoRecheck would remain false, causing
-          // evalStrategy to run (which fails) and the bot to wait for another
-          // trigger digit before advancing the pattern.
+          // When the trigger condition first fires, lock the market & strategy and
+          // start the pattern on the VERY NEXT tick. The trigger tick itself does NOT
+          // count as a pattern step (S or T). This gives exact S-S-S-T rhythm starting
+          // from the tick immediately after the trigger digit/condition.
           if (cLock?.enabled && !eng.lockState.locked) {
             eng.lockState.locked = true;
             eng.lockState.stratId = stratId;
@@ -2191,7 +2200,9 @@ export const useBotStore = create<BotStoreState>()(
             eng.lockState.initialTriggered = true;
             eng.lockState.patternIndex = 0;
             const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
-            set({ botStatusMsg: `🔒 TRIGGER HIT on ${mLabel}! Locked to Strategy ${si + 1} (${cLock.mode === 'no_recheck' ? 'No Re-check' : 'Check Each Entry'})` });
+            set({ botStatusMsg: `🔒 TRIGGER HIT on ${mLabel}! Locked to Strategy ${si + 1} (${cLock.mode === 'no_recheck' ? 'No Re-check' : 'Check Each Entry'}) — pattern starts next tick` });
+            // Trigger tick does NOT consume a pattern step — continue to next tick
+            continue;
           }
 
           // ── TRADE PATTERN EXECUTION ────────────────────────────────────────
