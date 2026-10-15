@@ -2858,9 +2858,10 @@ export default function LaxPrimePage() {
                     virtualContract: { contractType: 'DIGITEVEN', ticks: 1 },
                     onVirtualWins:   { contractType: 'DIGITUNDER', barrier: 4, ticks: 1, threshold: 3, mode: 'consec' as const },
                     onVirtualLosses: { contractType: 'DIGITOVER',  barrier: 5, ticks: 1, threshold: 3, mode: 'consec' as const },
-                    returnToVirtual: { triggerType: 'wins' as const, mode: 'consec' as const, threshold: 1 },
+                    returnToVirtual: { triggerType: 'wins' as const, mode: 'consec' as const, threshold: 3 },
                   };
 
+                  const isLockMode1 = Boolean(continuousLock?.enabled && continuousLock?.mode === 'no_recheck');
 
                   const updateVS = (patch: Partial<typeof vs>) => {
                     const nextVS = { ...vs, ...patch };
@@ -2889,8 +2890,14 @@ export default function LaxPrimePage() {
                       : patch;
                     updateVS({ onVirtualLosses: { ...vs.onVirtualLosses, ...normPatch } });
                   };
-                  const updateReturnRule = (patch: Partial<typeof vs.returnToVirtual>) =>
-                    updateVS({ returnToVirtual: { ...vs.returnToVirtual, ...patch } });
+                  const updateReturnRule = (patch: Partial<typeof vs.returnToVirtual>) => {
+                    const currentRule = {
+                      triggerType: (vs.returnToVirtual?.triggerType || 'wins') as 'wins' | 'losses' | 'trades',
+                      mode: (vs.returnToVirtual?.mode || 'consec') as 'consec' | 'total',
+                      threshold: Math.max(1, Number(vs.returnToVirtual?.threshold) || 3),
+                    };
+                    updateVS({ returnToVirtual: { ...currentRule, ...patch } });
+                  };
 
 
                   const winNeedsBarrier = needsBarrier(vs.onVirtualWins?.contractType || 'DIGITUNDER');
@@ -2985,9 +2992,11 @@ export default function LaxPrimePage() {
                               <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                 <span style={{ fontSize: '9px', color: '#a78bfa', fontWeight: 'bold' }}>Ticks:</span>
                                 <input className="lp-num" type="number" min={1} max={100}
-                                  value={vs.virtualContract?.ticks ?? 1}
-                                  style={{ width: '34px', height: '24px', fontSize: '11px', textAlign: 'center' }}
+                                  value={isLockMode1 ? 1 : (vs.virtualContract?.ticks ?? 1)}
+                                  disabled={isLockMode1}
+                                  style={{ width: '34px', height: '24px', fontSize: '11px', textAlign: 'center', opacity: isLockMode1 ? 0.5 : 1 }}
                                   onChange={e => updateVirtContract({ ticks: Math.max(1, +e.target.value || 1) })} />
+                                {isLockMode1 && <span style={{ fontSize: '8px', color: '#f59e0b', fontWeight: 'bold' }}>Pattern</span>}
                               </div>
                             </div>
                           </div>
@@ -3040,9 +3049,11 @@ export default function LaxPrimePage() {
                               <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                 <span style={{ fontSize: '9px', color: '#a78bfa', fontWeight: 'bold' }}>Ticks:</span>
                                 <input className="lp-num" type="number" min={1} max={100}
-                                  value={vs.onVirtualWins?.ticks ?? 1}
-                                  style={{ width: '32px', height: '24px', fontSize: '11px', textAlign: 'center' }}
+                                  value={isLockMode1 ? 1 : (vs.onVirtualWins?.ticks ?? 1)}
+                                  disabled={isLockMode1}
+                                  style={{ width: '32px', height: '24px', fontSize: '11px', textAlign: 'center', opacity: isLockMode1 ? 0.5 : 1 }}
                                   onChange={e => updateWinRule({ ticks: Math.max(1, +e.target.value || 1) })} />
+                                {isLockMode1 && <span style={{ fontSize: '8px', color: '#f59e0b', fontWeight: 'bold' }}>Pattern</span>}
                               </div>
                             </div>
 
@@ -3106,9 +3117,11 @@ export default function LaxPrimePage() {
                               <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                 <span style={{ fontSize: '9px', color: '#a78bfa', fontWeight: 'bold' }}>Ticks:</span>
                                 <input className="lp-num" type="number" min={1} max={100}
-                                  value={vs.onVirtualLosses?.ticks ?? 1}
-                                  style={{ width: '32px', height: '24px', fontSize: '11px', textAlign: 'center' }}
+                                  value={isLockMode1 ? 1 : (vs.onVirtualLosses?.ticks ?? 1)}
+                                  disabled={isLockMode1}
+                                  style={{ width: '32px', height: '24px', fontSize: '11px', textAlign: 'center', opacity: isLockMode1 ? 0.5 : 1 }}
                                   onChange={e => updateLossRule({ ticks: Math.max(1, +e.target.value || 1) })} />
+                                {isLockMode1 && <span style={{ fontSize: '8px', color: '#f59e0b', fontWeight: 'bold' }}>Pattern</span>}
                               </div>
                             </div>
 
@@ -3140,7 +3153,7 @@ export default function LaxPrimePage() {
                             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' }}>
                               <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.6)' }}>Switch back after:</span>
                               <input className="lp-num" type="number" min={1} max={99}
-                                value={vs.returnToVirtual?.threshold ?? 1}
+                                value={vs.returnToVirtual?.threshold ?? 3}
                                 style={{ width: '32px', height: '22px', fontSize: '11px', textAlign: 'center' }}
                                 onChange={e => updateReturnRule({ threshold: Math.max(1, +e.target.value || 1) })} />
                               <select className="lp-sel" style={{ height: '22px', fontSize: '10px' }}

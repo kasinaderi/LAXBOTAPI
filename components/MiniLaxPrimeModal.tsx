@@ -913,6 +913,11 @@ export function MiniLaxPrimeModal({
             ...adaptiveSwitch.virtualSwitcher.onVirtualLosses,
             contractType: normalizeContractType(adaptiveSwitch.virtualSwitcher.onVirtualLosses?.contractType || 'DIGITOVER'),
           },
+          returnToVirtual: {
+            triggerType: (adaptiveSwitch.virtualSwitcher.returnToVirtual?.triggerType || 'wins') as 'wins' | 'losses' | 'trades',
+            mode: (adaptiveSwitch.virtualSwitcher.returnToVirtual?.mode || 'consec') as 'consec' | 'total',
+            threshold: Math.max(1, Number(adaptiveSwitch.virtualSwitcher.returnToVirtual?.threshold) || 3),
+          },
         } : undefined,
       },
       virtualSettings: {
@@ -1789,8 +1794,10 @@ export function MiniLaxPrimeModal({
                     virtualContract: { contractType: 'DIGITEVEN', ticks: 1 },
                     onVirtualWins:   { contractType: 'DIGITUNDER', barrier: 4, ticks: 1, threshold: 3, mode: 'consec' as const },
                     onVirtualLosses: { contractType: 'DIGITOVER',  barrier: 5, ticks: 1, threshold: 3, mode: 'consec' as const },
-                    returnToVirtual: { triggerType: 'wins' as const, mode: 'consec' as const, threshold: 1 },
+                    returnToVirtual: { triggerType: 'wins' as const, mode: 'consec' as const, threshold: 3 },
                   };
+
+                  const isLockMode1 = Boolean(continuousLock?.enabled && continuousLock?.mode === 'no_recheck');
 
                   const updateVS = (patch: Partial<typeof vs>) => {
                     setAdaptiveSwitch(prev => {
@@ -1814,8 +1821,14 @@ export function MiniLaxPrimeModal({
                     const normPatch = patch.contractType ? { ...patch, contractType: normalizeContractType(patch.contractType) } : patch;
                     updateVS({ onVirtualLosses: { ...vs.onVirtualLosses, ...normPatch } as typeof vs.onVirtualLosses });
                   };
-                  const updateReturnRule = (patch: Partial<typeof vs.returnToVirtual>) =>
-                    updateVS({ returnToVirtual: { ...vs.returnToVirtual, ...patch } });
+                  const updateReturnRule = (patch: Partial<typeof vs.returnToVirtual>) => {
+                    const currentRule = {
+                      triggerType: (vs.returnToVirtual?.triggerType || 'wins') as 'wins' | 'losses' | 'trades',
+                      mode: (vs.returnToVirtual?.mode || 'consec') as 'consec' | 'total',
+                      threshold: Math.max(1, Number(vs.returnToVirtual?.threshold) || 3),
+                    };
+                    updateVS({ returnToVirtual: { ...currentRule, ...patch } });
+                  };
 
                   const winNeedsBarrier  = needsBarrier(vs.onVirtualWins?.contractType  || 'DIGITUNDER');
                   const lossNeedsBarrier = needsBarrier(vs.onVirtualLosses?.contractType || 'DIGITOVER');
@@ -1874,10 +1887,12 @@ export function MiniLaxPrimeModal({
                               <div className="flex items-center gap-1">
                                 <span className="text-[9px] text-purple-400 font-bold">Ticks:</span>
                                 <input type="number" min={1} max={100}
-                                  value={vs.virtualContract?.ticks ?? 1}
+                                  value={isLockMode1 ? 1 : (vs.virtualContract?.ticks ?? 1)}
+                                  disabled={isLockMode1}
                                   onChange={e => updateVirtContract({ ticks: Math.max(1, +e.target.value || 1) })}
-                                  className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px]"
+                                  className={`w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px] ${isLockMode1 ? 'opacity-50 cursor-not-allowed' : ''}`}
                                   style={{ background: '#0f172a', color: '#fff' }} />
+                                {isLockMode1 && <span className="text-[8px] text-amber-400 font-bold">Pattern</span>}
                               </div>
                             </div>
                           </div>
@@ -1920,10 +1935,12 @@ export function MiniLaxPrimeModal({
                               <div className="flex items-center gap-1">
                                 <span className="text-purple-400 font-bold">Ticks:</span>
                                 <input type="number" min={1} max={100}
-                                  value={vs.onVirtualWins?.ticks ?? 1}
+                                  value={isLockMode1 ? 1 : (vs.onVirtualWins?.ticks ?? 1)}
+                                  disabled={isLockMode1}
                                   onChange={e => updateWinRule({ ticks: Math.max(1, +e.target.value || 1) })}
-                                  className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px]"
+                                  className={`w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px] ${isLockMode1 ? 'opacity-50 cursor-not-allowed' : ''}`}
                                   style={{ background: '#0f172a', color: '#fff' }} />
+                                {isLockMode1 && <span className="text-[8px] text-amber-400 font-bold">Pattern</span>}
                               </div>
                             </div>
                             <div className="flex items-center gap-1.5 text-[9px]">
@@ -1976,10 +1993,12 @@ export function MiniLaxPrimeModal({
                               <div className="flex items-center gap-1">
                                 <span className="text-purple-400 font-bold">Ticks:</span>
                                 <input type="number" min={1} max={100}
-                                  value={vs.onVirtualLosses?.ticks ?? 1}
+                                  value={isLockMode1 ? 1 : (vs.onVirtualLosses?.ticks ?? 1)}
+                                  disabled={isLockMode1}
                                   onChange={e => updateLossRule({ ticks: Math.max(1, +e.target.value || 1) })}
-                                  className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px]"
+                                  className={`w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px] ${isLockMode1 ? 'opacity-50 cursor-not-allowed' : ''}`}
                                   style={{ background: '#0f172a', color: '#fff' }} />
+                                {isLockMode1 && <span className="text-[8px] text-amber-400 font-bold">Pattern</span>}
                               </div>
                             </div>
                             <div className="flex items-center gap-1.5 text-[9px]">
@@ -1999,7 +2018,7 @@ export function MiniLaxPrimeModal({
                             <span className="text-[10px] font-bold text-cyan-300">4. Return to Virtual After</span>
                             <div className="flex flex-wrap items-center gap-1.5 text-[9px]">
                               <input type="number" min={1} max={99}
-                                value={vs.returnToVirtual?.threshold ?? 1}
+                                value={vs.returnToVirtual?.threshold ?? 3}
                                 onChange={e => updateReturnRule({ threshold: Math.max(1, +e.target.value || 1) })}
                                 className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px]"
                                 style={{ background: '#0f172a', color: '#fff' }} />

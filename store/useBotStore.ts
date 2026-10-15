@@ -881,6 +881,11 @@ function processVirtualSwitcherResult(isWin: boolean, get: () => any, set: (stat
         enabled: true,
         virtualSwitcher: {
           ...vs,
+          returnToVirtual: {
+            triggerType: (vs.returnToVirtual?.triggerType || 'wins') as 'wins' | 'losses' | 'trades',
+            mode: (vs.returnToVirtual?.mode || 'consec') as 'consec' | 'total',
+            threshold: Math.max(1, Number(vs.returnToVirtual?.threshold) || 3),
+          },
           _phase: 'real',
           _activeRule: triggeredRule,
           _activeContract: activeContract,
@@ -939,7 +944,12 @@ function processVirtualSwitcherRealResult(isWin: boolean, get: () => any, set: (
     rTotalL++;
   }
 
-  const retRule = vs.returnToVirtual || { triggerType: 'wins', mode: 'consec', threshold: 1 };
+  const rawRule = vs.returnToVirtual;
+  const retRule = {
+    triggerType: (rawRule?.triggerType || 'wins') as 'wins' | 'losses' | 'trades',
+    mode: (rawRule?.mode || 'consec') as 'consec' | 'total',
+    threshold: Math.max(1, Number(rawRule?.threshold) || 3),
+  };
   let count = 0;
   if (retRule.triggerType === 'wins') {
     count = retRule.mode === 'consec' ? rConsecW : rTotalW;
@@ -969,6 +979,7 @@ function processVirtualSwitcherRealResult(isWin: boolean, get: () => any, set: (
         enabled: true,
         virtualSwitcher: {
           ...vs,
+          returnToVirtual: retRule,
           _phase: 'virtual',
           _activeRule: null,
           _activeContract: null,
@@ -990,6 +1001,7 @@ function processVirtualSwitcherRealResult(isWin: boolean, get: () => any, set: (
         ...aSw,
         virtualSwitcher: {
           ...vs,
+          returnToVirtual: retRule,
           _rConsecWins: rConsecW,
           _rConsecLosses: rConsecL,
           _rTotalWins: rTotalW,
@@ -1371,12 +1383,19 @@ export const useBotStore = create<BotStoreState>()(
         const curASw = get().adaptiveSwitch;
         const isVSActive = Boolean(curASw?.virtualSwitcher?.enabled);
         if (curASw?.virtualSwitcher) {
+          const vsRaw = curASw.virtualSwitcher;
+          const safeReturnRule = {
+            triggerType: (vsRaw.returnToVirtual?.triggerType || 'wins') as 'wins' | 'losses' | 'trades',
+            mode: (vsRaw.returnToVirtual?.mode || 'consec') as 'consec' | 'total',
+            threshold: Math.max(1, Number(vsRaw.returnToVirtual?.threshold) || 3),
+          };
           set({
             adaptiveSwitch: {
               ...curASw,
               enabled: isVSActive ? true : curASw.enabled,
               virtualSwitcher: {
-                ...curASw.virtualSwitcher,
+                ...vsRaw,
+                returnToVirtual: safeReturnRule,
                 _phase: 'virtual',
                 _consecWins: 0,
                 _consecLosses: 0,
@@ -2262,10 +2281,11 @@ export const useBotStore = create<BotStoreState>()(
           const isVSActive = Boolean(aSwitch.virtualSwitcher?.enabled);
           if (isVSActive) {
             const vs = aSwitch.virtualSwitcher!;
+            const isLockMode1 = Boolean(cLock?.enabled && cLock?.mode === 'no_recheck');
             if (isVirtual) {
               const vc = vs.virtualContract || { contractType: 'DIGITEVEN', ticks: 1 };
               const targetContract = normalizeContractType(vc.contractType || (vc as any).type || 'DIGITEVEN');
-              const targetTicks = Math.max(1, vc.ticks || s.ticks || 1);
+              const targetTicks = isLockMode1 ? 1 : Math.max(1, vc.ticks || s.ticks || 1);
               tradesToPlace = [{
                 contractType: targetContract,
                 barrier: needsBarrier(targetContract) ? (vc.barrier ?? 4) : undefined,
@@ -2279,7 +2299,7 @@ export const useBotStore = create<BotStoreState>()(
             } else {
               const ac = vs._activeContract || { contractType: vs.onVirtualWins?.contractType || 'DIGITUNDER', barrier: vs.onVirtualWins?.barrier, ticks: vs.onVirtualWins?.ticks || 1 };
               const targetContract = normalizeContractType(ac.contractType || (ac as any).type || 'DIGITUNDER');
-              const targetTicks = Math.max(1, ac.ticks || s.ticks || 1);
+              const targetTicks = isLockMode1 ? 1 : Math.max(1, ac.ticks || s.ticks || 1);
               tradesToPlace = [{
                 contractType: targetContract,
                 barrier: needsBarrier(targetContract) ? (ac.barrier ?? 4) : undefined,
@@ -2288,7 +2308,12 @@ export const useBotStore = create<BotStoreState>()(
               }];
               const lbl = TRADE_OPTIONS.find(o => o.value === targetContract)?.label || targetContract;
               const barText = ac.barrier !== undefined && needsBarrier(targetContract) ? ` ${ac.barrier}` : '';
-              const rRule = vs.returnToVirtual || { triggerType: 'wins', mode: 'consec', threshold: 1 };
+              const rawRule = vs.returnToVirtual;
+              const rRule = {
+                triggerType: (rawRule?.triggerType || 'wins') as 'wins' | 'losses' | 'trades',
+                mode: (rawRule?.mode || 'consec') as 'consec' | 'total',
+                threshold: Math.max(1, Number(rawRule?.threshold) || 3),
+              };
               const rCount = rRule.triggerType === 'wins' ? (rRule.mode === 'consec' ? vs._rConsecWins || 0 : vs._rTotalWins || 0)
                 : rRule.triggerType === 'losses' ? (rRule.mode === 'consec' ? vs._rConsecLosses || 0 : vs._rTotalLosses || 0)
                 : (vs._rTotalTrades || 0);
