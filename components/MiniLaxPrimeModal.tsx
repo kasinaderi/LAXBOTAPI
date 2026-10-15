@@ -12,7 +12,8 @@ import {
   AdaptiveSwitch, AdaptiveSwitchStep, SwitcherTradeConfig,
   ALL_MARKETS, TRADE_OPTIONS, normalizeContractType,
   createCondition, createStrategy, needsBarrier,
-  useBotStore
+  useBotStore,
+  ContinuousLockConfig,
 } from '@/store/useBotStore';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -33,7 +34,9 @@ export interface LaxPrimeStepConfig {
   stopLoss?: string;              // Step SL
   stopLossMode?: 'loss' | 'losses';     // USD vs Losses
   adaptiveSwitch?: AdaptiveSwitch;
+  continuousLock?: ContinuousLockConfig;
   virtualSettings?: {
+
     isVirtualMode: boolean;
     startVirtualToReal: boolean;
     vTriggerType: 'wins' | 'losses';
@@ -92,7 +95,7 @@ const CONDITION_TYPES = [
   { value: 'OVER_PCT',      label: 'OVER ( ) % IS' },
   { value: 'UNDER_PCT',     label: 'UNDER ( ) % IS' },
   { value: 'LAST_DIGITS',   label: 'LAST N DIGITS ARE' },
-  { value: 'GREEN_BAR',     label: 'GREEN BAR IS ON DIGIT' },
+  { value: 'GREEN_BAR',     label: 'TOP ( ) DIGITS ARE' },
   { value: 'DIGIT_PATTERN', label: 'DIGIT PATTERN' },
   { value: 'DIGIT_APPEARS', label: 'IF DIGIT ( ) APPEARS' },
   { value: 'RSI_SIGNAL',    label: 'RSI SIGNAL [trade_lexx]' },
@@ -657,6 +660,21 @@ export function MiniLaxPrimeModal({
     ],
   });
 
+  // Continuous Lock state
+  const [showContinuousLockPanel, setShowContinuousLockPanel] = useState(false);
+  const [continuousLock, setContinuousLock] = useState<ContinuousLockConfig>({
+    enabled: false,
+    mode: 'no_recheck',
+    tradePattern: [true, false, false, false, true, false, false, false],
+    useTradePattern: true,
+    lockTPEnabled: false,
+    lockTPMode: 'wins',
+    lockTP: 3,
+    lockSLEnabled: false,
+    lockSLMode: 'losses',
+    lockSL: 3,
+  });
+
   // Virtual System state
   const [showVirtualPanel, setShowVirtualPanel] = useState(false);
   const [showSwitcherPanel, setShowSwitcherPanel] = useState(false);
@@ -702,9 +720,42 @@ export function MiniLaxPrimeModal({
   const stepTpTouchXRef = React.useRef<number | null>(null);
   const stepSlTouchXRef = React.useRef<number | null>(null);
 
-  // Sync state when opened
+  // Sync state when opened - isolated per-step with explicit clean defaults
   useEffect(() => {
     if (!isOpen) return;
+
+    const defaultVirt = {
+      isVirtualMode: false,
+      startVirtualToReal: false,
+      vTriggerType: 'wins' as const,
+      vTriggerMode: 'consec' as const,
+      vThreshold: 2,
+      vInEnabled: false,
+      vInTrades: 5,
+      isDoubleVirtual: false,
+      vDoubleStage: 'A' as const,
+      vTriggerTypeB: 'wins' as const,
+      vTriggerModeB: 'consec' as const,
+      vThresholdB: 2,
+      vInEnabledB: false,
+      vInTradesB: 5,
+      vStageBReps: 3,
+      vStageBCompletedReps: 0,
+      startRealToVirtual: false,
+      rTriggerType: 'wins' as const,
+      rTriggerMode: 'consec' as const,
+      rThreshold: 3,
+      smartSettings: {
+        enabled: false,
+        type: 'sequence' as const,
+        sequence: { step1Type: 'Wins' as const, step1Qty: 2, step1Mode: 'consecutive' as const, step2Type: 'Losses' as const, step2Qty: 2, step2Mode: 'consecutive' as const },
+        alternating: { count: 2 },
+      },
+      virtualWins: 0, virtualLosses: 0,
+      vConsecWins: 0, vConsecLosses: 0,
+      realWins: 0, realLosses: 0,
+      rConsecWins: 0, rConsecLosses: 0,
+    };
 
     if (currentConfig && currentConfig.strategies && currentConfig.strategies.length > 0) {
       setStrategies(JSON.parse(JSON.stringify(currentConfig.strategies)));
@@ -721,10 +772,38 @@ export function MiniLaxPrimeModal({
       setStopLossMode(currentConfig.stopLossMode || 'losses');
       if (currentConfig.adaptiveSwitch) {
         setAdaptiveSwitch(JSON.parse(JSON.stringify(currentConfig.adaptiveSwitch)));
+      } else {
+        setAdaptiveSwitch({
+          enabled: false,
+          dualMode: false,
+          steps: [
+            { contractType: 'DIGITEVEN', reps: 2 },
+            { contractType: 'DIGITODD',  reps: 2 },
+          ],
+        });
       }
-      // Sync virtualSettings
+      // Sync virtualSettings with full reset to prevent previous step values leaking
       if (currentConfig.virtualSettings) {
-        setVirtualMode(prev => ({ ...prev, ...currentConfig.virtualSettings }));
+        setVirtualMode({ ...defaultVirt, ...currentConfig.virtualSettings });
+      } else {
+        setVirtualMode(defaultVirt);
+      }
+      // Sync continuousLock
+      if (currentConfig.continuousLock) {
+        setContinuousLock(JSON.parse(JSON.stringify(currentConfig.continuousLock)));
+      } else {
+        setContinuousLock({
+          enabled: false,
+          mode: 'no_recheck',
+          tradePattern: [true, false, false, false, true, false, false, false],
+          useTradePattern: true,
+          lockTPEnabled: false,
+          lockTPMode: 'wins',
+          lockTP: 3,
+          lockSLEnabled: false,
+          lockSLMode: 'losses',
+          lockSL: 3,
+        });
       }
     } else {
       const liveState = useBotStore.getState();
@@ -748,40 +827,22 @@ export function MiniLaxPrimeModal({
           { contractType: 'DIGITODD',  reps: 2 },
         ],
       });
-      setVirtualMode({
-        isVirtualMode: false,
-        startVirtualToReal: false,
-        vTriggerType: 'wins',
-        vTriggerMode: 'consec',
-        vThreshold: 2,
-        vInEnabled: false,
-        vInTrades: 5,
-        isDoubleVirtual: false,
-        vDoubleStage: 'A',
-        vTriggerTypeB: 'wins',
-        vTriggerModeB: 'consec',
-        vThresholdB: 2,
-        vInEnabledB: false,
-        vInTradesB: 5,
-        vStageBReps: 3,
-        vStageBCompletedReps: 0,
-        startRealToVirtual: false,
-        rTriggerType: 'wins',
-        rTriggerMode: 'consec',
-        rThreshold: 3,
-        smartSettings: {
-          enabled: false,
-          type: 'sequence',
-          sequence: { step1Type: 'Wins', step1Qty: 2, step1Mode: 'consecutive', step2Type: 'Losses', step2Qty: 2, step2Mode: 'consecutive' },
-          alternating: { count: 2 },
-        },
-        virtualWins: 0, virtualLosses: 0,
-        vConsecWins: 0, vConsecLosses: 0,
-        realWins: 0, realLosses: 0,
-        rConsecWins: 0, rConsecLosses: 0,
+      setVirtualMode(defaultVirt);
+      setContinuousLock({
+        enabled: false,
+        mode: 'no_recheck',
+        tradePattern: [true, false, false, false, true, false, false, false],
+        useTradePattern: true,
+        lockTPEnabled: false,
+        lockTPMode: 'wins',
+        lockTP: 3,
+        lockSLEnabled: false,
+        lockSLMode: 'losses',
+        lockSL: 3,
       });
     }
   }, [isOpen, currentConfig]);
+
 
   if (!isOpen) return null;
 
@@ -862,7 +923,9 @@ export function MiniLaxPrimeModal({
         isDoubleVirtual: isVS ? false : virtualMode.isDoubleVirtual,
         smartSettings: isVS ? { ...(virtualMode.smartSettings || { enabled: false, type: 'sequence' as const, sequence: { step1Type: 'Wins' as const, step1Qty: 2, step1Mode: 'consecutive' as const, step2Type: 'Losses' as const, step2Qty: 2, step2Mode: 'consecutive' as const }, alternating: { count: 2 } }), enabled: false } : virtualMode.smartSettings,
       },
+      continuousLock,
     };
+
     onSave(configToSave);
     onClose();
   };
@@ -1134,8 +1197,272 @@ export function MiniLaxPrimeModal({
             </div>
           </div>
 
+          {/* ── Continuous Lock Panel ── */}
+          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <span className="text-sm">🔒</span>
+                <span className="text-xs font-black text-white uppercase tracking-wider">Continuous Lock Trading</span>
+                {continuousLock?.enabled && (
+                  <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 text-[9px] font-black animate-pulse">● LOCKED MODE ACTIVE</span>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={continuousLock?.enabled || false}
+                    onChange={e => setContinuousLock(prev => ({ ...prev, enabled: e.target.checked }))}
+                    className="accent-amber-500"
+                  />
+                  <span className="text-xs font-bold text-gray-300">Enable Lock</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowContinuousLockPanel(v => !v)}
+                  className="text-xs text-amber-400 hover:text-amber-300 font-bold"
+                >
+                  {showContinuousLockPanel ? '▲ Hide' : '▼ Configure'}
+                </button>
+              </div>
+            </div>
+
+            {showContinuousLockPanel && (
+              <div className="space-y-3 mt-3 pt-3 border-t border-white/10">
+                <p className="text-[10px] text-gray-400 leading-relaxed">
+                  When enabled, the bot scans all strategies across markets. As soon as a strategy triggers, it <strong className="text-amber-400">locks into that market &amp; strategy</strong> and executes continuously according to the Trade Pattern until Take Profit or Stop Loss is reached. All other strategies and markets are locked out.
+                </p>
+
+                {/* Mode Selector */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div
+                    onClick={() => setContinuousLock(prev => ({ ...prev, mode: 'no_recheck' }))}
+                    className={`p-3 rounded-xl border cursor-pointer transition-all ${
+                      continuousLock?.mode === 'no_recheck'
+                        ? 'border-amber-500/50 bg-amber-500/10 text-white shadow-sm'
+                        : 'border-white/5 bg-black/40 text-gray-400 hover:border-white/10'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[11px] font-black text-amber-300">1. Trade after 1st entry (no re-check)</span>
+                      {continuousLock?.mode === 'no_recheck' && (
+                        <span className="text-[8px] font-black bg-amber-500 text-black px-1.5 py-0.5 rounded">ACTIVE</span>
+                      )}
+                    </div>
+                    <p className="text-[9px] text-gray-400 leading-snug">
+                      Condition is initial trigger only. Once triggered, loops the trade pattern continuously without re-evaluating conditions.
+                    </p>
+                  </div>
+
+                  <div
+                    onClick={() => setContinuousLock(prev => ({ ...prev, mode: 'continuous_check' }))}
+                    className={`p-3 rounded-xl border cursor-pointer transition-all ${
+                      continuousLock?.mode === 'continuous_check'
+                        ? 'border-amber-500/50 bg-amber-500/10 text-white shadow-sm'
+                        : 'border-white/5 bg-black/40 text-gray-400 hover:border-white/10'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[11px] font-black text-amber-300">2. Trade continuously + check entry</span>
+                      {continuousLock?.mode === 'continuous_check' && (
+                        <span className="text-[8px] font-black bg-amber-500 text-black px-1.5 py-0.5 rounded">ACTIVE</span>
+                      )}
+                    </div>
+                    <p className="text-[9px] text-gray-400 leading-snug">
+                      Locks onto the triggering market &amp; strategy. Re-verifies entry conditions on the locked market before each trade in the pattern.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Trade Pattern Config */}
+                <div className="bg-black/40 border border-white/10 rounded-xl p-3 space-y-2">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <span className="text-[10px] font-bold text-gray-300 uppercase tracking-wider">
+                      Locked Trade Pattern Loop
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const cur = continuousLock?.tradePattern || [true, false];
+                          if (cur.length < 16) {
+                            setContinuousLock(prev => ({ ...prev, tradePattern: [...cur, true] }));
+                          }
+                        }}
+                        className="px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-[9px] font-bold text-gray-300 border border-white/10"
+                      >
+                        + Add Step
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const cur = continuousLock?.tradePattern || [true, false];
+                          if (cur.length > 1) {
+                            setContinuousLock(prev => ({ ...prev, tradePattern: cur.slice(0, -1) }));
+                          }
+                        }}
+                        className="px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-[9px] font-bold text-gray-300 border border-white/10"
+                      >
+                        − Remove Step
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setContinuousLock(prev => ({ ...prev, tradePattern: [true, false, false, false, true, false, false, false] }));
+                        }}
+                        className="px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-[9px] font-bold text-gray-400 border border-white/10"
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {(continuousLock?.tradePattern || [true, false]).map((isTrade, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          const updated = [...(continuousLock?.tradePattern || [true, false])];
+                          updated[idx] = !updated[idx];
+                          setContinuousLock(prev => ({ ...prev, tradePattern: updated }));
+                        }}
+                        className={`w-9 h-10 rounded-lg flex flex-col items-center justify-center font-bold text-xs transition-all ${
+                          isTrade
+                            ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 border border-emerald-500'
+                            : 'bg-slate-800 text-gray-500 border border-white/5 hover:border-white/20'
+                        }`}
+                        title={`Step ${idx + 1}: ${isTrade ? 'TRADE' : 'SKIP'}`}
+                      >
+                        <span className="text-[8px] opacity-60 leading-none">{idx + 1}</span>
+                        <span className="text-[11px] font-black leading-none mt-0.5">{isTrade ? 'T' : 'S'}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="text-[9px] text-gray-500 pt-1">
+                    Loop: {(continuousLock?.tradePattern || [true, false]).map((t, i) => (
+                      <span key={i}>
+                        <span className={t ? 'text-emerald-400 font-bold' : 'text-gray-500'}>{t ? 'Trade' : 'Skip'}</span>
+                        {i < (continuousLock?.tradePattern || []).length - 1 && ' → '}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* ── Lock Session TP / SL Card ── */}
+                <div className="bg-black/40 border border-amber-500/20 rounded-xl p-3 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
+                      🎯 Lock Session TP / SL
+                    </span>
+                    <span className="text-[9px] text-gray-500">
+                      Unlocks &amp; rescans when hit (bot keeps running)
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    {/* Lock TP */}
+                    <div className={`p-2.5 rounded-lg border transition-all ${
+                      continuousLock?.lockTPEnabled
+                        ? 'bg-emerald-500/10 border-emerald-500/30'
+                        : 'bg-white/2 border-white/5'
+                    }`}>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-[10px] font-bold text-emerald-400">LOCK TAKE PROFIT</span>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={continuousLock?.lockTPEnabled || false}
+                            onChange={e => setContinuousLock(prev => ({ ...prev, lockTPEnabled: e.target.checked }))}
+                          />
+                          <div className="w-7 h-3.5 bg-slate-700 peer-checked:bg-emerald-500 rounded-full transition-colors" />
+                          <div className="absolute left-0.5 top-0.5 w-2.5 h-2.5 bg-white rounded-full transition-transform peer-checked:translate-x-3.5" />
+                        </label>
+                      </div>
+                      {continuousLock?.lockTPEnabled && (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <select
+                            value={continuousLock?.lockTPMode || 'wins'}
+                            onChange={e => setContinuousLock(prev => ({ ...prev, lockTPMode: e.target.value as 'wins' | 'profit' }))}
+                            className="bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-white text-[10px]"
+                            style={{ background: '#0f172a', color: '#fff' }}
+                          >
+                            <option value="wins" style={{ background: '#0f172a' }}>Wins</option>
+                            <option value="profit" style={{ background: '#0f172a' }}>$ Profit</option>
+                          </select>
+                          <input
+                            type="number"
+                            min={1}
+                            step={continuousLock?.lockTPMode === 'profit' ? 0.1 : 1}
+                            value={continuousLock?.lockTP ?? 3}
+                            onChange={e => setContinuousLock(prev => ({ ...prev, lockTP: Math.max(0.01, parseFloat(e.target.value) || 1) }))}
+                            className="w-12 bg-slate-900 border border-emerald-500/40 rounded px-1 py-0.5 text-center text-emerald-300 text-[10px] font-bold"
+                            style={{ background: '#0f172a' }}
+                          />
+                          <span className="text-[9px] text-gray-500">
+                            {continuousLock?.lockTPMode === 'profit' ? '$ → unlock' : 'wins → unlock'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Lock SL */}
+                    <div className={`p-2.5 rounded-lg border transition-all ${
+                      continuousLock?.lockSLEnabled
+                        ? 'bg-rose-500/10 border-rose-500/30'
+                        : 'bg-white/2 border-white/5'
+                    }`}>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-[10px] font-bold text-rose-400">LOCK STOP LOSS</span>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={continuousLock?.lockSLEnabled || false}
+                            onChange={e => setContinuousLock(prev => ({ ...prev, lockSLEnabled: e.target.checked }))}
+                          />
+                          <div className="w-7 h-3.5 bg-slate-700 peer-checked:bg-rose-500 rounded-full transition-colors" />
+                          <div className="absolute left-0.5 top-0.5 w-2.5 h-2.5 bg-white rounded-full transition-transform peer-checked:translate-x-3.5" />
+                        </label>
+                      </div>
+                      {continuousLock?.lockSLEnabled && (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <select
+                            value={continuousLock?.lockSLMode || 'losses'}
+                            onChange={e => setContinuousLock(prev => ({ ...prev, lockSLMode: e.target.value as 'losses' | 'loss' }))}
+                            className="bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-white text-[10px]"
+                            style={{ background: '#0f172a', color: '#fff' }}
+                          >
+                            <option value="losses" style={{ background: '#0f172a' }}>Losses</option>
+                            <option value="loss" style={{ background: '#0f172a' }}>$ Loss</option>
+                          </select>
+                          <input
+                            type="number"
+                            min={1}
+                            step={continuousLock?.lockSLMode === 'loss' ? 0.1 : 1}
+                            value={continuousLock?.lockSL ?? 3}
+                            onChange={e => setContinuousLock(prev => ({ ...prev, lockSL: Math.max(0.01, parseFloat(e.target.value) || 1) }))}
+                            className="w-12 bg-slate-900 border border-rose-500/40 rounded px-1 py-0.5 text-center text-rose-300 text-[10px] font-bold"
+                            style={{ background: '#0f172a' }}
+                          />
+                          <span className="text-[9px] text-gray-500">
+                            {continuousLock?.lockSLMode === 'loss' ? '$ → unlock' : 'losses → unlock'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            )}
+          </div>
+
           {/* ── Virtual System Panel ── */}
           <div className="rounded-2xl border border-purple-500/20 bg-purple-500/5 p-4">
+
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
                 <FlaskConical className="w-4 h-4 text-purple-400" />
@@ -2125,48 +2452,131 @@ export function MiniLaxPrimeModal({
                               </div>
                             )}
 
-                            {cond.type === 'GREEN_BAR' && (
-                              <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-300">
-                                <span>IS ON DIGIT</span>
-                                <select
-                                  value={cond.barValue}
-                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, barValue: +e.target.value })}
-                                  className="bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white"
-                                  style={{ background: '#0f172a', color: '#ffffff' }}
-                                >
-                                  {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(d => <option key={d} value={d} style={{ background: '#0f172a', color: '#fff' }}>{d}</option>)}
-                                </select>
-                                <span>WITH PCT</span>
-                                <select
-                                  value={cond.comparator}
-                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, comparator: e.target.value })}
-                                  className="bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white"
-                                  style={{ background: '#0f172a', color: '#ffffff' }}
-                                >
-                                  {COMPARATORS.map(c => <option key={c} value={c} style={{ background: '#0f172a', color: '#fff' }}>{c}</option>)}
-                                </select>
-                                <input
-                                  type="number"
-                                  min="0"
-                                  max="100"
-                                  value={cond.value}
-                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, value: +e.target.value })}
-                                  className="w-12 bg-slate-900 border border-white/10 rounded px-1 text-center text-white"
-                                  style={{ background: '#0f172a', color: '#ffffff' }}
-                                />
-                                <span>% in last</span>
-                                <input
-                                  type="number"
-                                  min={1}
-                                  max={1000}
-                                  value={cond.period}
-                                  onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, period: +e.target.value })}
-                                  className="w-14 bg-slate-900 border border-white/10 rounded px-1 text-center text-white"
-                                  style={{ background: '#0f172a', color: '#ffffff' }}
-                                />
-                                <span>ticks</span>
-                              </div>
-                            )}
+                            {cond.type === 'GREEN_BAR' && (() => {
+                              const topCount = Math.max(1, cond.topCount ?? 3);
+                              const category = cond.digitValue || 'EVEN';
+                              const isOverUnder = category === 'OVER' || category === 'UNDER';
+                              const barrier = cond.digitBarrier ?? 4;
+                              const allAbove = cond.allAboveMinPct ?? true;
+
+                              let maxTop = 5;
+                              if (category === 'OVER') maxTop = Math.max(1, 9 - barrier);
+                              else if (category === 'UNDER') maxTop = Math.max(1, barrier + 1);
+
+                              const overMaxBarrier = Math.max(0, 9 - topCount);
+                              const underMinBarrier = Math.min(9, Math.max(0, topCount - 1));
+
+                              const updateC = (patch: any) => updateConditionInStrat(sIdx, cond.id, { ...cond, ...patch });
+
+                              return (
+                                <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-300">
+                                  <span>TOP</span>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={maxTop}
+                                    value={topCount}
+                                    onChange={e => {
+                                      const val = Math.max(1, Math.min(maxTop, +e.target.value || 1));
+                                      let b = barrier;
+                                      if (category === 'OVER' && b > 9 - val) b = 9 - val;
+                                      if (category === 'UNDER' && b < val - 1) b = val - 1;
+                                      updateC({ topCount: val, digitBarrier: b });
+                                    }}
+                                    className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-1 text-center text-white"
+                                    style={{ background: '#0f172a', color: '#ffffff' }}
+                                  />
+                                  <span>DIGITS ARE</span>
+                                  <select
+                                    value={category}
+                                    onChange={e => {
+                                      const newCat = e.target.value;
+                                      let newMax = 5;
+                                      let b = barrier;
+                                      if (newCat === 'OVER') {
+                                        if (b > 9 - topCount) b = Math.max(0, 9 - topCount);
+                                        newMax = Math.max(1, 9 - b);
+                                      } else if (newCat === 'UNDER') {
+                                        if (b < topCount - 1) b = Math.min(9, Math.max(0, topCount - 1));
+                                        newMax = Math.max(1, b + 1);
+                                      }
+                                      const clampedTop = Math.min(topCount, newMax);
+                                      updateC({ digitValue: newCat, topCount: clampedTop, digitBarrier: b });
+                                    }}
+                                    className="bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white"
+                                    style={{ background: '#0f172a', color: '#ffffff' }}
+                                  >
+                                    <option value="EVEN" style={{ background: '#0f172a', color: '#fff' }}>EVEN</option>
+                                    <option value="ODD" style={{ background: '#0f172a', color: '#fff' }}>ODD</option>
+                                    <option value="OVER" style={{ background: '#0f172a', color: '#fff' }}>OVER</option>
+                                    <option value="UNDER" style={{ background: '#0f172a', color: '#fff' }}>UNDER</option>
+                                  </select>
+
+                                  {isOverUnder && (
+                                    <>
+                                      <span>{category}</span>
+                                      <input
+                                        type="number"
+                                        min={category === 'OVER' ? 0 : underMinBarrier}
+                                        max={category === 'OVER' ? overMaxBarrier : 9}
+                                        value={barrier}
+                                        onChange={e => {
+                                          let b = +e.target.value;
+                                          if (category === 'OVER') b = Math.max(0, Math.min(overMaxBarrier, b));
+                                          if (category === 'UNDER') b = Math.max(underMinBarrier, Math.min(9, b));
+                                          updateC({ digitBarrier: b });
+                                        }}
+                                        className="w-10 bg-slate-900 border border-cyan-500/40 rounded px-1 py-1 text-center text-cyan-300 font-bold"
+                                        style={{ background: '#0f172a' }}
+                                        title={category === 'OVER'
+                                          ? `Max barrier is ${overMaxBarrier} so that at least ${topCount} digits can be over ${overMaxBarrier}`
+                                          : `Min barrier is ${underMinBarrier} so that at least ${topCount} digits can be under ${underMinBarrier}`}
+                                      />
+                                    </>
+                                  )}
+
+                                  <label className="flex items-center gap-1 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={allAbove}
+                                      onChange={e => updateC({ allAboveMinPct: e.target.checked })}
+                                      className="accent-emerald-500 cursor-pointer"
+                                    />
+                                    <span className={allAbove ? 'text-emerald-400 font-medium' : 'text-gray-500'}>
+                                      and all above
+                                    </span>
+                                  </label>
+
+                                  {allAbove && (
+                                    <>
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        max="100"
+                                        step="0.5"
+                                        value={cond.value ?? 10}
+                                        onChange={e => updateC({ value: +e.target.value })}
+                                        className="w-12 bg-slate-900 border border-white/10 rounded px-1 py-1 text-center text-white"
+                                        style={{ background: '#0f172a', color: '#ffffff' }}
+                                      />
+                                      <span>%</span>
+                                    </>
+                                  )}
+
+                                  <span>in last</span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="1000"
+                                    value={cond.period || 100}
+                                    onChange={e => updateC({ period: +e.target.value })}
+                                    className="w-14 bg-slate-900 border border-white/10 rounded px-1 py-1 text-center text-white"
+                                    style={{ background: '#0f172a', color: '#ffffff' }}
+                                  />
+                                  <span>ticks</span>
+                                </div>
+                              );
+                            })()}
 
                             {cond.type === 'DIGIT_APPEARS' && (
                               <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-300">

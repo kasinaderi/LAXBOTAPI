@@ -68,6 +68,7 @@ const BOT_SETTINGS_FIELDS = [
   'selectedMarkets',
   'crossMarketDelay',
   'adaptiveSwitch',
+  'continuousLock',
 ] as const;
 
 type Snap = Record<string, unknown>;

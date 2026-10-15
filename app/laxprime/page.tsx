@@ -16,7 +16,9 @@ import {
   createCondition, createStrategy, needsBarrier,
   botTradeIds,
   normalizeContractType,
+  ContinuousLockConfig,
 } from '@/store/useBotStore';
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS & TYPES
@@ -39,7 +41,7 @@ const CONDITION_TYPES = [
   { value: 'OVER_PCT',      label: 'OVER ( ) % IS' },
   { value: 'UNDER_PCT',     label: 'UNDER ( ) % IS' },
   { value: 'LAST_DIGITS',   label: 'LAST N DIGITS ARE' },
-  { value: 'GREEN_BAR',     label: 'GREEN BAR IS ON DIGIT' },
+  { value: 'GREEN_BAR',     label: 'TOP ( ) DIGITS ARE' },
   { value: 'DIGIT_PATTERN', label: 'DIGIT PATTERN' },
   { value: 'DIGIT_APPEARS', label: 'IF DIGIT ( ) APPEARS' },
   { value: 'RSI_SIGNAL',    label: 'RSI SIGNAL [trade_lexx]' },
@@ -106,7 +108,13 @@ function conditionText(c: Condition): string {
       const showB = c.digitValue === 'OVER' || c.digitValue === 'UNDER' || c.digitValue === 'EQUAL';
       return `last ${c.lastN} digits are ${c.digitValue}${showB ? ' ' + (c.digitBarrier ?? 4) : ''}`;
     }
-    case 'GREEN_BAR':     return `GREEN BAR on ${c.barValue} with pct ${c.comparator} ${c.value}% in last ${c.period} ticks`;
+    case 'GREEN_BAR': {
+      const topN = c.topCount ?? 3;
+      const cat = c.digitValue || 'EVEN';
+      const barrierStr = (cat === 'OVER' || cat === 'UNDER') ? ` ${c.digitBarrier ?? 4}` : '';
+      const minPctStr = (c.allAboveMinPct ?? true) ? ` & all > ${c.value}%` : '';
+      return `TOP ${topN} DIGITS ARE ${cat}${barrierStr}${minPctStr} in last ${c.period} ticks`;
+    }
     case 'DIGIT_PATTERN': return `PATTERN [${(c.pattern || []).join('→')}]`;
     case 'DIGIT_APPEARS': {
       const targetDigits = c.targetDigits && c.targetDigits.length > 0 ? c.targetDigits : [c.digitBarrier ?? 5];
@@ -961,24 +969,132 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
         </>
       )}
 
-      {cond.type === 'GREEN_BAR' && (
-        <>
-          <span className="lp-txt">IS ON DIGIT</span>
-          <select className="lp-sel lp-cmp" value={cond.barValue} onChange={e => u({ barValue: +e.target.value })}>
-            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(d => <option key={d} value={d}>{d}</option>)}
-          </select>
-          <span className="lp-txt">WITH PCT</span>
-          <select className="lp-sel lp-cmp" value={cond.comparator} onChange={e => u({ comparator: e.target.value })}>
-            {COMPARATORS.map(c => <option key={c}>{c}</option>)}
-          </select>
-          <input className="lp-num lp-sm" type="number" min={0} max={100} value={cond.value}
-            onChange={e => u({ value: +e.target.value })} />
-          <span className="lp-unit">% in last</span>
-          <input className="lp-num lp-sm" type="number" min={1} max={1000} value={cond.period}
-            onChange={e => u({ period: +e.target.value })} />
-          <span className="lp-unit">ticks</span>
-        </>
-      )}
+      {cond.type === 'GREEN_BAR' && (() => {
+        const topCount = Math.max(1, cond.topCount ?? 3);
+        const category = cond.digitValue || 'EVEN'; // 'EVEN' | 'ODD' | 'OVER' | 'UNDER'
+        const isOverUnder = category === 'OVER' || category === 'UNDER';
+        const barrier = cond.digitBarrier ?? 4;
+        const allAbove = cond.allAboveMinPct ?? true;
+
+        // Calculate max topCount based on category
+        let maxTop = 5;
+        if (category === 'OVER') maxTop = Math.max(1, 9 - barrier);
+        else if (category === 'UNDER') maxTop = Math.max(1, barrier + 1);
+
+        // Calculate barrier range based on topCount
+        // OVER: barrier max is 9 - topCount (e.g. top 3 -> max barrier is 6)
+        // UNDER: barrier min is topCount - 1 (e.g. top 3 -> min barrier is 2)
+        const overMaxBarrier = Math.max(0, 9 - topCount);
+        const underMinBarrier = Math.min(9, Math.max(0, topCount - 1));
+
+        return (
+          <>
+            <span className="lp-txt">TOP</span>
+            <input
+              className="lp-num lp-sm"
+              type="number"
+              min={1}
+              max={maxTop}
+              value={topCount}
+              onChange={e => {
+                const val = Math.max(1, Math.min(maxTop, +e.target.value || 1));
+                let b = barrier;
+                if (category === 'OVER' && b > 9 - val) b = 9 - val;
+                if (category === 'UNDER' && b < val - 1) b = val - 1;
+                u({ topCount: val, digitBarrier: b });
+              }}
+              style={{ width: '40px', textAlign: 'center' }}
+            />
+            <span className="lp-txt">DIGITS ARE</span>
+            <select
+              className="lp-sel lp-cmp"
+              value={category}
+              onChange={e => {
+                const newCat = e.target.value;
+                let newMax = 5;
+                let b = barrier;
+                if (newCat === 'OVER') {
+                  if (b > 9 - topCount) b = Math.max(0, 9 - topCount);
+                  newMax = Math.max(1, 9 - b);
+                } else if (newCat === 'UNDER') {
+                  if (b < topCount - 1) b = Math.min(9, Math.max(0, topCount - 1));
+                  newMax = Math.max(1, b + 1);
+                }
+                const clampedTop = Math.min(topCount, newMax);
+                u({ digitValue: newCat, topCount: clampedTop, digitBarrier: b });
+              }}
+            >
+              <option value="EVEN">EVEN</option>
+              <option value="ODD">ODD</option>
+              <option value="OVER">OVER</option>
+              <option value="UNDER">UNDER</option>
+            </select>
+
+            {isOverUnder && (
+              <>
+                <span className="lp-txt">{category}</span>
+                <input
+                  className="lp-num lp-sm"
+                  type="number"
+                  min={category === 'OVER' ? 0 : underMinBarrier}
+                  max={category === 'OVER' ? overMaxBarrier : 9}
+                  value={barrier}
+                  onChange={e => {
+                    let b = +e.target.value;
+                    if (category === 'OVER') b = Math.max(0, Math.min(overMaxBarrier, b));
+                    if (category === 'UNDER') b = Math.max(underMinBarrier, Math.min(9, b));
+                    u({ digitBarrier: b });
+                  }}
+                  title={category === 'OVER'
+                    ? `Max barrier is ${overMaxBarrier} so that at least ${topCount} digits can be over ${overMaxBarrier}`
+                    : `Min barrier is ${underMinBarrier} so that at least ${topCount} digits can be under ${underMinBarrier}`}
+                  style={{ width: '38px', textAlign: 'center', borderColor: '#38bdf8', color: '#38bdf8' }}
+                />
+              </>
+            )}
+
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', marginLeft: '4px' }}>
+              <input
+                type="checkbox"
+                checked={allAbove}
+                onChange={e => u({ allAboveMinPct: e.target.checked })}
+                style={{ cursor: 'pointer', accentColor: '#10b981' }}
+              />
+              <span className="lp-txt" style={{ fontSize: '11px', color: allAbove ? '#10b981' : '#64748b' }}>
+                and all above
+              </span>
+            </label>
+
+            {allAbove && (
+              <>
+                <input
+                  className="lp-num lp-sm"
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={0.5}
+                  value={cond.value ?? 10}
+                  onChange={e => u({ value: +e.target.value })}
+                  style={{ width: '44px', textAlign: 'center' }}
+                />
+                <span className="lp-unit">%</span>
+              </>
+            )}
+
+            <span className="lp-unit" style={{ marginLeft: 2 }}>in last</span>
+            <input
+              className="lp-num lp-sm"
+              type="number"
+              min={1}
+              max={1000}
+              value={cond.period || 100}
+              onChange={e => u({ period: +e.target.value })}
+              style={{ width: '52px', textAlign: 'center' }}
+            />
+            <span className="lp-unit">ticks</span>
+          </>
+        );
+      })()}
 
       {cond.type === 'DIGIT_APPEARS' && (
         <>
@@ -1698,10 +1814,13 @@ export default function LaxPrimePage() {
     crossMarketDelay, setCrossMarketDelay,
     adaptiveSwitch, setAdaptiveSwitch,
     adaptiveLiveStatus,
+    continuousLock, setContinuousLock,
   } = useBotStore();
 
+  const [showContinuousLockPanel, setShowContinuousLockPanel] = useState(false);
   const [showVirtualPanel,   setShowVirtualPanel]   = useState(false);
   const [showSwitcherPanel,  setShowSwitcherPanel]  = useState(false);
+
   const [isModeDropdownOpen, setIsModeDropdownOpen] = useState(false);
   const modeDropdownRef = useRef<HTMLDivElement>(null);
   const mgLabelTapRef   = useRef<number>(0); // double-tap timer for martingale/compounding toggle
@@ -2021,6 +2140,14 @@ export default function LaxPrimePage() {
             <div className="lp-ss-hdr">
               <span className="lp-sec-title">STRATEGY BUILDER</span>
               <button
+                className={`lp-virt-toggle-btn ${continuousLock?.enabled ? 'active' : ''}`}
+                onClick={() => setShowContinuousLockPanel(v => !v)}
+                title="Toggle Continuous Lock panel"
+                style={continuousLock?.enabled ? { borderColor: 'rgba(245, 158, 11, 0.5)', color: '#fbbf24', background: 'rgba(245, 158, 11, 0.15)' } : undefined}>
+                🔒 CONTINUOUS LOCK {showContinuousLockPanel ? '▲' : '▼'}
+                {continuousLock?.enabled && <span className="lp-virt-active-dot" style={{ background: '#f59e0b' }} />}
+              </button>
+              <button
                 className="lp-virt-toggle-btn"
                 onClick={() => setShowVirtualPanel(v => !v)}
                 title="Toggle Virtual System panel">
@@ -2043,6 +2170,290 @@ export default function LaxPrimePage() {
                 + ADD STRATEGY
               </button>
             </div>
+
+            {showContinuousLockPanel && (
+              <div className="lp-vp" style={{ border: '1px solid rgba(245, 158, 11, 0.35)', background: 'linear-gradient(180deg, rgba(245, 158, 11, 0.08) 0%, rgba(15, 23, 42, 0.95) 100%)', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
+                {/* Header */}
+                <div className="lp-vp-hdr" style={{ borderBottom: '1px solid rgba(245, 158, 11, 0.2)', paddingBottom: '12px', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 900, color: '#fbbf24', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      🔒 CONTINUOUS LOCK TRADING
+                    </span>
+                    {continuousLock?.enabled && (
+                      <span className="lp-vp-badge" style={{ background: 'rgba(245, 158, 11, 0.2)', color: '#fbbf24', border: '1px solid rgba(245, 158, 11, 0.4)', fontSize: '9px', fontWeight: 900, padding: '2px 8px', borderRadius: '4px' }}>
+                        ● LOCKED TRADING MODE ACTIVE
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold', color: '#e2e8f0' }}>
+                      <input
+                        type="checkbox"
+                        checked={continuousLock?.enabled || false}
+                        onChange={e => setContinuousLock({
+                          ...continuousLock,
+                          enabled: e.target.checked,
+                        })}
+                        style={{ accentColor: '#f59e0b', width: '15px', height: '15px', cursor: 'pointer' }}
+                      />
+                      <span>Enable Continuous Lock</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div style={{ fontSize: '11px', color: '#94a3b8', lineHeight: '1.4', marginBottom: '14px' }}>
+                  When enabled, the bot scans all strategies across markets. As soon as the first strategy matches its conditions, the bot <strong style={{ color: '#fbbf24' }}>locks into that market &amp; strategy</strong>, executing trades continuously according to the Trade Pattern until Take Profit or Stop Loss is reached. All other strategies and markets are locked out.
+                </div>
+
+                {/* Mode Selector Cards */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '10px', marginBottom: '14px' }}>
+                  {/* Option 1: No Re-check */}
+                  <div
+                    onClick={() => setContinuousLock({ ...continuousLock, mode: 'no_recheck' })}
+                    style={{
+                      padding: '12px 14px',
+                      borderRadius: '10px',
+                      cursor: 'pointer',
+                      border: continuousLock?.mode === 'no_recheck' ? '1.5px solid #f59e0b' : '1px solid rgba(255,255,255,0.08)',
+                      background: continuousLock?.mode === 'no_recheck' ? 'rgba(245, 158, 11, 0.12)' : 'rgba(0,0,0,0.3)',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 900, color: continuousLock?.mode === 'no_recheck' ? '#fbbf24' : '#f1f5f9' }}>
+                        1. Trade after 1st entry (no re-check)
+                      </span>
+                      {continuousLock?.mode === 'no_recheck' && (
+                        <span style={{ fontSize: '9px', fontWeight: 900, background: '#f59e0b', color: '#000', padding: '1px 6px', borderRadius: '4px' }}>SELECTED</span>
+                      )}
+                    </div>
+                    <p style={{ fontSize: '10px', color: '#94a3b8', margin: 0, lineHeight: '1.35' }}>
+                      Strategy condition acts as the initial entry trigger. Once triggered, it locks into this market and executes the trade pattern continuously on every tick without waiting for or re-checking conditions.
+                    </p>
+                  </div>
+
+                  {/* Option 2: Continuous + Check */}
+                  <div
+                    onClick={() => setContinuousLock({ ...continuousLock, mode: 'continuous_check' })}
+                    style={{
+                      padding: '12px 14px',
+                      borderRadius: '10px',
+                      cursor: 'pointer',
+                      border: continuousLock?.mode === 'continuous_check' ? '1.5px solid #f59e0b' : '1px solid rgba(255,255,255,0.08)',
+                      background: continuousLock?.mode === 'continuous_check' ? 'rgba(245, 158, 11, 0.12)' : 'rgba(0,0,0,0.3)',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 900, color: continuousLock?.mode === 'continuous_check' ? '#fbbf24' : '#f1f5f9' }}>
+                        2. Trade continuously + check entry
+                      </span>
+                      {continuousLock?.mode === 'continuous_check' && (
+                        <span style={{ fontSize: '9px', fontWeight: 900, background: '#f59e0b', color: '#000', padding: '1px 6px', borderRadius: '4px' }}>SELECTED</span>
+                      )}
+                    </div>
+                    <p style={{ fontSize: '10px', color: '#94a3b8', margin: 0, lineHeight: '1.35' }}>
+                      Locks onto the triggering market and strategy. Continues monitoring and verifying this strategy's entry conditions on the locked market before each trade in the pattern occurs.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Trade Pattern Config Section */}
+                <div style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '10px', padding: '12px 14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', flexWrap: 'wrap', gap: '6px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 900, color: '#e2e8f0', textTransform: 'uppercase' }}>
+                        Locked Trade Pattern Loop
+                      </span>
+                      <span style={{ fontSize: '9px', color: '#94a3b8' }}>
+                        Click cells to toggle Trade (T) ↔ Skip (S)
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const cur = continuousLock?.tradePattern || [true, false];
+                          if (cur.length < 16) {
+                            setContinuousLock({ ...continuousLock, tradePattern: [...cur, true] });
+                          }
+                        }}
+                        style={{ fontSize: '9px', fontWeight: 'bold', background: 'rgba(255,255,255,0.08)', color: '#fff', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer' }}
+                      >
+                        + Add Step
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const cur = continuousLock?.tradePattern || [true, false];
+                          if (cur.length > 1) {
+                            setContinuousLock({ ...continuousLock, tradePattern: cur.slice(0, -1) });
+                          }
+                        }}
+                        style={{ fontSize: '9px', fontWeight: 'bold', background: 'rgba(255,255,255,0.08)', color: '#fff', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer' }}
+                      >
+                        − Remove Step
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setContinuousLock({ ...continuousLock, tradePattern: [true, false, false, false, true, false, false, false] });
+                        }}
+                        style={{ fontSize: '9px', fontWeight: 'bold', background: 'rgba(255,255,255,0.05)', color: '#94a3b8', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer' }}
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Step Buttons */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                    {(continuousLock?.tradePattern || [true, false]).map((isTrade, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          const updated = [...(continuousLock?.tradePattern || [true, false])];
+                          updated[idx] = !updated[idx];
+                          setContinuousLock({ ...continuousLock, tradePattern: updated });
+                        }}
+                        style={{
+                          width: '36px',
+                          height: '38px',
+                          borderRadius: '8px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '11px',
+                          fontWeight: 900,
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease',
+                          border: isTrade ? '1px solid #10b981' : '1px solid rgba(255,255,255,0.1)',
+                          background: isTrade ? '#059669' : '#1e293b',
+                          color: '#fff',
+                          boxShadow: isTrade ? '0 2px 8px rgba(16, 185, 129, 0.3)' : 'none',
+                        }}
+                        title={`Step ${idx + 1}: ${isTrade ? 'TRADE' : 'SKIP'}`}
+                      >
+                        <span style={{ fontSize: '8px', opacity: 0.7, lineHeight: 1 }}>{idx + 1}</span>
+                        <span style={{ fontSize: '12px', lineHeight: 1, marginTop: '2px' }}>{isTrade ? 'T' : 'S'}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Pattern Sequence Readout */}
+                  <div style={{ fontSize: '10px', color: '#94a3b8' }}>
+                    Loop: {(continuousLock?.tradePattern || [true, false]).map((t, i) => (
+                      <span key={i}>
+                        <span style={{ color: t ? '#34d399' : '#64748b', fontWeight: 'bold' }}>{t ? 'Trade' : 'Skip'}</span>
+                        {i < (continuousLock?.tradePattern || []).length - 1 && ' → '}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* ── Lock TP / SL Card ──────────────────────────────────────────── */}
+                <div style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(245,158,11,0.18)', borderRadius: '10px', padding: '12px 14px' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 900, color: '#fbbf24', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    🎯 Lock Session TP / SL
+                    <span style={{ fontSize: '9px', fontWeight: 400, color: '#94a3b8', textTransform: 'none', letterSpacing: 0 }}>
+                      — unlock &amp; rescan when hit (bot keeps running)
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                    {/* Lock TP */}
+                    <div style={{ background: 'rgba(16,185,129,0.07)', border: `1px solid ${continuousLock?.lockTPEnabled ? 'rgba(16,185,129,0.45)' : 'rgba(255,255,255,0.08)'}`, borderRadius: '8px', padding: '10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                        <span style={{ fontSize: '10px', fontWeight: 900, color: '#34d399' }}>✅ LOCK TAKE PROFIT</span>
+                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', position: 'relative' }}>
+                          <input type="checkbox" style={{ display: 'none' }}
+                            checked={continuousLock?.lockTPEnabled || false}
+                            onChange={e => setContinuousLock({ ...continuousLock, lockTPEnabled: e.target.checked })} />
+                          <div style={{
+                            width: '28px', height: '15px', borderRadius: '8px', transition: 'background 0.2s',
+                            background: continuousLock?.lockTPEnabled ? '#10b981' : 'rgba(255,255,255,0.12)',
+                            position: 'relative', cursor: 'pointer',
+                          }}>
+                            <div style={{
+                              position: 'absolute', top: '2px',
+                              left: continuousLock?.lockTPEnabled ? '14px' : '2px',
+                              width: '11px', height: '11px', borderRadius: '50%', background: '#fff',
+                              transition: 'left 0.2s',
+                            }} />
+                          </div>
+                        </label>
+                      </div>
+                      {continuousLock?.lockTPEnabled && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                          <select
+                            value={continuousLock?.lockTPMode || 'wins'}
+                            onChange={e => setContinuousLock({ ...continuousLock, lockTPMode: e.target.value as 'wins' | 'profit' })}
+                            style={{ background: '#0f172a', color: '#fff', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '5px', fontSize: '10px', padding: '3px 6px', cursor: 'pointer' }}>
+                            <option value="wins">Wins</option>
+                            <option value="profit">$ Profit</option>
+                          </select>
+                          <input
+                            type="number" min={1} step={continuousLock?.lockTPMode === 'profit' ? 0.1 : 1}
+                            value={continuousLock?.lockTP ?? 3}
+                            onChange={e => setContinuousLock({ ...continuousLock, lockTP: Math.max(0.01, parseFloat(e.target.value) || 1) })}
+                            style={{ width: '56px', background: '#0f172a', color: '#34d399', border: '1px solid rgba(16,185,129,0.35)', borderRadius: '5px', fontSize: '11px', fontWeight: 'bold', padding: '3px 6px', textAlign: 'center' }} />
+                          <span style={{ fontSize: '9px', color: '#64748b' }}>
+                            {continuousLock?.lockTPMode === 'profit' ? '$ profit → unlock' : 'wins → unlock'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Lock SL */}
+                    <div style={{ background: 'rgba(239,68,68,0.07)', border: `1px solid ${continuousLock?.lockSLEnabled ? 'rgba(239,68,68,0.45)' : 'rgba(255,255,255,0.08)'}`, borderRadius: '8px', padding: '10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                        <span style={{ fontSize: '10px', fontWeight: 900, color: '#f87171' }}>🛡 LOCK STOP LOSS</span>
+                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', position: 'relative' }}>
+                          <input type="checkbox" style={{ display: 'none' }}
+                            checked={continuousLock?.lockSLEnabled || false}
+                            onChange={e => setContinuousLock({ ...continuousLock, lockSLEnabled: e.target.checked })} />
+                          <div style={{
+                            width: '28px', height: '15px', borderRadius: '8px', transition: 'background 0.2s',
+                            background: continuousLock?.lockSLEnabled ? '#ef4444' : 'rgba(255,255,255,0.12)',
+                            position: 'relative', cursor: 'pointer',
+                          }}>
+                            <div style={{
+                              position: 'absolute', top: '2px',
+                              left: continuousLock?.lockSLEnabled ? '14px' : '2px',
+                              width: '11px', height: '11px', borderRadius: '50%', background: '#fff',
+                              transition: 'left 0.2s',
+                            }} />
+                          </div>
+                        </label>
+                      </div>
+                      {continuousLock?.lockSLEnabled && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                          <select
+                            value={continuousLock?.lockSLMode || 'losses'}
+                            onChange={e => setContinuousLock({ ...continuousLock, lockSLMode: e.target.value as 'losses' | 'loss' })}
+                            style={{ background: '#0f172a', color: '#fff', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '5px', fontSize: '10px', padding: '3px 6px', cursor: 'pointer' }}>
+                            <option value="losses">Losses</option>
+                            <option value="loss">$ Loss</option>
+                          </select>
+                          <input
+                            type="number" min={1} step={continuousLock?.lockSLMode === 'loss' ? 0.1 : 1}
+                            value={continuousLock?.lockSL ?? 3}
+                            onChange={e => setContinuousLock({ ...continuousLock, lockSL: Math.max(0.01, parseFloat(e.target.value) || 1) })}
+                            style={{ width: '56px', background: '#0f172a', color: '#f87171', border: '1px solid rgba(239,68,68,0.35)', borderRadius: '5px', fontSize: '11px', fontWeight: 'bold', padding: '3px 6px', textAlign: 'center' }} />
+                          <span style={{ fontSize: '9px', color: '#64748b' }}>
+                            {continuousLock?.lockSLMode === 'loss' ? '$ loss → unlock' : 'losses → unlock'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            )}
+
 
             {showVirtualPanel && (
               <div className="lp-vp">

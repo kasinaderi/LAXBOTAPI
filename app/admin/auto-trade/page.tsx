@@ -34,8 +34,9 @@ const SYNC_DERIV_FIELDS = [
 
 const SYNC_BOT_FIELDS = [
     'stake','targetProfit','targetProfitMode','stopLoss','stopLossMode',
-    'martingale','tradingMode','strategies','selectedMarkets','crossMarketDelay','adaptiveSwitch',
+    'martingale','tradingMode','strategies','selectedMarkets','crossMarketDelay','adaptiveSwitch','continuousLock',
 ] as const;
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -965,6 +966,27 @@ export default function AutoTradePage() {
                     tradingMode: stepTradingMode,
                     martingale: stepConfig?.martingale || '2.1',
                     isMartingaleEnabled: stepConfig?.isMartingaleEnabled ?? true,
+                    // ── Always reset these to a safe disabled baseline so settings from
+                    //    a PREVIOUS step never bleed into this step. They will be
+                    //    overwritten below if this step's snapshot has them configured.
+                    adaptiveSwitch: {
+                        enabled: false,
+                        dualMode: false,
+                        mode: 'sequence' as const,
+                        steps: [],
+                    },
+                    continuousLock: {
+                        enabled: false,
+                        mode: 'no_recheck' as const,
+                        tradePattern: [true],
+                        useTradePattern: false,
+                        lockTPEnabled: false,
+                        lockTPMode: 'wins' as const,
+                        lockTP: 3,
+                        lockSLEnabled: false,
+                        lockSLMode: 'losses' as const,
+                        lockSL: 3,
+                    },
                 };
 
                 if (stepConfig && stepConfig.strategies && stepConfig.strategies.length > 0) {
@@ -974,7 +996,10 @@ export default function AutoTradePage() {
                         ? [step.marketOverride]
                         : (stepConfig.selectedMarkets && stepConfig.selectedMarkets.length > 0 ? [...stepConfig.selectedMarkets] : ['1HZ10V', '1HZ100V']);
                     if (stepConfig.crossMarketDelay) patch.crossMarketDelay = stepConfig.crossMarketDelay;
+                    // Overwrite adaptiveSwitch with the step's saved config (if any)
                     if (stepConfig.adaptiveSwitch) patch.adaptiveSwitch = JSON.parse(JSON.stringify(stepConfig.adaptiveSwitch));
+                    // Overwrite continuousLock with the step's saved config (if any)
+                    if (stepConfig.continuousLock) patch.continuousLock = JSON.parse(JSON.stringify(stepConfig.continuousLock));
                 } else {
                     // Fallback to global LaxPrime state with market override if set
                     if (step.marketOverride) {
@@ -982,12 +1007,72 @@ export default function AutoTradePage() {
                     }
                 }
 
+                // ── Always fully reset virtualSettings to a clean baseline first,
+                //    then apply this step's snapshot on top. This prevents any
+                //    previousstep's virtualSettings (e.g. virtualSwitcher enabled) from
+                //    remaining in the store and interfering with this step's normal virtual mode.
+                const defaultVirtualSettings = {
+                    isVirtualMode: false,
+                    startVirtualToReal: false,
+                    vThreshold: 3,
+                    vTriggerMode: 'consec' as const,
+                    vTriggerType: 'wins' as const,
+                    vInEnabled: false,
+                    vInTrades: 5,
+                    isDoubleVirtual: false,
+                    vDoubleStage: 'A' as const,
+                    vTriggerTypeB: 'wins' as const,
+                    vTriggerModeB: 'consec' as const,
+                    vThresholdB: 1,
+                    vInEnabledB: false,
+                    vInTradesB: 5,
+                    vStageBReps: 1,
+                    vStageBCompletedReps: 0,
+                    vConsecWinsB: 0,
+                    vConsecLossesB: 0,
+                    vVirtualWinsB: 0,
+                    vVirtualLossesB: 0,
+                    vResultHistoryB: [] as ('W' | 'L')[],
+                    startRealToVirtual: false,
+                    rThreshold: 2,
+                    rTriggerMode: 'consec' as const,
+                    rTriggerType: 'wins' as const,
+                    virtualWins: 0,
+                    virtualLosses: 0,
+                    vConsecWins: 0,
+                    vConsecLosses: 0,
+                    realWins: 0,
+                    realLosses: 0,
+                    rConsecWins: 0,
+                    rConsecLosses: 0,
+                    smartSettings: {
+                        enabled: false,
+                        type: 'sequence' as const,
+                        sequence: {
+                            step1Type: 'Wins' as const,
+                            step1Qty: 2,
+                            step1Mode: 'consecutive' as const,
+                            step2Type: 'Losses' as const,
+                            step2Qty: 2,
+                            step2Mode: 'consecutive' as const,
+                        },
+                        alternating: { count: 2 },
+                        vSmartStage: 1,
+                        vSmartCount: 0,
+                        resultHistory: [] as ('W' | 'L')[],
+                    },
+                };
+
                 if (stepConfig && stepConfig.virtualSettings) {
                     const vs = stepConfig.virtualSettings;
                     const isVSActive = Boolean(stepConfig.adaptiveSwitch?.virtualSwitcher?.enabled);
                     const isVirtActive = isVSActive || vs.startVirtualToReal || vs.isDoubleVirtual || vs.smartSettings?.enabled || vs.isVirtualMode;
                     useDerivStore.getState().setVirtualSettings({
+                        // Start from a clean baseline (no old state leaks through)
+                        ...defaultVirtualSettings,
+                        // Overlay this step's saved snapshot
                         ...(vs as any),
+                        // Re-enforce runtime-reset fields that must always be fresh
                         isVirtualMode: isVirtActive ? true : vs.isVirtualMode,
                         startVirtualToReal: isVSActive ? false : vs.startVirtualToReal,
                         startRealToVirtual: isVSActive ? false : vs.startRealToVirtual,
@@ -1005,6 +1090,9 @@ export default function AutoTradePage() {
                         vConsecWins: 0,
                         vConsecLosses: 0,
                     });
+                } else {
+                    // No virtualSettings saved for this step → apply the clean disabled baseline
+                    useDerivStore.getState().setVirtualSettings(defaultVirtualSettings);
                 }
 
                 // Inner Compounding for this step

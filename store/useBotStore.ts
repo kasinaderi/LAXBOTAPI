@@ -46,6 +46,8 @@ export interface Condition {
   patternRetrigger: string;
   digitBarrier?: number;
   targetDigits?: number[];
+  topCount?: number;            // For TOP () DIGITS ARE: number of top digits (1..9)
+  allAboveMinPct?: boolean;     // For TOP () DIGITS ARE: whether each top digit must be above the min %
   patternBoxes?: PatternBox[];         // Multi-Entry Sequence (OR across boxes, AND within)
   patternBoxMode?: 'OR' | 'THEN' | 'THENALL'; // How boxes relate: OR=any fires, THEN=Box1→lock→Box2, THENALL=Box1→all markets Box2
   thenTimeout?: number;               // THEN/THENALL: ticks to wait for Box2 before resetting (default 20)
@@ -86,6 +88,30 @@ export interface Strategy {
   tradePattern: boolean[];
   useTradePattern: boolean;
   noContradiction: boolean;
+}
+
+/** Controls the Continuous Lock behaviour (fires from STRATEGY BUILDER panel). */
+export interface ContinuousLockConfig {
+  enabled: boolean;
+  /** 'no_recheck'       – lock market+strategy after first trigger, loop pattern without rechecking conditions
+   *  'continuous_check' – lock market+strategy but re-evaluate conditions on every tick before each trade */
+  mode: 'no_recheck' | 'continuous_check';
+  /** T/S trade pattern used while in locked mode (same shape as Strategy.tradePattern) */
+  tradePattern: boolean[];
+  /** Whether to apply the tradePattern in locked mode */
+  useTradePattern: boolean;
+  /** Lock-level Take Profit: when hit, unlock and rescan all markets for the next trigger.
+   *  'wins'   → unlock after N wins in this lock session
+   *  'profit' → unlock after $N profit in this lock session */
+  lockTPEnabled: boolean;
+  lockTPMode: 'wins' | 'profit';
+  lockTP: number;
+  /** Lock-level Stop Loss: when hit, unlock and rescan all markets for the next trigger.
+   *  'losses' → unlock after N losses in this lock session
+   *  'loss'   → unlock after -$N loss in this lock session */
+  lockSLEnabled: boolean;
+  lockSLMode: 'losses' | 'loss';
+  lockSL: number;
 }
 
 export interface SwitcherTradeConfig {
@@ -260,6 +286,8 @@ export function createCondition(): Condition {
     barValue: 5,
     join: 'AND',
     period: 100,
+    topCount: 3,
+    allAboveMinPct: true,
     pattern: ['E', 'E', 'E', 'E'],
     patternRetrigger: 'any',
     patternBoxes: [
@@ -557,14 +585,70 @@ function evaluateCondition(
       }
     }
     case 'GREEN_BAR': {
-      const sub = digits.slice(-period);
-      if (sub.length < period) return false;
+      // Legacy fallback for old saved configurations
+      if (cond.topCount === undefined && !cond.digitValue && cond.barValue !== undefined) {
+        const sub = digits.slice(-period);
+        if (sub.length < period) return false;
+        const freq = Array(10).fill(0);
+        sub.forEach(d => { if (d >= 0 && d <= 9) freq[d]++; });
+        let maxFreq = -1, greenBar = -1;
+        for (let d = 0; d <= 9; d++) { if (freq[d] > maxFreq) { maxFreq = freq[d]; greenBar = d; } }
+        if (greenBar !== cond.barValue) return false;
+        return compare((maxFreq / period) * 100, cond.comparator, cond.value);
+      }
+
+      // ── TOP (N) DIGITS ARE (EVEN | ODD | OVER | UNDER) ──────────────────
+      const p = Math.max(1, cond.period || 100);
+      const sub = digits.slice(-p);
+      if (sub.length < p && digits.length < p) return false;
+      const actualPeriod = sub.length;
+      if (actualPeriod === 0) return false;
+
       const freq = Array(10).fill(0);
       sub.forEach(d => { if (d >= 0 && d <= 9) freq[d]++; });
-      let maxFreq = -1, greenBar = -1;
-      for (let d = 0; d <= 9; d++) { if (freq[d] > maxFreq) { maxFreq = freq[d]; greenBar = d; } }
-      if (greenBar !== cond.barValue) return false;
-      return compare((maxFreq / period) * 100, cond.comparator, cond.value);
+
+      const topN = Math.max(1, Math.min(9, cond.topCount ?? 3));
+      const category = cond.digitValue || 'EVEN'; // 'EVEN' | 'ODD' | 'OVER' | 'UNDER'
+      const barrier = cond.digitBarrier ?? 4;
+
+      const isMatching = (d: number): boolean => {
+        if (category === 'EVEN') return d % 2 === 0;
+        if (category === 'ODD')  return d % 2 !== 0;
+        if (category === 'OVER') return d > barrier;
+        if (category === 'UNDER') return d <= barrier;
+        return false;
+      };
+
+      // Sort all 10 digits by frequency descending.
+      // Tie-breaker: matching category digits come before non-matching digits
+      const digitsByRank = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].sort((a, b) => {
+        if (freq[b] !== freq[a]) return freq[b] - freq[a];
+        const aM = isMatching(a);
+        const bM = isMatching(b);
+        if (aM && !bM) return -1;
+        if (!aM && bM) return 1;
+        return a - b;
+      });
+
+      // The top N most frequent digits in the market
+      const topDigits = digitsByRank.slice(0, topN);
+
+      // Check 1: Are all top N digits in the target category?
+      const allCategoryMatch = topDigits.every(d => isMatching(d));
+      if (!allCategoryMatch) return false;
+
+      // Check 2: If "and all above () percent" is enabled, are all top N digits above the min percentage?
+      const checkMinPct = cond.allAboveMinPct ?? true;
+      if (checkMinPct) {
+        const minPct = cond.value ?? 10;
+        const allAbove = topDigits.every(d => {
+          const pct = (freq[d] / actualPeriod) * 100;
+          return pct >= minPct;
+        });
+        if (!allAbove) return false;
+      }
+
+      return true;
     }
     case 'DIGIT_PATTERN':
       return evaluateDigitPattern(cond, digits, quotes);
@@ -702,6 +786,19 @@ const eng = {
     symbol: string;
     dualMode: boolean; // special split-martingale: only both-loss triggers martingale
   }>,
+  // Continuous lock state (locks to first market+strategy that hits trigger)
+  lockState: {
+    locked: false,
+    stratId: null as string | null,
+    stratIndex: -1,
+    symbol: null as string | null,
+    patternIndex: 0,
+    initialTriggered: false,
+    // Per-lock-session counters (reset each time we acquire/release a lock)
+    lockWins: 0,
+    lockLosses: 0,
+    lockProfit: 0,
+  },
 };
 
 // Single onTick subscription handle — registered once, lives forever
@@ -1122,6 +1219,7 @@ interface BotStoreState {
   crossMarketDelay: string;
   adaptiveSwitch: AdaptiveSwitch;
   adaptiveLiveStatus: string; // e.g. 'Even [Step 1, 1/2]'
+  continuousLock: ContinuousLockConfig;
 
   // ── Session state (NOT persisted) ─────────────────────────────────────────
   isRunning:    boolean;
@@ -1145,6 +1243,7 @@ interface BotStoreState {
   setTheme:           (theme: 'dark' | 'light') => void;
   setCrossMarketDelay: (v: string) => void;
   setAdaptiveSwitch:  (v: AdaptiveSwitch) => void;
+  setContinuousLock:  (v: ContinuousLockConfig) => void;
 
   // ── Bot controls ───────────────────────────────────────────────────────────
   startBot:   () => void;
@@ -1192,6 +1291,18 @@ export const useBotStore = create<BotStoreState>()(
         ],
       },
       adaptiveLiveStatus: '',
+      continuousLock: {
+        enabled: false,
+        mode: 'no_recheck',
+        tradePattern: [true, false, false, false, true, false, false, false],
+        useTradePattern: true,
+        lockTPEnabled: false,
+        lockTPMode: 'wins',
+        lockTP: 3,
+        lockSLEnabled: false,
+        lockSLMode: 'losses',
+        lockSL: 3,
+      },
 
       isRunning:    false,
       botStatusMsg: 'Ready.',
@@ -1218,6 +1329,7 @@ export const useBotStore = create<BotStoreState>()(
       setTheme:           (theme) => set({ theme }),
       setCrossMarketDelay: (v) => set({ crossMarketDelay: v }),
       setAdaptiveSwitch:  (v) => set({ adaptiveSwitch: v }),
+      setContinuousLock:  (v) => set({ continuousLock: v }),
 
       addLog: (log) => {
         const pageId = log.pageId || getActivePageId();
@@ -1315,7 +1427,17 @@ export const useBotStore = create<BotStoreState>()(
           globalStats: { won: 0, lost: 0, totalProfit: 0, totalTrades: 0 },
         });
 
-        // Reset trade pattern sequence position to step 1 on fresh start
+        eng.lockState = {
+          locked: false,
+          stratId: null,
+          stratIndex: -1,
+          symbol: null,
+          patternIndex: 0,
+          initialTriggered: false,
+          lockWins: 0,
+          lockLosses: 0,
+          lockProfit: 0,
+        };
         eng.patternPos = {};
 
         // Clear RSI Signal engine state so each bot run starts with fresh candle history
@@ -1339,6 +1461,17 @@ export const useBotStore = create<BotStoreState>()(
       },
 
       stopBot: (reason?: string) => {
+        eng.lockState = {
+          locked: false,
+          stratId: null,
+          stratIndex: -1,
+          symbol: null,
+          patternIndex: 0,
+          initialTriggered: false,
+          lockWins: 0,
+          lockLosses: 0,
+          lockProfit: 0,
+        };
         set({ isRunning: false, botStatusMsg: reason ? `Stopped: ${reason}` : 'Bot stopped.' });
       },
 
@@ -1349,7 +1482,19 @@ export const useBotStore = create<BotStoreState>()(
         eng.activeTrades.clear();
         eng.activeVirtual = [];
         eng.patternPos    = {};
+        eng.lockState     = {
+          locked: false,
+          stratId: null,
+          stratIndex: -1,
+          symbol: null,
+          patternIndex: 0,
+          initialTriggered: false,
+          lockWins: 0,
+          lockLosses: 0,
+          lockProfit: 0,
+        };
         eng.retrigger     = {};
+
         eng.waitingForOpposite = {};
         eng.lastTradeTime = 0;
         botTradeIds.clear();
@@ -1802,6 +1947,14 @@ export const useBotStore = create<BotStoreState>()(
           const stratId = s.id;
           const ck      = `${stratId}_${symbol}`;
 
+          // If Continuous Lock is enabled and already locked, strictly filter to locked symbol & strategy
+          const cLock = state.continuousLock;
+          if (cLock?.enabled && eng.lockState.locked) {
+            if (eng.lockState.symbol !== symbol || eng.lockState.stratId !== stratId) {
+              continue;
+            }
+          }
+
           // ── GLOBAL shared martingale state (across ALL strategies and ALL markets) ─
           // Every strategy and every market share ONE stake ladder. A loss on ANY
           // strategy/market advances the global martingale for the NEXT trade,
@@ -1991,18 +2144,34 @@ export const useBotStore = create<BotStoreState>()(
 
           } else {
             // ── Normal OR mode ─────────────────────────────────────────────
-            if (!evalStrategy(s, digits, quotes, symbol)) {
-              // Reset no_contra edge when pattern clears
-              if (dpCond && dpCond.patternRetrigger === 'no_contra') {
-                const rtKey = `${stratId}_${symbol}`;
-                if (eng.retrigger[rtKey]) eng.retrigger[rtKey].lastWasTrue = false;
+            // When Continuous Lock is enabled in 'no_recheck' mode and already locked,
+            // we bypass condition evaluation — initial trigger is already met.
+            const isLockNoRecheck = Boolean(cLock?.enabled && eng.lockState.locked && cLock.mode === 'no_recheck');
+            if (!isLockNoRecheck) {
+              if (!evalStrategy(s, digits, quotes, symbol)) {
+                // Reset no_contra edge when pattern clears
+                if (dpCond && dpCond.patternRetrigger === 'no_contra') {
+                  const rtKey = `${stratId}_${symbol}`;
+                  if (eng.retrigger[rtKey]) eng.retrigger[rtKey].lastWasTrue = false;
+                }
+                continue;
               }
-              continue;
             }
           }
 
           // Trade pattern pipeline check
-          if (s.useTradePattern && s.tradePattern && s.tradePattern.length > 0) {
+          if (cLock?.enabled && cLock.useTradePattern && cLock.tradePattern && cLock.tradePattern.length > 0) {
+            const pat = cLock.tradePattern;
+            const pos = eng.lockState.patternIndex % pat.length;
+            const shouldTrade = pat[pos];
+            eng.lockState.patternIndex = (pos + 1) % pat.length;
+            if (!shouldTrade) {
+              eng.cooldown[ck] = now;
+              const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
+              set({ botStatusMsg: `⏭ Locked Pattern SKIP: Strategy ${si + 1} on ${mLabel} (step ${pos + 1}/${pat.length})` });
+              continue;
+            }
+          } else if (s.useTradePattern && s.tradePattern && s.tradePattern.length > 0) {
             if (eng.patternPos[stratId] === undefined) eng.patternPos[stratId] = 0;
             const pos = eng.patternPos[stratId] % s.tradePattern.length;
             const shouldTrade = s.tradePattern[pos];
@@ -2016,7 +2185,17 @@ export const useBotStore = create<BotStoreState>()(
           }
 
           // ── TRIGGER FIRED ─────────────────────────────────────────────────
+          if (cLock?.enabled && !eng.lockState.locked) {
+            eng.lockState.locked = true;
+            eng.lockState.stratId = stratId;
+            eng.lockState.stratIndex = si;
+            eng.lockState.symbol = symbol;
+            eng.lockState.initialTriggered = true;
+            const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
+            set({ botStatusMsg: `🔒 TRIGGER HIT on ${mLabel}! Locked to Strategy ${si + 1} (${cLock.mode === 'no_recheck' ? 'No Re-check' : 'Check Each Entry'})` });
+          }
           get()._flashSignal(symbol);
+
 
           // Disarm/consume any RSI_SIGNAL conditions for this strategy & symbol so it trades once per signal
           s.conditions.forEach(c => {
@@ -2428,6 +2607,61 @@ export const useBotStore = create<BotStoreState>()(
         };
         set({ globalStats: newStats });
 
+        // ── Continuous Lock TP / SL check ─────────────────────────────────────
+        // If the bot is locked to a market+strategy, track wins/losses/profit for
+        // this lock session. When the configured lockTP or lockSL is hit we UNLOCK
+        // (not stop!) so the bot rescans all markets for the next trigger.
+        const cLockCfg = get().continuousLock;
+        if (cLockCfg?.enabled && eng.lockState.locked) {
+          // Accumulate session counters
+          if (isWin) {
+            eng.lockState.lockWins++;
+          } else {
+            eng.lockState.lockLosses++;
+          }
+          eng.lockState.lockProfit = (eng.lockState.lockProfit ?? 0) + resultProfit;
+
+          const lockedMktLabel = ALL_MARKETS.find(m => m.value === eng.lockState.symbol)?.label || eng.lockState.symbol || '?';
+          let shouldUnlock = false;
+          let unlockReason = '';
+
+          // Check Lock TP
+          if (cLockCfg.lockTPEnabled) {
+            if (cLockCfg.lockTPMode === 'wins' && eng.lockState.lockWins >= cLockCfg.lockTP) {
+              shouldUnlock = true;
+              unlockReason = `Lock TP hit (${eng.lockState.lockWins} wins)`;
+            } else if (cLockCfg.lockTPMode === 'profit' && eng.lockState.lockProfit >= cLockCfg.lockTP) {
+              shouldUnlock = true;
+              unlockReason = `Lock TP hit ($${eng.lockState.lockProfit.toFixed(2)} profit)`;
+            }
+          }
+
+          // Check Lock SL
+          if (!shouldUnlock && cLockCfg.lockSLEnabled) {
+            if (cLockCfg.lockSLMode === 'losses' && eng.lockState.lockLosses >= cLockCfg.lockSL) {
+              shouldUnlock = true;
+              unlockReason = `Lock SL hit (${eng.lockState.lockLosses} losses)`;
+            } else if (cLockCfg.lockSLMode === 'loss' && eng.lockState.lockProfit <= -cLockCfg.lockSL) {
+              shouldUnlock = true;
+              unlockReason = `Lock SL hit (-$${Math.abs(eng.lockState.lockProfit).toFixed(2)} loss)`;
+            }
+          }
+
+          if (shouldUnlock) {
+            // Release the lock — bot resumes scanning all markets for a new trigger
+            eng.lockState.locked = false;
+            eng.lockState.stratId = null;
+            eng.lockState.stratIndex = -1;
+            eng.lockState.symbol = null;
+            eng.lockState.patternIndex = 0;
+            eng.lockState.initialTriggered = false;
+            eng.lockState.lockWins = 0;
+            eng.lockState.lockLosses = 0;
+            eng.lockState.lockProfit = 0;
+            set({ botStatusMsg: `🔓 UNLOCKED from ${lockedMktLabel} — ${unlockReason}. Rescanning all markets...` });
+          }
+        }
+
         // Update roundState if it exists, otherwise use fallback legacy single-trade logic
         // Capture round outcome BEFORE resolveRound deletes it (needed for streak tracking)
         let roundFinalWon  = -1;  // -1 = not a round trade
@@ -2595,6 +2829,7 @@ export const useBotStore = create<BotStoreState>()(
         theme:           state.theme,
         crossMarketDelay: state.crossMarketDelay,
         adaptiveSwitch:  state.adaptiveSwitch,
+        continuousLock:  state.continuousLock,
       }),
     },
   ),
