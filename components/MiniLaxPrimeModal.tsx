@@ -918,6 +918,12 @@ export function MiniLaxPrimeModal({
             mode: (adaptiveSwitch.virtualSwitcher.returnToVirtual?.mode || 'consec') as 'consec' | 'total',
             threshold: Math.max(1, Number(adaptiveSwitch.virtualSwitcher.returnToVirtual?.threshold) || 3),
           },
+          gateB: adaptiveSwitch.virtualSwitcher.gateB ? {
+            enabled: !!adaptiveSwitch.virtualSwitcher.gateB.enabled,
+            threshold: Math.max(1, Number(adaptiveSwitch.virtualSwitcher.gateB.threshold) || 2),
+            mode: (adaptiveSwitch.virtualSwitcher.gateB.mode || 'consec') as 'consec' | 'total',
+            triggerType: (adaptiveSwitch.virtualSwitcher.gateB.triggerType || 'losses') as 'wins' | 'losses' | 'trades',
+          } : undefined,
         } : undefined,
       },
       virtualSettings: {
@@ -1795,6 +1801,7 @@ export function MiniLaxPrimeModal({
                     onVirtualWins:   { contractType: 'DIGITUNDER', barrier: 4, ticks: 1, threshold: 3, mode: 'consec' as const },
                     onVirtualLosses: { contractType: 'DIGITOVER',  barrier: 5, ticks: 1, threshold: 3, mode: 'consec' as const },
                     returnToVirtual: { triggerType: 'wins' as const, mode: 'consec' as const, threshold: 3 },
+                    gateB: { enabled: false, threshold: 2, mode: 'consec' as const, triggerType: 'losses' as const },
                   };
 
                   const isLockMode1 = Boolean(continuousLock?.enabled && continuousLock?.mode === 'no_recheck');
@@ -1829,6 +1836,15 @@ export function MiniLaxPrimeModal({
                     };
                     updateVS({ returnToVirtual: { ...currentRule, ...patch } });
                   };
+                  const updateGateB = (patch: Partial<NonNullable<typeof vs.gateB>>) => {
+                    const cur = {
+                      enabled: vs.gateB?.enabled ?? false,
+                      threshold: Math.max(1, Number(vs.gateB?.threshold) || 2),
+                      mode: (vs.gateB?.mode || 'consec') as 'consec' | 'total',
+                      triggerType: (vs.gateB?.triggerType || 'losses') as 'wins' | 'losses' | 'trades',
+                    };
+                    updateVS({ gateB: { ...cur, ...patch } });
+                  };
 
                   const winNeedsBarrier  = needsBarrier(vs.onVirtualWins?.contractType  || 'DIGITUNDER');
                   const lossNeedsBarrier = needsBarrier(vs.onVirtualLosses?.contractType || 'DIGITOVER');
@@ -1836,6 +1852,8 @@ export function MiniLaxPrimeModal({
 
                   const phaseBadge = vs._phase === 'real'
                     ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-emerald-500/15 text-emerald-400 border-emerald-500/30">⚡ REAL TRADING</span>
+                    : vs._phase === 'gate_b'
+                    ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-orange-500/15 text-orange-400 border-orange-500/30">🔷 GATE B VIRTUAL</span>
                     : <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-purple-500/15 text-purple-400 border-purple-500/30">🧪 VIRTUAL TESTING</span>;
 
                   return (
@@ -1862,6 +1880,11 @@ export function MiniLaxPrimeModal({
                             <span className="text-emerald-400 font-bold">V-Wins: {vs._totalWins || 0} ({vs._consecWins || 0} consec)</span>
                             <span className="text-rose-400 font-bold">V-Loss: {vs._totalLosses || 0} ({vs._consecLosses || 0} consec)</span>
                             <span className="text-cyan-400 font-bold">Real: {vs._rTotalTrades || 0}</span>
+                            {vs._phase === 'gate_b' && (
+                              <span className="text-orange-400 font-bold">
+                                🔷 Gate B: {vs.gateB?.triggerType === 'wins' ? (vs.gateB?.mode === 'consec' ? vs._gateBConsecWins || 0 : vs._gateBTotalWins || 0) : vs.gateB?.triggerType === 'losses' ? (vs.gateB?.mode === 'consec' ? vs._gateBConsecLosses || 0 : vs._gateBTotalLosses || 0) : vs._gateBTotalTrades || 0}/{vs.gateB?.threshold || 2} {vs.gateB?.triggerType}
+                              </span>
+                            )}
                           </div>
 
                           {/* ── Section 1: Virtual Test Contract ── */}
@@ -2011,6 +2034,58 @@ export function MiniLaxPrimeModal({
                                 {ALL_MARKETS.map(m => <option key={m.value} value={m.value} style={{ background: '#0f172a' }}>{m.label}</option>)}
                               </select>
                             </div>
+                          </div>
+
+                          {/* ── Section 3.5: Gate B (Optional Virtual Confirmation) ── */}
+                          <div className="rounded-lg border border-orange-500/25 bg-orange-500/5 p-2.5 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-bold text-orange-400">🔷 Gate B (Optional Virtual Confirmation)</span>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" className="sr-only peer" checked={!!vs.gateB?.enabled}
+                                  onChange={e => updateGateB({ enabled: e.target.checked })} />
+                                <div className="w-8 h-4 bg-slate-700 peer-checked:bg-orange-500 rounded-full transition-colors" />
+                                <div className="absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full transition-transform peer-checked:translate-x-4" />
+                              </label>
+                            </div>
+                            {vs.gateB?.enabled && (
+                              <div className="space-y-1.5 pt-1 border-t border-white/5">
+                                <p className="text-[9px] text-gray-400">
+                                  Gate B tests the contract selected by Gate A <span className="text-orange-400 font-bold">virtually</span> before going to real. Contract stays locked.
+                                </p>
+                                <div className="flex flex-wrap items-center gap-1.5 text-[9px]">
+                                  <span className="text-gray-400">Go REAL after</span>
+                                  <input type="number" min={1} max={99}
+                                    value={vs.gateB?.threshold ?? 2}
+                                    onChange={e => updateGateB({ threshold: Math.max(1, +e.target.value || 1) })}
+                                    className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px]"
+                                    style={{ background: '#0f172a', color: '#fff' }} />
+                                  {(['consec', 'total'] as const).map(m => (
+                                    <button key={m} type="button" onClick={() => updateGateB({ mode: m })}
+                                      className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-all ${
+                                        (vs.gateB?.mode || 'consec') === m ? 'bg-orange-500 text-black' : 'bg-white/5 text-gray-400'
+                                      }`}>
+                                      {m === 'consec' ? 'Streak' : 'Total'}
+                                    </button>
+                                  ))}
+                                  <select value={vs.gateB?.triggerType || 'losses'}
+                                    onChange={e => updateGateB({ triggerType: e.target.value as any })}
+                                    className="bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-white text-[9px]"
+                                    style={{ background: '#0f172a', color: '#fff' }}>
+                                    <option value="wins" style={{ background: '#0f172a' }}>Wins</option>
+                                    <option value="losses" style={{ background: '#0f172a' }}>Losses</option>
+                                    <option value="trades" style={{ background: '#0f172a' }}>Trades</option>
+                                  </select>
+                                  <span className="text-gray-400">in virtual</span>
+                                </div>
+                                {vs._phase === 'gate_b' && (
+                                  <div className="text-[9px] text-orange-400 font-bold p-1 bg-orange-500/10 rounded">
+                                    🔷 ACTIVE: {vs._gateBConsecWins || 0}W streak / {vs._gateBConsecLosses || 0}L streak (total {vs._gateBTotalWins || 0}W / {vs._gateBTotalLosses || 0}L)
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
 
                           {/* ── Section 4: Return to Virtual ── */}
@@ -2389,8 +2464,34 @@ export function MiniLaxPrimeModal({
                                   style={{ background: '#0f172a', color: '#ffffff' }}
                                 />
                                 <span>ticks</span>
+                                {/* ── Eligible Window ── */}
+                                <button
+                                  type="button"
+                                  title="Eligible Window: keep this market eligible for N seconds after the condition is met"
+                                  onClick={() => updateConditionInStrat(sIdx, cond.id, { ...cond, eligibleWindow: { enabled: !(cond.eligibleWindow?.enabled), seconds: cond.eligibleWindow?.seconds ?? 90 } })}
+                                  className="px-1.5 py-0.5 rounded text-[9px] font-black transition-all"
+                                  style={{
+                                    background: cond.eligibleWindow?.enabled ? '#6366f1' : 'rgba(255,255,255,0.07)',
+                                    color: cond.eligibleWindow?.enabled ? '#fff' : '#94a3b8',
+                                    border: cond.eligibleWindow?.enabled ? '1px solid #818cf8' : '1px solid rgba(255,255,255,0.12)',
+                                  }}
+                                >⏱</button>
+                                {cond.eligibleWindow?.enabled && (
+                                  <>
+                                    <input
+                                      type="number" min={1} max={3600}
+                                      value={cond.eligibleWindow?.seconds ?? 90}
+                                      onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, eligibleWindow: { enabled: true, seconds: Math.max(1, +e.target.value || 1) } })}
+                                      className="w-12 bg-slate-900 border border-indigo-400/40 rounded px-1 py-1 text-center text-indigo-300"
+                                      style={{ background: '#0f172a' }}
+                                      title="Eligible window duration in seconds"
+                                    />
+                                    <span className="text-indigo-400">s</span>
+                                  </>
+                                )}
                               </div>
                             )}
+
 
                             {(cond.type === 'OVER_PCT' || cond.type === 'UNDER_PCT') && (
                               <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-300">
@@ -2433,6 +2534,31 @@ export function MiniLaxPrimeModal({
                                   style={{ background: '#0f172a', color: '#ffffff' }}
                                 />
                                 <span>ticks</span>
+                                {/* ── Eligible Window ── */}
+                                <button
+                                  type="button"
+                                  title="Eligible Window: keep this market eligible for N seconds after the condition is met"
+                                  onClick={() => updateConditionInStrat(sIdx, cond.id, { ...cond, eligibleWindow: { enabled: !(cond.eligibleWindow?.enabled), seconds: cond.eligibleWindow?.seconds ?? 90 } })}
+                                  className="px-1.5 py-0.5 rounded text-[9px] font-black transition-all"
+                                  style={{
+                                    background: cond.eligibleWindow?.enabled ? '#6366f1' : 'rgba(255,255,255,0.07)',
+                                    color: cond.eligibleWindow?.enabled ? '#fff' : '#94a3b8',
+                                    border: cond.eligibleWindow?.enabled ? '1px solid #818cf8' : '1px solid rgba(255,255,255,0.12)',
+                                  }}
+                                >⏱</button>
+                                {cond.eligibleWindow?.enabled && (
+                                  <>
+                                    <input
+                                      type="number" min={1} max={3600}
+                                      value={cond.eligibleWindow?.seconds ?? 90}
+                                      onChange={e => updateConditionInStrat(sIdx, cond.id, { ...cond, eligibleWindow: { enabled: true, seconds: Math.max(1, +e.target.value || 1) } })}
+                                      className="w-12 bg-slate-900 border border-indigo-400/40 rounded px-1 py-1 text-center text-indigo-300"
+                                      style={{ background: '#0f172a' }}
+                                      title="Eligible window duration in seconds"
+                                    />
+                                    <span className="text-indigo-400">s</span>
+                                  </>
+                                )}
                               </div>
                             )}
 

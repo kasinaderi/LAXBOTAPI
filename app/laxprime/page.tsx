@@ -97,13 +97,14 @@ const TRADING_MODES = [
 
 /** Human-readable summary of a condition */
 function conditionText(c: Condition): string {
+  const winSuffix = c.eligibleWindow?.enabled ? ` [⏱ ${c.eligibleWindow.seconds ?? 90}s]` : '';
   switch (c.type) {
-    case 'EVEN_PCT':      return `EVEN % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
-    case 'ODD_PCT':       return `ODD % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
-    case 'FALL_PCT':      return `FALL % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
-    case 'RISE_PCT':      return `RISE % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
-    case 'OVER_PCT':      return `OVER(${c.digitBarrier ?? 4}) % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
-    case 'UNDER_PCT':     return `UNDER(${c.digitBarrier ?? 4}) % ${c.comparator} ${c.value}% in last ${c.period} ticks`;
+    case 'EVEN_PCT':      return `EVEN % ${c.comparator} ${c.value}% in last ${c.period} ticks${winSuffix}`;
+    case 'ODD_PCT':       return `ODD % ${c.comparator} ${c.value}% in last ${c.period} ticks${winSuffix}`;
+    case 'FALL_PCT':      return `FALL % ${c.comparator} ${c.value}% in last ${c.period} ticks${winSuffix}`;
+    case 'RISE_PCT':      return `RISE % ${c.comparator} ${c.value}% in last ${c.period} ticks${winSuffix}`;
+    case 'OVER_PCT':      return `OVER(${c.digitBarrier ?? 4}) % ${c.comparator} ${c.value}% in last ${c.period} ticks${winSuffix}`;
+    case 'UNDER_PCT':     return `UNDER(${c.digitBarrier ?? 4}) % ${c.comparator} ${c.value}% in last ${c.period} ticks${winSuffix}`;
     case 'LAST_DIGITS': {
       const showB = c.digitValue === 'OVER' || c.digitValue === 'UNDER' || c.digitValue === 'EQUAL';
       return `last ${c.lastN} digits are ${c.digitValue}${showB ? ' ' + (c.digitBarrier ?? 4) : ''}`;
@@ -918,8 +919,33 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
           <input className="lp-num lp-sm" type="number" min={1} max={1000} value={cond.period}
             onChange={e => u({ period: +e.target.value })} />
           <span className="lp-unit">ticks</span>
+          {/* ── Eligible Window ── */}
+          <button
+            type="button"
+            title="Eligible Window: keep this market eligible for N seconds after the condition is met"
+            onClick={() => u({ eligibleWindow: { enabled: !(cond.eligibleWindow?.enabled), seconds: cond.eligibleWindow?.seconds ?? 90 } })}
+            style={{
+              padding: '1px 5px', fontSize: 10, borderRadius: 4, cursor: 'pointer', marginLeft: 4,
+              background: cond.eligibleWindow?.enabled ? '#6366f1' : 'rgba(255,255,255,0.07)',
+              color: cond.eligibleWindow?.enabled ? '#fff' : '#94a3b8',
+              border: cond.eligibleWindow?.enabled ? '1px solid #818cf8' : '1px solid rgba(255,255,255,0.12)',
+            }}
+          >⏱</button>
+          {cond.eligibleWindow?.enabled && (
+            <>
+              <input
+                type="number" min={1} max={3600}
+                value={cond.eligibleWindow?.seconds ?? 90}
+                onChange={e => u({ eligibleWindow: { enabled: true, seconds: Math.max(1, +e.target.value || 1) } })}
+                className="lp-num lp-sm"
+                title="Eligible window duration in seconds"
+              />
+              <span className="lp-unit">s</span>
+            </>
+          )}
         </>
       )}
+
 
       {(cond.type === 'OVER_PCT' || cond.type === 'UNDER_PCT') && (
         <>
@@ -936,6 +962,30 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
           <input className="lp-num lp-sm" type="number" min={1} max={1000} value={cond.period}
             onChange={e => u({ period: +e.target.value })} />
           <span className="lp-unit">ticks</span>
+          {/* ── Eligible Window ── */}
+          <button
+            type="button"
+            title="Eligible Window: keep this market eligible for N seconds after the condition is met"
+            onClick={() => u({ eligibleWindow: { enabled: !(cond.eligibleWindow?.enabled), seconds: cond.eligibleWindow?.seconds ?? 90 } })}
+            style={{
+              padding: '1px 5px', fontSize: 10, borderRadius: 4, cursor: 'pointer', marginLeft: 4,
+              background: cond.eligibleWindow?.enabled ? '#6366f1' : 'rgba(255,255,255,0.07)',
+              color: cond.eligibleWindow?.enabled ? '#fff' : '#94a3b8',
+              border: cond.eligibleWindow?.enabled ? '1px solid #818cf8' : '1px solid rgba(255,255,255,0.12)',
+            }}
+          >⏱</button>
+          {cond.eligibleWindow?.enabled && (
+            <>
+              <input
+                type="number" min={1} max={3600}
+                value={cond.eligibleWindow?.seconds ?? 90}
+                onChange={e => u({ eligibleWindow: { enabled: true, seconds: Math.max(1, +e.target.value || 1) } })}
+                className="lp-num lp-sm"
+                title="Eligible window duration in seconds"
+              />
+              <span className="lp-unit">s</span>
+            </>
+          )}
         </>
       )}
 
@@ -2859,6 +2909,7 @@ export default function LaxPrimePage() {
                     onVirtualWins:   { contractType: 'DIGITUNDER', barrier: 4, ticks: 1, threshold: 3, mode: 'consec' as const },
                     onVirtualLosses: { contractType: 'DIGITOVER',  barrier: 5, ticks: 1, threshold: 3, mode: 'consec' as const },
                     returnToVirtual: { triggerType: 'wins' as const, mode: 'consec' as const, threshold: 3 },
+                    gateB: { enabled: false, threshold: 2, mode: 'consec' as const, triggerType: 'losses' as const },
                   };
 
                   const isLockMode1 = Boolean(continuousLock?.enabled && continuousLock?.mode === 'no_recheck');
@@ -2898,6 +2949,15 @@ export default function LaxPrimePage() {
                     };
                     updateVS({ returnToVirtual: { ...currentRule, ...patch } });
                   };
+                  const updateGateB = (patch: Partial<NonNullable<typeof vs.gateB>>) => {
+                    const cur = {
+                      enabled: vs.gateB?.enabled ?? false,
+                      threshold: Math.max(1, Number(vs.gateB?.threshold) || 2),
+                      mode: (vs.gateB?.mode || 'consec') as 'consec' | 'total',
+                      triggerType: (vs.gateB?.triggerType || 'losses') as 'wins' | 'losses' | 'trades',
+                    };
+                    updateVS({ gateB: { ...cur, ...patch } });
+                  };
 
 
                   const winNeedsBarrier = needsBarrier(vs.onVirtualWins?.contractType || 'DIGITUNDER');
@@ -2922,11 +2982,11 @@ export default function LaxPrimePage() {
                           {vs.enabled && (
                             <span style={{
                               fontSize: '9px', fontWeight: 'bold', padding: '2px 8px', borderRadius: '4px',
-                              background: vs._phase === 'real' ? 'rgba(74,222,128,0.15)' : 'rgba(168,85,247,0.15)',
-                              color: vs._phase === 'real' ? '#4ade80' : '#c084fc',
-                              border: `1px solid ${vs._phase === 'real' ? 'rgba(74,222,128,0.3)' : 'rgba(168,85,247,0.3)'}`,
+                              background: vs._phase === 'real' ? 'rgba(74,222,128,0.15)' : vs._phase === 'gate_b' ? 'rgba(251,146,60,0.15)' : 'rgba(168,85,247,0.15)',
+                              color: vs._phase === 'real' ? '#4ade80' : vs._phase === 'gate_b' ? '#fb923c' : '#c084fc',
+                              border: `1px solid ${vs._phase === 'real' ? 'rgba(74,222,128,0.3)' : vs._phase === 'gate_b' ? 'rgba(251,146,60,0.3)' : 'rgba(168,85,247,0.3)'}`,
                             }}>
-                              {vs._phase === 'real' ? `● REAL TRADING (${activeContractLbl || 'ACTIVE'})` : '● VIRTUAL TESTING ACTIVE'}
+                              {vs._phase === 'real' ? `● REAL TRADING (${activeContractLbl || 'ACTIVE'})` : vs._phase === 'gate_b' ? `🔷 GATE B (${activeContractLbl || 'LOCKED'})` : '● VIRTUAL TESTING ACTIVE'}
                             </span>
                           )}
                         </div>
@@ -2956,6 +3016,11 @@ export default function LaxPrimePage() {
                             {vs._phase === 'real' && (
                               <span style={{ color: '#22d3ee', fontWeight: 'bold' }}>
                                 ⚡ Real Count: {vs.returnToVirtual?.triggerType === 'wins' ? vs._rConsecWins || 0 : vs.returnToVirtual?.triggerType === 'losses' ? vs._rConsecLosses || 0 : vs._rTotalTrades || 0}/{vs.returnToVirtual?.threshold || 1} {vs.returnToVirtual?.triggerType}
+                              </span>
+                            )}
+                            {vs._phase === 'gate_b' && (
+                              <span style={{ color: '#fb923c', fontWeight: 'bold' }}>
+                                🔷 Gate B: {vs.gateB?.triggerType === 'wins' ? (vs.gateB?.mode === 'consec' ? vs._gateBConsecWins || 0 : vs._gateBTotalWins || 0) : vs.gateB?.triggerType === 'losses' ? (vs.gateB?.mode === 'consec' ? vs._gateBConsecLosses || 0 : vs._gateBTotalLosses || 0) : vs._gateBTotalTrades || 0}/{vs.gateB?.threshold || 2} {vs.gateB?.triggerType}
                               </span>
                             )}
                           </div>
@@ -3135,6 +3200,66 @@ export default function LaxPrimePage() {
                                 {ALL_MARKETS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                               </select>
                             </div>
+                          </div>
+
+                          {/* Section 3.5: Gate B — Additional virtual confirmation gate after Gate A */}
+                          <div style={{
+                            background: 'rgba(251,146,60,0.05)', border: '1px solid rgba(251,146,60,0.25)',
+                            borderRadius: '6px', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: '6px',
+                          }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#fb923c' }}>
+                                  🔷 GATE B
+                                </span>
+                                <span style={{ fontSize: '8px', color: 'rgba(255,255,255,0.4)', fontStyle: 'italic' }}>
+                                  (additional virtual confirmation after Gate A)
+                                </span>
+                              </div>
+                              <label className="lp-vp-sw">
+                                <input type="checkbox" checked={!!vs.gateB?.enabled}
+                                  onChange={e => updateGateB({ enabled: e.target.checked })} />
+                                <span className="lp-vp-sw-track" style={{ background: vs.gateB?.enabled ? '#fb923c' : '' }} />
+                              </label>
+                            </div>
+                            {vs.gateB?.enabled && (
+                              <>
+                                <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)', lineHeight: '1.4' }}>
+                                  After Gate A fires and locks a contract, Gate B keeps trading it <strong style={{ color: '#fb923c' }}>virtually</strong> until its own condition is met — then switches to REAL. The contract never changes during Gate B.
+                                </div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' }}>
+                                  <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)' }}>Go REAL after</span>
+                                  <input className="lp-num" type="number" min={1} max={99}
+                                    value={vs.gateB?.threshold ?? 2}
+                                    style={{ width: '32px', height: '22px', fontSize: '11px', textAlign: 'center' }}
+                                    onChange={e => updateGateB({ threshold: Math.max(1, +e.target.value || 1) })} />
+                                  <div style={{ display: 'flex', gap: '2px' }}>
+                                    {(['consec', 'total'] as const).map(m => (
+                                      <button key={m} type="button" onClick={() => updateGateB({ mode: m })} style={{
+                                        fontSize: '9px', fontWeight: 'bold', padding: '2px 6px', borderRadius: '4px', border: 'none', cursor: 'pointer',
+                                        background: (vs.gateB?.mode || 'consec') === m ? '#fb923c' : 'rgba(255,255,255,0.07)',
+                                        color: (vs.gateB?.mode || 'consec') === m ? '#000' : 'rgba(255,255,255,0.5)',
+                                      }}>
+                                        {m === 'consec' ? 'Consecutive' : 'Total'}
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <select className="lp-sel" style={{ height: '22px', fontSize: '10px' }}
+                                    value={vs.gateB?.triggerType || 'losses'}
+                                    onChange={e => updateGateB({ triggerType: e.target.value as any })}>
+                                    <option value="wins">Wins</option>
+                                    <option value="losses">Losses</option>
+                                    <option value="trades">Trades</option>
+                                  </select>
+                                  <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)' }}>in virtual</span>
+                                </div>
+                                {vs._phase === 'gate_b' && (
+                                  <div style={{ fontSize: '9px', color: '#fb923c', fontWeight: 'bold', padding: '3px 6px', background: 'rgba(251,146,60,0.1)', borderRadius: '4px' }}>
+                                    🔷 ACTIVE: {vs._gateBConsecWins || 0}W streak / {vs._gateBConsecLosses || 0}L streak (total {vs._gateBTotalWins || 0}W / {vs._gateBTotalLosses || 0}L)
+                                  </div>
+                                )}
+                              </>
+                            )}
                           </div>
 
                           {/* Section 4: Return to Virtual Setting */}

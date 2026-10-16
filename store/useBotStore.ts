@@ -76,6 +76,13 @@ export interface Condition {
   rsiReentryPause?: number;     // default 5
   rsiWaitForOpposite?: boolean; // default false
   rsiAndMode?: boolean;         // default false
+
+  // Eligible-Window: when enabled, once a PCT condition is met the market stays
+  // "eligible" for `seconds` seconds even if the raw condition no longer holds.
+  eligibleWindow?: {
+    enabled: boolean;
+    seconds: number; // default 90
+  };
 }
 
 export interface Strategy {
@@ -149,6 +156,13 @@ export interface VirtualSwitcherReturnRule {
   threshold: number;                         // e.g. 1 win, 2 losses, etc.
 }
 
+export interface VirtualSwitcherGateBRule {
+  enabled: boolean;
+  threshold: number;
+  mode: 'consec' | 'total';
+  triggerType: 'wins' | 'losses' | 'trades';
+}
+
 export interface VirtualSwitcherTestContract {
   contractType: string;
   barrier?: number;
@@ -161,12 +175,18 @@ export interface VirtualSwitcherConfig {
   onVirtualWins: VirtualSwitcherRule;           // what to trade in real after N virtual wins
   onVirtualLosses: VirtualSwitcherRule;         // what to trade in real after N virtual losses
   returnToVirtual: VirtualSwitcherReturnRule;   // switch back to virtual after N real wins/losses/trades
+  gateB?: VirtualSwitcherGateBRule;             // optional second-stage virtual gate before switching to real
   // Runtime counters & state (reset on bot start)
-  _phase?: 'virtual' | 'real';
+  _phase?: 'virtual' | 'gate_b' | 'real';
   _consecWins?: number;
   _consecLosses?: number;
   _totalWins?: number;
   _totalLosses?: number;
+  _gateBConsecWins?: number;
+  _gateBConsecLosses?: number;
+  _gateBTotalWins?: number;
+  _gateBTotalLosses?: number;
+  _gateBTotalTrades?: number;
   _rConsecWins?: number;
   _rConsecLosses?: number;
   _rTotalWins?: number;
@@ -544,6 +564,46 @@ function evaluateOneBox(cond: Condition, boxIndex: number, digits: number[], quo
 }
 
 
+/**
+ * Eligible-Window helper for PCT conditions.
+ *
+ * When eligibleWindow is OFF (or not set) the helper is a transparent pass-through
+ * that returns `rawResult` unchanged — ZERO behavior change.
+ *
+ * When ON:
+ *  - If `rawResult` is true  → refresh/extend the expiry timestamp and return true.
+ *  - If `rawResult` is false → if the expiry hasn't passed yet, return true (still eligible).
+ *                              Otherwise clear the entry and return false.
+ *
+ * The expiry map lives in `eng.eligibilityExpiry` (module-scope, ephemeral).
+ * Key = `${condId}:${symbol}` so every market gets its own independent timer.
+ */
+function applyEligibleWindow(cond: Condition, symbol: string | undefined, rawResult: boolean): boolean {
+  const ew = cond.eligibleWindow;
+  if (!ew?.enabled) return rawResult;
+
+  const condId = cond.id || 'cond';
+  const key = `${condId}:${symbol ?? '__global'}`;
+  const now = Date.now();
+  const windowMs = Math.max(1, ew.seconds ?? 90) * 1000;
+
+  if (rawResult) {
+    // Condition freshly met — set/refresh expiry for this market
+    eng.eligibilityExpiry[key] = now + windowMs;
+    return true;
+  }
+
+  // Condition not currently met — check if we're still within the window for this market
+  const expiry = eng.eligibilityExpiry[key];
+  if (expiry !== undefined && now < expiry) {
+    return true; // still eligible
+  }
+
+  // Window expired (or was never set) — clean up and return false
+  delete eng.eligibilityExpiry[key];
+  return false;
+}
+
 function evaluateCondition(
   cond: Condition,
   digits: number[],
@@ -557,13 +617,45 @@ function evaluateCondition(
       const sub = digits.slice(-period);
       if (sub.length < period) return false;
       const pct = (sub.filter(d => d % 2 === 0).length / period) * 100;
-      return compare(pct, cond.comparator, cond.value);
+      const rawResult = compare(pct, cond.comparator, cond.value);
+      return applyEligibleWindow(cond, symbol, rawResult);
     }
     case 'ODD_PCT': {
       const sub = digits.slice(-period);
       if (sub.length < period) return false;
       const pct = (sub.filter(d => d % 2 !== 0).length / period) * 100;
-      return compare(pct, cond.comparator, cond.value);
+      const rawResult = compare(pct, cond.comparator, cond.value);
+      return applyEligibleWindow(cond, symbol, rawResult);
+    }
+    case 'FALL_PCT': {
+      const sub = quotes.slice(-(period + 1));
+      if (sub.length < period + 1) return false;
+      let falls = 0;
+      for (let i = 1; i < sub.length; i++) if (sub[i] < sub[i - 1]) falls++;
+      const rawResult = compare((falls / period) * 100, cond.comparator, cond.value);
+      return applyEligibleWindow(cond, symbol, rawResult);
+    }
+    case 'RISE_PCT': {
+      const sub = quotes.slice(-(period + 1));
+      if (sub.length < period + 1) return false;
+      let rises = 0;
+      for (let i = 1; i < sub.length; i++) if (sub[i] > sub[i - 1]) rises++;
+      const rawResult = compare((rises / period) * 100, cond.comparator, cond.value);
+      return applyEligibleWindow(cond, symbol, rawResult);
+    }
+    case 'OVER_PCT': {
+      const sub = digits.slice(-period);
+      if (sub.length < period) return false;
+      const pct = (sub.filter(d => d > (cond.digitBarrier ?? 4)).length / period) * 100;
+      const rawResult = compare(pct, cond.comparator, cond.value);
+      return applyEligibleWindow(cond, symbol, rawResult);
+    }
+    case 'UNDER_PCT': {
+      const sub = digits.slice(-period);
+      if (sub.length < period) return false;
+      const pct = (sub.filter(d => d <= (cond.digitBarrier ?? 4)).length / period) * 100;
+      const rawResult = compare(pct, cond.comparator, cond.value);
+      return applyEligibleWindow(cond, symbol, rawResult);
     }
     case 'LAST_DIGITS': {
       const n = Math.max(1, cond.lastN);
@@ -653,32 +745,6 @@ function evaluateCondition(
     }
     case 'DIGIT_PATTERN':
       return evaluateDigitPattern(cond, digits, quotes);
-    case 'FALL_PCT': {
-      const sub = quotes.slice(-(period + 1));
-      if (sub.length < period + 1) return false;
-      let falls = 0;
-      for (let i = 1; i < sub.length; i++) if (sub[i] < sub[i - 1]) falls++;
-      return compare((falls / period) * 100, cond.comparator, cond.value);
-    }
-    case 'RISE_PCT': {
-      const sub = quotes.slice(-(period + 1));
-      if (sub.length < period + 1) return false;
-      let rises = 0;
-      for (let i = 1; i < sub.length; i++) if (sub[i] > sub[i - 1]) rises++;
-      return compare((rises / period) * 100, cond.comparator, cond.value);
-    }
-    case 'OVER_PCT': {
-      const sub = digits.slice(-period);
-      if (sub.length < period) return false;
-      const pct = (sub.filter(d => d > (cond.digitBarrier ?? 4)).length / period) * 100;
-      return compare(pct, cond.comparator, cond.value);
-    }
-    case 'UNDER_PCT': {
-      const sub = digits.slice(-period);
-      if (sub.length < period) return false;
-      const pct = (sub.filter(d => d <= (cond.digitBarrier ?? 4)).length / period) * 100;
-      return compare(pct, cond.comparator, cond.value);
-    }
     case 'DIGIT_APPEARS': {
       const targetDigits = cond.targetDigits && cond.targetDigits.length > 0
         ? cond.targetDigits
@@ -800,6 +866,9 @@ const eng = {
     lockLosses: 0,
     lockProfit: 0,
   },
+  // Eligible-Window expiry timestamps: key = `${condId}:${symbol}`, value = Date.now() ms expiry
+  // Set when a PCT condition is met (with window enabled), cleared on expiry.
+  eligibilityExpiry: {} as Record<string, number>,
 };
 
 // Single onTick subscription handle — registered once, lives forever
@@ -811,8 +880,8 @@ function processVirtualSwitcherResult(isWin: boolean, get: () => any, set: (stat
   if (!aSw?.virtualSwitcher?.enabled) return;
 
   const vs = aSw.virtualSwitcher;
-  // Only process virtual outcome if in virtual phase
-  if (vs._phase === 'real') return;
+  // Only process virtual outcome if in virtual phase; gate_b has its own handler
+  if (vs._phase === 'real' || vs._phase === 'gate_b') return;
 
   let consecW = vs._consecWins || 0;
   let consecL = vs._consecLosses || 0;
@@ -865,44 +934,75 @@ function processVirtualSwitcherResult(isWin: boolean, get: () => any, set: (stat
   }
 
   if (triggeredRule && activeContract) {
-    // 🚀 SWITCH TO REAL TRADING!
-    useDerivStore.getState().setVirtualSettings({
-      isVirtualMode: false,
-      startVirtualToReal: false,
-      startRealToVirtual: false,
-      isDoubleVirtual: false,
-    });
-    const lbl = TRADE_OPTIONS.find(o => o.value === activeContract!.contractType)?.label || activeContract.contractType;
-    const barText = activeContract.barrier !== undefined && needsBarrier(activeContract.contractType) ? ` ${activeContract.barrier}` : '';
-    set({
-      botStatusMsg: `⚡ Virtual Switcher: ${triggeredRule === 'wins' ? winRule.threshold + ' V-Wins' : lossRule.threshold + ' V-Losses'} met! Switched to REAL (${lbl}${barText})${activeContract.market ? ` on ${activeContract.market}` : ''}.`,
-      adaptiveSwitch: {
-        ...aSw,
-        enabled: true,
-        virtualSwitcher: {
-          ...vs,
-          returnToVirtual: {
-            triggerType: (vs.returnToVirtual?.triggerType || 'wins') as 'wins' | 'losses' | 'trades',
-            mode: (vs.returnToVirtual?.mode || 'consec') as 'consec' | 'total',
-            threshold: Math.max(1, Number(vs.returnToVirtual?.threshold) || 3),
+    const gateBEnabled = Boolean(vs.gateB?.enabled);
+
+    if (gateBEnabled) {
+      // ── Gate B enabled: stay VIRTUAL with locked contract (gate_b phase) ──
+      const lbl = TRADE_OPTIONS.find(o => o.value === activeContract!.contractType)?.label || activeContract!.contractType;
+      const barText = activeContract!.barrier !== undefined && needsBarrier(activeContract!.contractType) ? ` ${activeContract!.barrier}` : '';
+      set({
+        botStatusMsg: `🔷 Gate A (${triggeredRule === 'wins' ? winRule!.threshold + ' V-Wins' : lossRule!.threshold + ' V-Losses'}) met! Gate B active — testing ${lbl}${barText} virtually before REAL.`,
+        adaptiveSwitch: {
+          ...aSw,
+          virtualSwitcher: {
+            ...vs,
+            _phase: 'gate_b',
+            _activeRule: triggeredRule,
+            _activeContract: activeContract,
+            _originalMarkets: (vs._originalMarkets && vs._originalMarkets.length > 0) ? vs._originalMarkets : [...state.selectedMarkets],
+            _consecWins: 0,
+            _consecLosses: 0,
+            _totalWins: totalW,
+            _totalLosses: totalL,
+            _gateBConsecWins: 0,
+            _gateBConsecLosses: 0,
+            _gateBTotalWins: 0,
+            _gateBTotalLosses: 0,
+            _gateBTotalTrades: 0,
           },
-          _phase: 'real',
-          _activeRule: triggeredRule,
-          _activeContract: activeContract,
-          _originalMarkets: (vs._originalMarkets && vs._originalMarkets.length > 0) ? vs._originalMarkets : [...state.selectedMarkets],
-          _consecWins: 0,
-          _consecLosses: 0,
-          _totalWins: totalW,
-          _totalLosses: totalL,
-          _rConsecWins: 0,
-          _rConsecLosses: 0,
-          _rTotalWins: 0,
-          _rTotalLosses: 0,
-          _rTotalTrades: 0,
         },
-      },
-      selectedMarkets: newMarket,
-    });
+        selectedMarkets: newMarket,
+      });
+    } else {
+      // ── No Gate B: switch directly to REAL trading ──
+      useDerivStore.getState().setVirtualSettings({
+        isVirtualMode: false,
+        startVirtualToReal: false,
+        startRealToVirtual: false,
+        isDoubleVirtual: false,
+      });
+      const lbl = TRADE_OPTIONS.find(o => o.value === activeContract!.contractType)?.label || activeContract!.contractType;
+      const barText = activeContract!.barrier !== undefined && needsBarrier(activeContract!.contractType) ? ` ${activeContract!.barrier}` : '';
+      set({
+        botStatusMsg: `⚡ Virtual Switcher: ${triggeredRule === 'wins' ? winRule!.threshold + ' V-Wins' : lossRule!.threshold + ' V-Losses'} met! Switched to REAL (${lbl}${barText})${activeContract!.market ? ` on ${activeContract!.market}` : ''}.`,
+        adaptiveSwitch: {
+          ...aSw,
+          enabled: true,
+          virtualSwitcher: {
+            ...vs,
+            returnToVirtual: {
+              triggerType: (vs.returnToVirtual?.triggerType || 'wins') as 'wins' | 'losses' | 'trades',
+              mode: (vs.returnToVirtual?.mode || 'consec') as 'consec' | 'total',
+              threshold: Math.max(1, Number(vs.returnToVirtual?.threshold) || 3),
+            },
+            _phase: 'real',
+            _activeRule: triggeredRule,
+            _activeContract: activeContract,
+            _originalMarkets: (vs._originalMarkets && vs._originalMarkets.length > 0) ? vs._originalMarkets : [...state.selectedMarkets],
+            _consecWins: 0,
+            _consecLosses: 0,
+            _totalWins: totalW,
+            _totalLosses: totalL,
+            _rConsecWins: 0,
+            _rConsecLosses: 0,
+            _rTotalWins: 0,
+            _rTotalLosses: 0,
+            _rTotalTrades: 0,
+          },
+        },
+        selectedMarkets: newMarket,
+      });
+    }
   } else {
     set({
       adaptiveSwitch: {
@@ -914,6 +1014,100 @@ function processVirtualSwitcherResult(isWin: boolean, get: () => any, set: (stat
           _consecLosses: consecL,
           _totalWins: totalW,
           _totalLosses: totalL,
+        },
+      },
+    });
+  }
+}
+function processGateBResult(isWin: boolean, get: () => any, set: (state: any) => void) {
+  const state = get();
+  const aSw = state.adaptiveSwitch;
+  if (!aSw?.virtualSwitcher?.enabled) return;
+
+  const vs = aSw.virtualSwitcher;
+  if (vs._phase !== 'gate_b') return;
+
+  let gbConsecW = vs._gateBConsecWins || 0;
+  let gbConsecL = vs._gateBConsecLosses || 0;
+  let gbTotalW = vs._gateBTotalWins || 0;
+  let gbTotalL = vs._gateBTotalLosses || 0;
+  let gbTotalTrades = (vs._gateBTotalTrades || 0) + 1;
+
+  if (isWin) {
+    gbConsecW++;
+    gbConsecL = 0;
+    gbTotalW++;
+  } else {
+    gbConsecW = 0;
+    gbConsecL++;
+    gbTotalL++;
+  }
+
+  const gbRule = vs.gateB;
+  if (!gbRule) return;
+
+  const gbTriggerType = (gbRule.triggerType || 'losses') as 'wins' | 'losses' | 'trades';
+  const gbMode = (gbRule.mode || 'consec') as 'consec' | 'total';
+  const gbThreshold = Math.max(1, Number(gbRule.threshold) || 2);
+
+  let gbCount = 0;
+  if (gbTriggerType === 'wins') {
+    gbCount = gbMode === 'consec' ? gbConsecW : gbTotalW;
+  } else if (gbTriggerType === 'losses') {
+    gbCount = gbMode === 'consec' ? gbConsecL : gbTotalL;
+  } else {
+    gbCount = gbTotalTrades;
+  }
+
+  if (gbCount >= gbThreshold) {
+    // ── Gate B condition met: switch to REAL with the locked contract ──
+    useDerivStore.getState().setVirtualSettings({
+      isVirtualMode: false,
+      startVirtualToReal: false,
+      startRealToVirtual: false,
+      isDoubleVirtual: false,
+    });
+    const ac = vs._activeContract!;
+    const lbl = TRADE_OPTIONS.find(o => o.value === ac.contractType)?.label || ac.contractType;
+    const barText = ac.barrier !== undefined && needsBarrier(ac.contractType) ? ` ${ac.barrier}` : '';
+    set({
+      botStatusMsg: `⚡ Gate B (${gbThreshold} ${gbMode === 'consec' ? 'consecutive ' : 'total '}${gbTriggerType}) met! Switched to REAL (${lbl}${barText}).`,
+      adaptiveSwitch: {
+        ...aSw,
+        enabled: true,
+        virtualSwitcher: {
+          ...vs,
+          returnToVirtual: {
+            triggerType: (vs.returnToVirtual?.triggerType || 'wins') as 'wins' | 'losses' | 'trades',
+            mode: (vs.returnToVirtual?.mode || 'consec') as 'consec' | 'total',
+            threshold: Math.max(1, Number(vs.returnToVirtual?.threshold) || 3),
+          },
+          _phase: 'real',
+          _rConsecWins: 0,
+          _rConsecLosses: 0,
+          _rTotalWins: 0,
+          _rTotalLosses: 0,
+          _rTotalTrades: 0,
+          _gateBConsecWins: 0,
+          _gateBConsecLosses: 0,
+          _gateBTotalWins: 0,
+          _gateBTotalLosses: 0,
+          _gateBTotalTrades: 0,
+        },
+      },
+    });
+  } else {
+    // Still accumulating Gate B virtual results
+    set({
+      adaptiveSwitch: {
+        ...aSw,
+        virtualSwitcher: {
+          ...vs,
+          _gateBConsecWins: gbConsecW,
+          _gateBConsecLosses: gbConsecL,
+          _gateBTotalWins: gbTotalW,
+          _gateBTotalLosses: gbTotalL,
+          _gateBTotalTrades: gbTotalTrades,
         },
       },
     });
@@ -987,6 +1181,11 @@ function processVirtualSwitcherRealResult(isWin: boolean, get: () => any, set: (
           _consecLosses: 0,
           _totalWins: 0,
           _totalLosses: 0,
+          _gateBConsecWins: 0,
+          _gateBConsecLosses: 0,
+          _gateBTotalWins: 0,
+          _gateBTotalLosses: 0,
+          _gateBTotalTrades: 0,
           _rConsecWins: 0,
           _rConsecLosses: 0,
           _rTotalWins: 0,
@@ -1376,6 +1575,7 @@ export const useBotStore = create<BotStoreState>()(
         eng.thenState     = {};
         eng.roundState    = {};
         eng.lastTradeTime = 0;
+        eng.eligibilityExpiry = {};
         botTradeIds.clear();
         set({ adaptiveLiveStatus: '' });
 
@@ -1401,6 +1601,11 @@ export const useBotStore = create<BotStoreState>()(
                 _consecLosses: 0,
                 _totalWins: 0,
                 _totalLosses: 0,
+                _gateBConsecWins: 0,
+                _gateBConsecLosses: 0,
+                _gateBTotalWins: 0,
+                _gateBTotalLosses: 0,
+                _gateBTotalTrades: 0,
                 _rConsecWins: 0,
                 _rConsecLosses: 0,
                 _rTotalWins: 0,
@@ -1494,6 +1699,7 @@ export const useBotStore = create<BotStoreState>()(
         };
         eng.thenState = {};
         eng.waitingForOpposite = {};
+        eng.eligibilityExpiry = {};
         set({ isRunning: false, botStatusMsg: reason ? `Stopped: ${reason}` : 'Bot stopped.' });
       },
 
@@ -1517,6 +1723,7 @@ export const useBotStore = create<BotStoreState>()(
         };
         eng.thenState     = {};
         eng.retrigger     = {};
+        eng.eligibilityExpiry = {};
 
         eng.waitingForOpposite = {};
         eng.lastTradeTime = 0;
@@ -1715,6 +1922,7 @@ export const useBotStore = create<BotStoreState>()(
           const smart = vsV.smartSettings;
           const isRoundWinB = isDualRoundPush || roundWon >= roundLost;
           processVirtualSwitcherResult(isRoundWinB, get, set);
+          processGateBResult(isRoundWinB, get, set);
           const currentRes: 'W' | 'L' = isRoundWinB ? 'W' : 'L';
           const newHistory: ('W' | 'L')[] = [...(vsV.vResultHistory || []), currentRes].slice(-50);
 
@@ -1930,6 +2138,7 @@ export const useBotStore = create<BotStoreState>()(
         for (const rt of resolved) {
           if (!rt.roundId) {
             processVirtualSwitcherResult(rt.isWin, get, set);
+            processGateBResult(rt.isWin, get, set);
             const vsV = useDerivStore.getState().virtualSettings;
             let { vConsecWins, vConsecLosses, virtualWins, virtualLosses } = vsV;
             if (rt.isWin) { vConsecWins++; vConsecLosses = 0; virtualWins++; }
@@ -2282,7 +2491,9 @@ export const useBotStore = create<BotStoreState>()(
           if (isVSActive) {
             const vs = aSwitch.virtualSwitcher!;
             const isLockMode1 = Boolean(cLock?.enabled && cLock?.mode === 'no_recheck');
-            if (isVirtual) {
+
+            if (isVirtual && vs._phase !== 'gate_b') {
+              // ── Gate A virtual phase: trade the test contract ──
               const vc = vs.virtualContract || { contractType: 'DIGITEVEN', ticks: 1 };
               const targetContract = normalizeContractType(vc.contractType || (vc as any).type || 'DIGITEVEN');
               const targetTicks = isLockMode1 ? 1 : Math.max(1, vc.ticks || s.ticks || 1);
@@ -2296,7 +2507,31 @@ export const useBotStore = create<BotStoreState>()(
               const barText = vc.barrier !== undefined && needsBarrier(targetContract) ? ` ${vc.barrier}` : '';
               const mMode = vs.onVirtualWins?.mode === 'consec' ? 'Streak' : 'Total';
               set({ adaptiveLiveStatus: `🧪 V-SWITCHER [Virtual]: Testing ${lbl}${barText} (${mMode}: ${vs._consecWins || 0}W / ${vs._consecLosses || 0}L)` });
+
+            } else if (isVirtual && vs._phase === 'gate_b') {
+              // ── Gate B virtual phase: trade the locked contract (set by Gate A) ──
+              const ac = vs._activeContract || { contractType: vs.onVirtualWins?.contractType || 'DIGITUNDER', barrier: vs.onVirtualWins?.barrier, ticks: vs.onVirtualWins?.ticks || 1 };
+              const targetContract = normalizeContractType(ac.contractType || (ac as any).type || 'DIGITUNDER');
+              const targetTicks = isLockMode1 ? 1 : Math.max(1, ac.ticks || s.ticks || 1);
+              tradesToPlace = [{
+                contractType: targetContract,
+                barrier: needsBarrier(targetContract) ? (ac.barrier ?? 4) : undefined,
+                count: 1,
+                ticks: targetTicks,
+              }];
+              const lbl = TRADE_OPTIONS.find(o => o.value === targetContract)?.label || targetContract;
+              const barText = ac.barrier !== undefined && needsBarrier(targetContract) ? ` ${ac.barrier}` : '';
+              const gbRule = vs.gateB;
+              const gbThresh = Math.max(1, Number(gbRule?.threshold) || 2);
+              const gbTrigger = gbRule?.triggerType || 'losses';
+              const gbMode = gbRule?.mode || 'consec';
+              const gbCount = gbTrigger === 'wins' ? (gbMode === 'consec' ? vs._gateBConsecWins || 0 : vs._gateBTotalWins || 0)
+                : gbTrigger === 'losses' ? (gbMode === 'consec' ? vs._gateBConsecLosses || 0 : vs._gateBTotalLosses || 0)
+                : (vs._gateBTotalTrades || 0);
+              set({ adaptiveLiveStatus: `🔷 V-SWITCHER [Gate B]: ${lbl}${barText} virtual (${gbCount}/${gbThresh} ${gbTrigger} to REAL)` });
+
             } else {
+              // ── Real phase: trade the locked contract for real ──
               const ac = vs._activeContract || { contractType: vs.onVirtualWins?.contractType || 'DIGITUNDER', barrier: vs.onVirtualWins?.barrier, ticks: vs.onVirtualWins?.ticks || 1 };
               const targetContract = normalizeContractType(ac.contractType || (ac as any).type || 'DIGITUNDER');
               const targetTicks = isLockMode1 ? 1 : Math.max(1, ac.ticks || s.ticks || 1);
