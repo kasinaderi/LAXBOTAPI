@@ -1921,8 +1921,12 @@ export const useBotStore = create<BotStoreState>()(
           let smartMatched = false;
           const smart = vsV.smartSettings;
           const isRoundWinB = isDualRoundPush || roundWon >= roundLost;
-          processVirtualSwitcherResult(isRoundWinB, get, set);
-          processGateBResult(isRoundWinB, get, set);
+          const curPhaseB = get().adaptiveSwitch?.virtualSwitcher?._phase || 'virtual';
+          if (curPhaseB === 'virtual') {
+            processVirtualSwitcherResult(isRoundWinB, get, set);
+          } else if (curPhaseB === 'gate_b') {
+            processGateBResult(isRoundWinB, get, set);
+          }
           const currentRes: 'W' | 'L' = isRoundWinB ? 'W' : 'L';
           const newHistory: ('W' | 'L')[] = [...(vsV.vResultHistory || []), currentRes].slice(-50);
 
@@ -2137,8 +2141,12 @@ export const useBotStore = create<BotStoreState>()(
         // Legacy (no roundId) streak tracking — one per unsettled contract
         for (const rt of resolved) {
           if (!rt.roundId) {
-            processVirtualSwitcherResult(rt.isWin, get, set);
-            processGateBResult(rt.isWin, get, set);
+            const curPhase = get().adaptiveSwitch?.virtualSwitcher?._phase || 'virtual';
+            if (curPhase === 'virtual') {
+              processVirtualSwitcherResult(rt.isWin, get, set);
+            } else if (curPhase === 'gate_b') {
+              processGateBResult(rt.isWin, get, set);
+            }
             const vsV = useDerivStore.getState().virtualSettings;
             let { vConsecWins, vConsecLosses, virtualWins, virtualLosses } = vsV;
             if (rt.isWin) { vConsecWins++; vConsecLosses = 0; virtualWins++; }
