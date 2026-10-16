@@ -2518,7 +2518,8 @@ export const useBotStore = create<BotStoreState>()(
 
             } else if (isVirtual && vs._phase === 'gate_b') {
               // ── Gate B virtual phase: trade the locked contract (set by Gate A) ──
-              const ac = vs._activeContract || { contractType: vs.onVirtualWins?.contractType || 'DIGITUNDER', barrier: vs.onVirtualWins?.barrier, ticks: vs.onVirtualWins?.ticks || 1 };
+              const defaultRule = vs._activeRule === 'losses' ? vs.onVirtualLosses : vs.onVirtualWins;
+              const ac = vs._activeContract || { contractType: defaultRule?.contractType || (vs._activeRule === 'losses' ? 'DIGITOVER' : 'DIGITUNDER'), barrier: defaultRule?.barrier, ticks: defaultRule?.ticks || 1 };
               const targetContract = normalizeContractType(ac.contractType || (ac as any).type || 'DIGITUNDER');
               const targetTicks = isLockMode1 ? 1 : Math.max(1, ac.ticks || s.ticks || 1);
               tradesToPlace = [{
@@ -2540,7 +2541,8 @@ export const useBotStore = create<BotStoreState>()(
 
             } else {
               // ── Real phase: trade the locked contract for real ──
-              const ac = vs._activeContract || { contractType: vs.onVirtualWins?.contractType || 'DIGITUNDER', barrier: vs.onVirtualWins?.barrier, ticks: vs.onVirtualWins?.ticks || 1 };
+              const defaultRule = vs._activeRule === 'losses' ? vs.onVirtualLosses : vs.onVirtualWins;
+              const ac = vs._activeContract || { contractType: defaultRule?.contractType || (vs._activeRule === 'losses' ? 'DIGITOVER' : 'DIGITUNDER'), barrier: defaultRule?.barrier, ticks: defaultRule?.ticks || 1 };
               const targetContract = normalizeContractType(ac.contractType || (ac as any).type || 'DIGITUNDER');
               const targetTicks = isLockMode1 ? 1 : Math.max(1, ac.ticks || s.ticks || 1);
               tradesToPlace = [{

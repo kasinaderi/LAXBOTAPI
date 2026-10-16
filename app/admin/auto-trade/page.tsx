@@ -989,9 +989,11 @@ export default function AutoTradePage() {
                     },
                 };
 
-                if (stepConfig && stepConfig.strategies && stepConfig.strategies.length > 0) {
+                if (stepConfig) {
                     // Apply this step's dedicated snapshot
-                    patch.strategies = JSON.parse(JSON.stringify(stepConfig.strategies));
+                    if (stepConfig.strategies && stepConfig.strategies.length > 0) {
+                        patch.strategies = JSON.parse(JSON.stringify(stepConfig.strategies));
+                    }
                     patch.selectedMarkets = step.marketOverride
                         ? [step.marketOverride]
                         : (stepConfig.selectedMarkets && stepConfig.selectedMarkets.length > 0 ? [...stepConfig.selectedMarkets] : ['1HZ10V', '1HZ100V']);
@@ -1063,9 +1065,9 @@ export default function AutoTradePage() {
                     },
                 };
 
+                const isVSActive = Boolean(stepConfig?.adaptiveSwitch?.virtualSwitcher?.enabled);
                 if (stepConfig && stepConfig.virtualSettings) {
                     const vs = stepConfig.virtualSettings;
-                    const isVSActive = Boolean(stepConfig.adaptiveSwitch?.virtualSwitcher?.enabled);
                     const isVirtActive = isVSActive || vs.startVirtualToReal || vs.isDoubleVirtual || vs.smartSettings?.enabled || vs.isVirtualMode;
                     useDerivStore.getState().setVirtualSettings({
                         // Start from a clean baseline (no old state leaks through)
@@ -1092,7 +1094,10 @@ export default function AutoTradePage() {
                     });
                 } else {
                     // No virtualSettings saved for this step → apply the clean disabled baseline
-                    useDerivStore.getState().setVirtualSettings(defaultVirtualSettings);
+                    useDerivStore.getState().setVirtualSettings({
+                        ...defaultVirtualSettings,
+                        isVirtualMode: isVSActive,
+                    });
                 }
 
                 // Inner Compounding for this step
