@@ -1547,7 +1547,7 @@ export const useBotStore = create<BotStoreState>()(
         const pageId = log.pageId || getActivePageId();
         const logWithPage = { ...log, pageId };
         set(state => ({
-          tradeLogs: [logWithPage, ...state.tradeLogs].slice(0, 50),
+          tradeLogs: [logWithPage, ...state.tradeLogs].slice(0, 500),
         }));
       },
       updateLog: (id, patch) => set(state => ({

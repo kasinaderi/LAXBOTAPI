@@ -1722,8 +1722,30 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
       </div>
 
       <div className="lp-tx-actions">
-        <button className="lp-tx-btn">Download</button>
-        <button className="lp-tx-btn">View Detail</button>
+        <button className="lp-tx-btn" onClick={() => {
+          // Build CSV from raw trade logs
+          const header = 'Type,Symbol,Strategy,Stake,Entry,Exit,Result,P/L,Time\n';
+          const rows = rawLogs.map(log => {
+            const type = log.contract || '';
+            const sym  = log.symbol || '';
+            const strat = log.strategyIndex !== undefined ? `S${log.strategyIndex + 1}` : '';
+            const stake = (log.stake ?? 0).toFixed(2);
+            const entry = log.entrySpot ?? '-';
+            const exit  = log.exitSpot ?? '-';
+            const result = log.result || '';
+            const pl = (log.profit ?? 0).toFixed(2);
+            const time = log.time ? new Date(log.time).toLocaleString('en-GB', { hour12: false }) : '';
+            return `${type},${sym},${strat},${stake},${entry},${exit},${result},${pl},${time}`;
+          }).join('\n');
+          const blob = new Blob([header + rows], { type: 'text/csv' });
+          const url  = URL.createObjectURL(blob);
+          const a    = document.createElement('a');
+          a.href = url;
+          a.download = `laxprime-trades-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`;
+          a.click();
+          URL.revokeObjectURL(url);
+        }}>Download</button>
+        <button className="lp-tx-btn" onClick={onReset}>Reset</button>
       </div>
 
       {tab === 'transactions' && (
@@ -1741,7 +1763,7 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
             </div>
           ) : (
             <div className="lp-tx-list">
-              {combinedLogs.slice(0, 30).map(log => {
+              {combinedLogs.map(log => {
                 const isVirt = String(log.id).startsWith('VIRT_');
                 const won    = !isVirt && (log.result === 'WON');
                 const lost   = !isVirt && (log.result === 'LOST');
@@ -1814,25 +1836,6 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
           <span style={{ fontSize: 12, color: '#9ca3af' }}>No journal entries yet.</span>
         </div>
       )}
-
-      <div className="lp-tx-stats">
-        <div className="lp-tx-stat-row">
-          <div className="lp-tx-stat"><span className="lp-tsl">Total stake</span><span className="lp-tsv">0.00 USD</span></div>
-          <div className="lp-tx-stat"><span className="lp-tsl">Total payout</span><span className="lp-tsv">0.00 USD</span></div>
-          <div className="lp-tx-stat"><span className="lp-tsl">No. of runs</span><span className="lp-tsv">{stats?.totalTrades ?? (stats?.won ?? 0) + (stats?.lost ?? 0)}</span></div>
-        </div>
-        <div className="lp-tx-stat-row" style={{ marginTop: 8 }}>
-          <div className="lp-tx-stat"><span className="lp-tsl">Contracts lost</span><span className="lp-tsv">{stats?.lost ?? 0}</span></div>
-          <div className="lp-tx-stat"><span className="lp-tsl">Contracts won</span><span className="lp-tsv">{stats?.won ?? 0}</span></div>
-          <div className="lp-tx-stat">
-            <span className="lp-tsl">Total profit/loss</span>
-            <span className={`lp-tsv ${(stats?.totalProfit ?? 0) >= 0 ? 'pos' : 'neg'}`}>
-              {(stats?.totalProfit ?? 0) >= 0 ? '+' : ''}{(stats?.totalProfit ?? 0).toFixed(2)} USD
-            </span>
-          </div>
-        </div>
-        <button className="lp-reset-btn" onClick={onReset}>Reset</button>
-      </div>
     </div>
   );
 }
@@ -4042,19 +4045,17 @@ export default function LaxPrimePage() {
             </span>
           </div>
 
-          {/* Quick stats row */}
-          {isRunning && (
-            <div className="lp-quick-stats">
-              <div className="lp-qs"><span className="lp-qs-l">W</span><span className="lp-qs-v green">{globalStats?.won ?? 0}</span></div>
-              <div className="lp-qs"><span className="lp-qs-l">L</span><span className="lp-qs-v red">{globalStats?.lost ?? 0}</span></div>
-              <div className="lp-qs">
-                <span className="lp-qs-l">P/L</span>
-                <span className={`lp-qs-v ${(globalStats?.totalProfit ?? 0) >= 0 ? 'green' : 'red'}`}>
-                  {(globalStats?.totalProfit ?? 0) >= 0 ? '+' : ''}{(globalStats?.totalProfit ?? 0).toFixed(2)}
-                </span>
-              </div>
+          {/* Quick stats row — always visible */}
+          <div className="lp-quick-stats">
+            <div className="lp-qs"><span className="lp-qs-l">W</span><span className="lp-qs-v green">{globalStats?.won ?? 0}</span></div>
+            <div className="lp-qs"><span className="lp-qs-l">L</span><span className="lp-qs-v red">{globalStats?.lost ?? 0}</span></div>
+            <div className="lp-qs">
+              <span className="lp-qs-l">P/L</span>
+              <span className={`lp-qs-v ${(globalStats?.totalProfit ?? 0) >= 0 ? 'green' : 'red'}`}>
+                {(globalStats?.totalProfit ?? 0) >= 0 ? '+' : ''}{(globalStats?.totalProfit ?? 0).toFixed(2)}
+              </span>
             </div>
-          )}
+          </div>
 
           {/* Trade Log Panel */}
           <TradeLogPanel logs={tradeLogs || []} stats={globalStats || { won: 0, lost: 0, totalProfit: 0, totalTrades: 0 }} onReset={resetAll} />
