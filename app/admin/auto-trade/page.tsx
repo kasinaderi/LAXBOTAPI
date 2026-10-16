@@ -431,8 +431,10 @@ export default function AutoTradePage() {
     const stepLaunchTimeRef         = useRef<number>(0);
     const playlistTargetTimeRef     = useRef<number>(0);
 
-    // Subscribe to LaxPrime (useBotStore) trade logs
+    // Subscribe to LaxPrime (useBotStore) trade logs & engine status
     const botTradeLogs = useBotStore(state => state.tradeLogs);
+    const botStoreIsRunning = useBotStore(state => state.isRunning);
+    const botStoreStatusMsg = useBotStore(state => state.botStatusMsg);
 
     useEffect(() => { isRunningRef.current       = isRunningAuto;    }, [isRunningAuto]);
     useEffect(() => { curStepRef.current         = curStep;          }, [curStep]);
@@ -470,6 +472,28 @@ export default function AutoTradePage() {
             setCurrentStake(base.toFixed(2));
         }
     }, [isCapitalCompound, capitalPct, account?.balance, baseStake, isRunningAuto]);
+
+    // Watch for safety stops triggered by the LaxPrime engine (e.g. Martingale capital exceeded, balance error)
+    const prevBotStoreRunningRef = useRef(false);
+    useEffect(() => {
+        if (
+            isRunningAuto &&
+            selectedPreset === 'trade_playlist' &&
+            activeStepSourceRef.current === 'laxprime' &&
+            playlistStatusRef.current === 'executing'
+        ) {
+            if (prevBotStoreRunningRef.current && !botStoreIsRunning) {
+                // LaxPrime engine just stopped itself!
+                if (botStoreStatusMsg && (botStoreStatusMsg.includes('Stopped:') || botStoreStatusMsg.includes('Balance') || botStoreStatusMsg.includes('Martingale'))) {
+                    const reason = botStoreStatusMsg.replace(/^Stopped:\s*/, '');
+                    addAuditLog(`🛑 [Step ${playlistCurrentStepIdxRef.current + 1}] LaxPrime Safety Stop: ${reason}`, 'error');
+                    setPlaylistStatus('completed');
+                    handleStop(reason);
+                }
+            }
+        }
+        prevBotStoreRunningRef.current = botStoreIsRunning;
+    }, [botStoreIsRunning, botStoreStatusMsg, isRunningAuto, selectedPreset]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // React to virtual ↔ real mode switches triggered by the trade engine
     const prevVirtualModeRef = useRef(virtualSettings.isVirtualMode);
@@ -900,16 +924,18 @@ export default function AutoTradePage() {
 
         if (reachedGlobalTP) {
             const detail = globalTPModeRef.current === 'wins' ? `${curWins} >= ${takeProfit} Wins` : `$${curProfit.toFixed(2)} >= $${takeProfit}`;
-            addAuditLog(`🎯 Global Take Profit reached (${detail})! Session completed.`, 'success');
+            const msg = `🎯 Global Take Profit reached (${detail})! Session completed.`;
+            addAuditLog(msg, 'success');
             setPlaylistStatus('completed');
-            handleStop();
+            handleStop(msg);
             return;
         }
         if (reachedGlobalSL) {
             const detail = globalSLModeRef.current === 'losses' ? `${curLosses} >= ${stopLoss} Losses` : `$${curProfit.toFixed(2)} <= -$${stopLoss}`;
-            addAuditLog(`🛑 Global Stop Loss hit (${detail})! Session halted.`, 'error');
+            const msg = `🛑 Global Stop Loss hit (${detail})! Session halted.`;
+            addAuditLog(msg, 'error');
             setPlaylistStatus('completed');
-            handleStop();
+            handleStop(msg);
             return;
         }
 
@@ -1178,9 +1204,10 @@ export default function AutoTradePage() {
         if (stepCapitalLossGuardRef.current) {
             const liveCap = useDerivStore.getState().account?.balance ?? (account?.balance || 0);
             if (profit < 0 && liveCap > 0 && Math.abs(profit) >= (liveCap * 0.5)) {
-                addAuditLog(`🛑 EMERGENCY 50% CAPITAL GUARD: Step ${currentIdx + 1} loss of -$${Math.abs(profit).toFixed(2)} exceeded 50% of total capital ($${(liveCap * 0.5).toFixed(2)})! Halting entire bot session globally.`, 'error');
+                const guardMsg = `EMERGENCY 50% CAPITAL GUARD: Step ${currentIdx + 1} loss of -$${Math.abs(profit).toFixed(2)} exceeded 50% of total capital ($${(liveCap * 0.5).toFixed(2)})! Halting entire bot session globally.`;
+                addAuditLog(`🛑 ${guardMsg}`, 'error');
                 setPlaylistStatus('completed');
-                handleStop();
+                handleStop(guardMsg);
                 return;
             }
         }
@@ -1200,16 +1227,18 @@ export default function AutoTradePage() {
 
         if (reachedGlobalTP) {
             const detail = globalTPModeRef.current === 'wins' ? `${curWins} >= ${takeProfit} Wins` : `$${curProfit.toFixed(2)} >= $${takeProfit}`;
-            addAuditLog(`🎯 Global Take Profit reached (${detail})! All steps completed.`, 'success');
+            const msg = `🎯 Global Take Profit reached (${detail})! All steps completed.`;
+            addAuditLog(msg, 'success');
             setPlaylistStatus('completed');
-            handleStop();
+            handleStop(msg);
             return;
         }
         if (reachedGlobalSL) {
             const detail = globalSLModeRef.current === 'losses' ? `${curLosses} >= ${stopLoss} Losses` : `$${curProfit.toFixed(2)} <= -$${stopLoss}`;
-            addAuditLog(`🛑 Global Stop Loss hit (${detail})! Halting all steps and stopping session.`, 'error');
+            const msg = `🛑 Global Stop Loss hit (${detail})! Halting all steps and stopping session.`;
+            addAuditLog(msg, 'error');
             setPlaylistStatus('completed');
-            handleStop();
+            handleStop(msg);
             return;
         }
 
@@ -1246,8 +1275,9 @@ export default function AutoTradePage() {
             startPlaylistCountdown(delaySec, 0);
         } else {
             setPlaylistStatus('completed');
-            addAuditLog(`🏁 All ${currentSteps.length} Playlist steps successfully executed. Session finished.`, 'success');
-            handleStop();
+            const msg = `🏁 All ${currentSteps.length} Playlist steps successfully executed. Session finished.`;
+            addAuditLog(msg, 'success');
+            handleStop(msg);
         }
     }, [takeProfit, stopLoss, startPlaylistCountdown, addAuditLog, baseStake, isCapitalCompound, isCompounding, capitalPct, compoundPct, account?.balance]);
 
@@ -1560,9 +1590,10 @@ export default function AutoTradePage() {
                 if (stepCapitalLossGuardRef.current) {
                     const liveCap = useDerivStore.getState().account?.balance ?? (account?.balance || 0);
                     if (profit < 0 && liveCap > 0 && Math.abs(profit) >= (liveCap * 0.5)) {
-                        addAuditLog(`🛑 EMERGENCY 50% CAPITAL GUARD: Step ${playlistCurrentStepIdxRef.current + 1} loss of -$${Math.abs(profit).toFixed(2)} exceeded 50% of total capital ($${(liveCap * 0.5).toFixed(2)})! Halting entire bot session globally.`, 'error');
+                        const guardMsg = `EMERGENCY 50% CAPITAL GUARD: Step ${playlistCurrentStepIdxRef.current + 1} loss of -$${Math.abs(profit).toFixed(2)} exceeded 50% of total capital ($${(liveCap * 0.5).toFixed(2)})! Halting entire bot session globally.`;
+                        addAuditLog(`🛑 ${guardMsg}`, 'error');
                         setPlaylistStatus('completed');
-                        handleStop();
+                        handleStop(guardMsg);
                         return;
                     }
                 }
@@ -1946,16 +1977,18 @@ export default function AutoTradePage() {
 
                 if (reachedGlobalTP) {
                     const detail = globalTPModeRef.current === 'wins' ? `${curWins} >= ${takeProfit} Wins` : `$${curProfit.toFixed(2)} >= $${takeProfit}`;
-                    addAuditLog(`🎯 Global Take Profit reached (${detail})! Halting all steps and completing session.`, 'success');
+                    const msg = `🎯 Global Take Profit reached (${detail})! Halting all steps and completing session.`;
+                    addAuditLog(msg, 'success');
                     setPlaylistStatus('completed');
-                    handleStop();
+                    handleStop(msg);
                     return;
                 }
                 if (reachedGlobalSL) {
                     const detail = globalSLModeRef.current === 'losses' ? `${curLosses} >= ${stopLoss} Losses` : `$${curProfit.toFixed(2)} <= -$${stopLoss}`;
-                    addAuditLog(`🛑 Global Stop Loss hit (${detail})! Halting all steps and stopping session.`, 'error');
+                    const msg = `🛑 Global Stop Loss hit (${detail})! Halting all steps and stopping session.`;
+                    addAuditLog(msg, 'error');
                     setPlaylistStatus('completed');
-                    handleStop();
+                    handleStop(msg);
                     return;
                 }
 
@@ -1972,9 +2005,10 @@ export default function AutoTradePage() {
                     if (stepCapitalLossGuardRef.current && activeStep) {
                         const liveCap = useDerivStore.getState().account?.balance ?? (account?.balance || 0);
                         if (liveCap > 0 && activeStep.stepProfit <= - (liveCap * 0.5)) {
-                            addAuditLog(`🛑 EMERGENCY 50% CAPITAL GUARD: Step ${activeStep.stepIdx + 1} cumulative loss (-$${Math.abs(activeStep.stepProfit).toFixed(2)}) exceeded 50% of total capital ($${(liveCap * 0.5).toFixed(2)})! Emergency halt.`, 'error');
+                            const guardMsg = `EMERGENCY 50% CAPITAL GUARD: Step ${activeStep.stepIdx + 1} cumulative loss (-$${Math.abs(activeStep.stepProfit).toFixed(2)}) exceeded 50% of total capital ($${(liveCap * 0.5).toFixed(2)})! Emergency halt.`;
+                            addAuditLog(`🛑 ${guardMsg}`, 'error');
                             setPlaylistStatus('completed');
-                            handleStop();
+                            handleStop(guardMsg);
                             return;
                         }
                     }
@@ -1999,9 +2033,13 @@ export default function AutoTradePage() {
 
                     if (reachedTP || reachedSL || isSingleTrade) {
                         const stepIsWon = activeStep.stepProfit >= 0;
-                        const reason = reachedTP ? '🎯 Target Profit' : reachedSL ? '🛑 Stop Loss' : '⚡ Single Trade';
+                        const reasonDetail = reachedTP
+                            ? `🏆 Target Profit Reached (${activeStep.targetProfitMode === 'wins' ? `${activeStep.stepWins}/${activeStep.targetProfit} Wins` : `+$${activeStep.stepProfit.toFixed(2)} (Goal: $${activeStep.targetProfit})`})`
+                            : reachedSL
+                            ? `🛑 Step Stop Loss Hit (${activeStep.stopLossMode === 'losses' ? `${activeStep.stepLosses}/${activeStep.stopLoss} Losses Limit Reached` : `-$${Math.abs(activeStep.stepProfit).toFixed(2)} (Limit: -$${activeStep.stopLoss})`})`
+                            : '⚡ Single Trade Executed';
                         addAuditLog(
-                            `🏁 [Step ${activeStep.stepIdx + 1}] Finished (${reason}) | Step P/L: ${activeStep.stepProfit >= 0 ? '+' : ''}$${activeStep.stepProfit.toFixed(2)} (${activeStep.stepWins}W / ${activeStep.stepLosses}L)`,
+                            `🏁 [Step ${activeStep.stepIdx + 1}] Finished: ${reasonDetail} | Step P/L: ${activeStep.stepProfit >= 0 ? '+' : ''}$${activeStep.stepProfit.toFixed(2)} (${activeStep.stepWins}W / ${activeStep.stepLosses}L)`,
                             stepIsWon ? 'success' : 'warn'
                         );
                         handlePlaylistTradeSettled(
@@ -2496,7 +2534,7 @@ export default function AutoTradePage() {
     };
 
     // ── Stop ───────────────────────────────────────────────────────────────
-    const handleStop = () => {
+    const handleStop = (reason?: string) => {
         setIsRunningAuto(false);
         setUptimeStart(null);
         processedBotLogKeysRef.current.clear();
@@ -2506,7 +2544,7 @@ export default function AutoTradePage() {
         setIsScannerWarmup(false);
         setNextExecCd(null);
         stopBot();
-        useBotStore.getState().stopBot();
+        useBotStore.getState().stopBot(reason || 'Auto-Trade session stopped');
 
         if (playlistCountdownTimerRef.current) {
             clearInterval(playlistCountdownTimerRef.current);
@@ -2515,7 +2553,8 @@ export default function AutoTradePage() {
         setPlaylistCountdownSecs(0);
         setPlaylistStatus('idle');
 
-        addAuditLog('AUTO-LX Session terminated.', 'warn');
+        const stopMsg = reason ? `🛑 ${reason}` : '🛑 AUTO-LX Session terminated manually by user.';
+        addAuditLog(stopMsg, 'warn');
     };
 
     // ── Presets Handler ─────────────────────────────────────────────────────
@@ -2845,7 +2884,7 @@ export default function AutoTradePage() {
                         <span className="text-[10px] text-gray-400 font-mono font-bold">{tradingStatus.toUpperCase()}</span>
                     </div>
                     {isRunningAuto ? (
-                        <button onClick={handleStop}
+                        <button onClick={() => handleStop()}
                             className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-400 font-black text-[10px] uppercase tracking-widest transition-all">
                             <Square className="w-3.5 h-3.5" /> Stop Session
                         </button>

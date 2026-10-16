@@ -226,6 +226,15 @@ export interface TradeLog {
   pageId?: string;
 }
 
+export interface JournalLog {
+  id: string;
+  time: string;
+  timestamp: number;
+  type: 'info' | 'warn' | 'success' | 'error' | 'stop' | 'trade' | 'switcher';
+  title: string;
+  message: string;
+}
+
 interface PerStrategyState {
   currentStake: number;
   lossCount: number;
@@ -940,8 +949,10 @@ function processVirtualSwitcherResult(isWin: boolean, get: () => any, set: (stat
       // ── Gate B enabled: stay VIRTUAL with locked contract (gate_b phase) ──
       const lbl = TRADE_OPTIONS.find(o => o.value === activeContract!.contractType)?.label || activeContract!.contractType;
       const barText = activeContract!.barrier !== undefined && needsBarrier(activeContract!.contractType) ? ` ${activeContract!.barrier}` : '';
+      const msg = `🔷 Gate A (${triggeredRule === 'wins' ? winRule!.threshold + ' V-Wins' : lossRule!.threshold + ' V-Losses'}) met! Gate B active — testing ${lbl}${barText} virtually before REAL.`;
+      get().addJournal('switcher', 'Gate A Met → Gate B', msg);
       set({
-        botStatusMsg: `🔷 Gate A (${triggeredRule === 'wins' ? winRule!.threshold + ' V-Wins' : lossRule!.threshold + ' V-Losses'}) met! Gate B active — testing ${lbl}${barText} virtually before REAL.`,
+        botStatusMsg: msg,
         adaptiveSwitch: {
           ...aSw,
           virtualSwitcher: {
@@ -973,8 +984,10 @@ function processVirtualSwitcherResult(isWin: boolean, get: () => any, set: (stat
       });
       const lbl = TRADE_OPTIONS.find(o => o.value === activeContract!.contractType)?.label || activeContract!.contractType;
       const barText = activeContract!.barrier !== undefined && needsBarrier(activeContract!.contractType) ? ` ${activeContract!.barrier}` : '';
+      const msg = `⚡ Virtual Switcher: ${triggeredRule === 'wins' ? winRule!.threshold + ' V-Wins' : lossRule!.threshold + ' V-Losses'} met! Switched to REAL (${lbl}${barText})${activeContract!.market ? ` on ${activeContract!.market}` : ''}.`;
+      get().addJournal('switcher', 'Gate A Met → REAL', msg);
       set({
-        botStatusMsg: `⚡ Virtual Switcher: ${triggeredRule === 'wins' ? winRule!.threshold + ' V-Wins' : lossRule!.threshold + ' V-Losses'} met! Switched to REAL (${lbl}${barText})${activeContract!.market ? ` on ${activeContract!.market}` : ''}.`,
+        botStatusMsg: msg,
         adaptiveSwitch: {
           ...aSw,
           enabled: true,
@@ -1070,8 +1083,10 @@ function processGateBResult(isWin: boolean, get: () => any, set: (state: any) =>
     const ac = vs._activeContract!;
     const lbl = TRADE_OPTIONS.find(o => o.value === ac.contractType)?.label || ac.contractType;
     const barText = ac.barrier !== undefined && needsBarrier(ac.contractType) ? ` ${ac.barrier}` : '';
+    const gbMsg = `⚡ Gate B (${gbThreshold} ${gbMode === 'consec' ? 'consecutive ' : 'total '}${gbTriggerType}) met! Switched to REAL (${lbl}${barText}).`;
+    get().addJournal('switcher', 'Gate B Met → REAL', gbMsg);
     set({
-      botStatusMsg: `⚡ Gate B (${gbThreshold} ${gbMode === 'consec' ? 'consecutive ' : 'total '}${gbTriggerType}) met! Switched to REAL (${lbl}${barText}).`,
+      botStatusMsg: gbMsg,
       adaptiveSwitch: {
         ...aSw,
         enabled: true,
@@ -1165,9 +1180,11 @@ function processVirtualSwitcherRealResult(isWin: boolean, get: () => any, set: (
     const vc = vs.virtualContract || { contractType: 'DIGITEVEN', ticks: 1 };
     const virtContract = normalizeContractType(vc.contractType || (vc as any).type || 'DIGITEVEN');
     const virtLabel = TRADE_OPTIONS.find(o => o.value === virtContract)?.label || virtContract;
+    const rMsg = `🎯 Virtual Switcher: Target (${retRule.threshold} ${retRule.mode === 'consec' ? 'consecutive ' : 'total '}${retRule.triggerType}) met! Switched BACK to VIRTUAL (${virtLabel}).`;
+    get().addJournal('switcher', 'Returned to Virtual', rMsg);
     set({
       selectedMarkets: originalMarkets,
-      botStatusMsg: `🎯 Virtual Switcher: Target (${retRule.threshold} ${retRule.mode === 'consec' ? 'consecutive ' : 'total '}${retRule.triggerType}) met! Switched BACK to VIRTUAL (${virtLabel}).`,
+      botStatusMsg: rMsg,
       adaptiveSwitch: {
         ...aSw,
         enabled: true,
@@ -1401,7 +1418,15 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
   // If this was real mode, update the status message
   if (!isVirtual) {
     const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
-    const resultLabel = isDualPush ? '⇌ PUSH (1W+1L)' : isRoundWin ? '✓ WON' : '✗ LOST';
+    const resultLabel = isDualPush ? '⇌ PUSH' : isRoundWin ? '✓ WON' : '✗ LOST';
+    const logType: JournalLog['type'] = isRoundWin ? 'success' : isDualPush ? 'info' : 'warn';
+    const curStats = get().globalStats;
+    const curPnl = curStats.totalProfit + netProfit;
+    get().addJournal(
+      logType,
+      isVirtual ? `Virtual Trade ${resultLabel}` : `Real Trade ${resultLabel}`,
+      `${mLabel} | Profit: ${netProfit >= 0 ? '+' : ''}$${netProfit.toFixed(2)} USD${!isVirtual ? ` | Total P/L: ${curPnl >= 0 ? '+' : ''}$${curPnl.toFixed(2)} USD` : ''}`
+    );
     set({
       botStatusMsg: `Round done on ${mLabel}. ${resultLabel} (${netProfit >= 0 ? '+' : ''}${netProfit.toFixed(2)} USD)`,
     });
@@ -1438,6 +1463,7 @@ interface BotStoreState {
   botStatusMsg: string;
   lastSignal:   string;
   tradeLogs:    TradeLog[];
+  journalLogs:  JournalLog[];
   globalStats:  { won: number; lost: number; totalProfit: number; totalTrades: number };
   signalFlash:  Record<string, number>;   // symbol → timestamp of last signal
 
@@ -1464,8 +1490,10 @@ interface BotStoreState {
   set_status: (msg: string) => void;
 
   // ── Log helpers ────────────────────────────────────────────────────────────
-  addLog:    (log: TradeLog) => void;
-  updateLog: (id: string, patch: Partial<TradeLog>) => void;
+  addLog:       (log: TradeLog) => void;
+  updateLog:    (id: string, patch: Partial<TradeLog>) => void;
+  addJournal:   (type: JournalLog['type'], title: string, message: string) => void;
+  clearJournal: () => void;
 
   // ── Internal (called by engine / tradeWS listener) ─────────────────────────
   _runScan:           (symbol: string) => void;
@@ -1520,6 +1548,7 @@ export const useBotStore = create<BotStoreState>()(
       botStatusMsg: 'Ready.',
       lastSignal:   '',
       tradeLogs:    [],
+      journalLogs:  [],
       globalStats:  { won: 0, lost: 0, totalProfit: 0, totalTrades: 0 },
       signalFlash:  {},
 
@@ -1553,6 +1582,22 @@ export const useBotStore = create<BotStoreState>()(
       updateLog: (id, patch) => set(state => ({
         tradeLogs: state.tradeLogs.map(l => l.id === id ? { ...l, ...patch } : l),
       })),
+
+      addJournal: (type, title, message) => {
+        const time = new Date().toLocaleTimeString([], { hour12: false });
+        const entry: JournalLog = {
+          id: `j_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+          time,
+          timestamp: Date.now(),
+          type,
+          title,
+          message,
+        };
+        set(state => ({
+          journalLogs: [entry, ...(state.journalLogs || [])].slice(0, 300),
+        }));
+      },
+      clearJournal: () => set({ journalLogs: [] }),
 
       _flashSignal: (symbol) => {
         const ts = Date.now();
@@ -1645,6 +1690,16 @@ export const useBotStore = create<BotStoreState>()(
           tradeWS.onEvent(onTradeWSEvent);
         }
 
+        const curState = get();
+        const activeStrats = curState.strategies.filter(s => (s as any).active !== false);
+        const goalText = curState.tradingMode === 'once'
+          ? '1 Trade Only'
+          : curState.targetProfitMode === 'wins'
+          ? `${curState.targetProfit} Wins TP / ${curState.stopLossMode === 'losses' ? curState.stopLoss + ' Losses SL' : '$' + curState.stopLoss + ' SL'}`
+          : `$${curState.targetProfit} TP / ${curState.stopLossMode === 'losses' ? curState.stopLoss + ' Losses SL' : '-$' + curState.stopLoss + ' SL'}`;
+        const martText = curState.isMartingaleEnabled !== false ? `${curState.martingale}x` : 'OFF';
+        get().addJournal('info', 'Bot Started', `Stake: $${curState.stake} | Mode: ${curState.tradingMode} (${goalText}) | Martingale: ${martText} | ${activeStrats.length} strats on ${curState.selectedMarkets.length} mkts`);
+
         set({
           isRunning: true,
           botStatusMsg: 'Running. Waiting for conditions...',
@@ -1700,11 +1755,23 @@ export const useBotStore = create<BotStoreState>()(
         eng.thenState = {};
         eng.waitingForOpposite = {};
         eng.eligibilityExpiry = {};
+
+        const wasRunning = get().isRunning;
+        if (wasRunning || reason) {
+          const stopMsg = reason || 'Bot stopped manually by user.';
+          const isSuccess = /target|win|tp/i.test(stopMsg);
+          const isLoss = /stop\s*loss/i.test(stopMsg);
+          const isMart = /martingale|balance|capital/i.test(stopMsg);
+          const logType: JournalLog['type'] = isSuccess ? 'success' : isLoss ? 'warn' : isMart ? 'error' : 'stop';
+          get().addJournal(logType, 'Bot Stopped', stopMsg);
+        }
+
         set({ isRunning: false, botStatusMsg: reason ? `Stopped: ${reason}` : 'Bot stopped.' });
       },
 
       resetAll: () => {
-        get().stopBot();
+        get().stopBot('Reset clicked');
+        get().addJournal('info', 'Session Reset', 'All trade logs and session stats cleared.');
         eng.strategyState = {};
         eng.cooldown      = {};
         eng.activeTrades.clear();
@@ -3105,15 +3172,27 @@ export const useBotStore = create<BotStoreState>()(
           const slMode = state.stopLossMode || 'loss';
 
           if (tpMode === 'wins') {
-            if (liveStats.won >= parseInt(state.targetProfit)) { get().stopBot('Target wins reached!'); }
+            if (liveStats.won >= parseInt(state.targetProfit)) {
+              get().stopBot(`🏆 Target wins reached (${liveStats.won}/${state.targetProfit} wins)!`);
+            }
           } else {
-            if (liveStats.totalProfit >= parseFloat(state.targetProfit)) { get().stopBot('Target profit reached!'); }
+            if (liveStats.totalProfit >= parseFloat(state.targetProfit)) {
+              get().stopBot(`🏆 Target profit reached (+$${liveStats.totalProfit.toFixed(2)} / Goal: $${state.targetProfit})!`);
+            }
           }
 
           if (slMode === 'losses') {
-            if (liveStats.lost >= parseInt(state.stopLoss)) { get().stopBot('Stop losses reached!'); }
+            if (liveStats.lost >= parseInt(state.stopLoss)) {
+              get().stopBot(`🛑 Stop losses reached (${liveStats.lost}/${state.stopLoss} losses)!`);
+            }
           } else {
-            if (liveStats.totalProfit <= -parseFloat(state.stopLoss)) { get().stopBot('Stop loss reached!'); }
+            if (liveStats.totalProfit <= -parseFloat(state.stopLoss)) {
+              get().stopBot(`🛑 Stop loss reached (-$${Math.abs(liveStats.totalProfit).toFixed(2)} / Limit: -$${state.stopLoss})!`);
+            }
+          }
+
+          if (state.tradingMode === 'once') {
+            get().stopBot('⚡ Single trade completed (Trade once per signal mode).');
           }
         }
 

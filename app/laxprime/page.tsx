@@ -9,7 +9,7 @@ import { derivWS } from '@/lib/deriv/websocket';
 import { Play, Square, ChevronDown, AlertTriangle, Loader2, Layers, ShieldAlert } from 'lucide-react';
 import {
   useBotStore,
-  Strategy, Condition, TradeLog, PatternTrigger, PatternBox,
+  Strategy, Condition, TradeLog, JournalLog, PatternTrigger, PatternBox,
   AdaptiveSwitch, AdaptiveSwitchStep,
   ALL_MARKETS as BOT_ALL_MARKETS,
   TRADE_OPTIONS as BOT_TRADE_OPTIONS,
@@ -1610,10 +1610,12 @@ const MarketCard = React.memo(MarketCardInner);
 // TRADE LOG PANEL
 // ─────────────────────────────────────────────────────────────────────────────
 
-function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
+function TradeLogPanel({ logs: rawLogs, stats, journalLogs = [], onReset, onClearJournal }: {
   logs: TradeLog[];
   stats: { won: number; lost: number; totalProfit: number; totalTrades: number };
+  journalLogs?: JournalLog[];
   onReset: () => void;
+  onClearJournal?: () => void;
 }) {
   const [tab, setTab] = useState<'transactions' | 'summary' | 'journal'>('transactions');
 
@@ -1723,6 +1725,25 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
 
       <div className="lp-tx-actions">
         <button className="lp-tx-btn" onClick={() => {
+          if (tab === 'journal') {
+            const header = 'Time,Type,Title,Message\n';
+            const rows = (journalLogs || []).map(log => {
+              const time = log.time || (log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : '');
+              const type = log.type || 'info';
+              const title = `"${(log.title || '').replace(/"/g, '""')}"`;
+              const msg = `"${(log.message || '').replace(/"/g, '""')}"`;
+              return `${time},${type},${title},${msg}`;
+            }).join('\n');
+            const blob = new Blob([header + rows], { type: 'text/csv' });
+            const url  = URL.createObjectURL(blob);
+            const a    = document.createElement('a');
+            a.href = url;
+            a.download = `laxprime-journal-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+            return;
+          }
+
           // Build CSV from raw trade logs
           const header = 'Type,Symbol,Strategy,Stake,Entry,Exit,Result,P/L,Time\n';
           const rows = rawLogs.map(log => {
@@ -1745,7 +1766,13 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
           a.click();
           URL.revokeObjectURL(url);
         }}>Download</button>
-        <button className="lp-tx-btn" onClick={onReset}>Reset</button>
+        <button className="lp-tx-btn" onClick={() => {
+          if (tab === 'journal' && onClearJournal) {
+            onClearJournal();
+          } else {
+            onReset();
+          }
+        }}>Reset</button>
       </div>
 
       {tab === 'transactions' && (
@@ -1829,12 +1856,69 @@ function TradeLogPanel({ logs: rawLogs, stats, onReset }: {
           <span style={{ fontSize: 12, color: '#9ca3af' }}>
             {rawLogs.length === 0 ? 'No summary data yet.' : `${stats?.totalTrades ?? (stats?.won ?? 0) + (stats?.lost ?? 0)} trades completed.`}
           </span>
-        </div>      )}
+        </div>
+      )}
 
       {tab === 'journal' && (
-        <div className="lp-tx-empty" style={{ paddingTop: 24 }}>
-          <span style={{ fontSize: 12, color: '#9ca3af' }}>No journal entries yet.</span>
-        </div>
+        (journalLogs && journalLogs.length > 0) ? (
+          <div className="lp-tx-list" style={{ maxHeight: 320, padding: '6px' }}>
+            {journalLogs.map(item => {
+              const badgeColors: Record<string, { bg: string; text: string; border: string }> = {
+                success:  { bg: 'rgba(16, 185, 129, 0.15)', text: '#10b981', border: 'rgba(16, 185, 129, 0.3)' },
+                error:    { bg: 'rgba(239, 68, 68, 0.15)',   text: '#ef4444', border: 'rgba(239, 68, 68, 0.3)' },
+                stop:     { bg: 'rgba(245, 158, 11, 0.18)',  text: '#f59e0b', border: 'rgba(245, 158, 11, 0.35)' },
+                warn:     { bg: 'rgba(245, 158, 11, 0.15)',  text: '#fbbf24', border: 'rgba(245, 158, 11, 0.3)' },
+                trade:    { bg: 'rgba(56, 189, 248, 0.15)',  text: '#38bdf8', border: 'rgba(56, 189, 248, 0.3)' },
+                switcher: { bg: 'rgba(168, 85, 247, 0.15)',  text: '#c084fc', border: 'rgba(168, 85, 247, 0.3)' },
+                info:     { bg: 'rgba(148, 163, 184, 0.12)', text: '#cbd5e1', border: 'rgba(148, 163, 184, 0.25)' },
+              };
+              const col = badgeColors[item.type] || badgeColors.info;
+              return (
+                <div key={item.id} style={{
+                  padding: '7px 9px',
+                  marginBottom: 6,
+                  borderRadius: 8,
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  border: '1px solid var(--glass-border, rgba(255,255,255,0.08))',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 3,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                    <span style={{
+                      fontSize: 8,
+                      fontWeight: 900,
+                      textTransform: 'uppercase',
+                      padding: '1px 6px',
+                      borderRadius: 4,
+                      background: col.bg,
+                      color: col.text,
+                      border: `1px solid ${col.border}`,
+                      letterSpacing: '0.4px',
+                    }}>
+                      {item.type}
+                    </span>
+                    <span style={{ fontSize: 9, color: 'var(--text-muted, #94a3b8)', fontFamily: 'monospace' }}>
+                      {item.time}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-main, #f1f5f9)', lineHeight: 1.3 }}>
+                    {item.title}
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted, #94a3b8)', lineHeight: 1.4, wordBreak: 'break-word' }}>
+                    {item.message}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="lp-tx-empty" style={{ paddingTop: 24 }}>
+            <div className="lp-tx-icon">📝</div>
+            <span style={{ fontSize: 12, color: '#9ca3af' }}>No journal entries yet.</span>
+            <span style={{ fontSize: 10, color: '#6b7280' }}>Bot starts, trades, triggers, and stop reasons will appear here in real-time.</span>
+          </div>
+        )
       )}
     </div>
   );
@@ -1867,6 +1951,7 @@ export default function LaxPrimePage() {
     botStatusMsg,
     lastSignal,
     tradeLogs,
+    journalLogs, clearJournal,
     globalStats,
     signalFlash,
     startBot, stopBot, resetAll,
@@ -1917,7 +2002,7 @@ export default function LaxPrimePage() {
   }, [selectedMarkets, status]);
 
   const handleToggle = () => {
-    if (isRunning) stopBot();
+    if (isRunning) stopBot('Stopped manually by user');
     else startBot();
   };
 
@@ -4058,7 +4143,13 @@ export default function LaxPrimePage() {
           </div>
 
           {/* Trade Log Panel */}
-          <TradeLogPanel logs={tradeLogs || []} stats={globalStats || { won: 0, lost: 0, totalProfit: 0, totalTrades: 0 }} onReset={resetAll} />
+          <TradeLogPanel
+            logs={tradeLogs || []}
+            stats={globalStats || { won: 0, lost: 0, totalProfit: 0, totalTrades: 0 }}
+            journalLogs={journalLogs || []}
+            onReset={resetAll}
+            onClearJournal={clearJournal}
+          />
 
           {/* Footer */}
           <div className="lp-right-footer">
