@@ -474,6 +474,8 @@ export default function AutoTradePage() {
     }, [isCapitalCompound, capitalPct, account?.balance, baseStake, isRunningAuto]);
 
     // Watch for safety stops triggered by the LaxPrime engine (e.g. Martingale capital exceeded, balance error)
+    // IMPORTANT: Only intercept genuine unexpected crashes — never normal TP/SL step completions.
+    // Normal step finishes are handled by handlePlaylistTradeSettled / executePlaylistStep and advance to Step 2.
     const prevBotStoreRunningRef = useRef(false);
     useEffect(() => {
         if (
@@ -483,13 +485,49 @@ export default function AutoTradePage() {
             playlistStatusRef.current === 'executing'
         ) {
             if (prevBotStoreRunningRef.current && !botStoreIsRunning) {
-                // LaxPrime engine just stopped itself!
-                if (botStoreStatusMsg && (botStoreStatusMsg.includes('Stopped:') || botStoreStatusMsg.includes('Balance') || botStoreStatusMsg.includes('Martingale'))) {
+                // LaxPrime engine just stopped itself — but only act if it is a GENUINE unexpected stop.
+                // Normal step completions (TP/SL hit) are logged with 'Target profit', 'Stop loss',
+                // 'Target Profit', 'wins', 'Wins' etc. — those should NOT kill the whole session.
+                const isNormalStepFinish =
+                    botStoreStatusMsg.includes('Target profit') ||
+                    botStoreStatusMsg.includes('Target Profit') ||
+                    botStoreStatusMsg.includes('Target wins') ||
+                    botStoreStatusMsg.includes('Target Wins') ||
+                    botStoreStatusMsg.includes('Stop loss') ||
+                    botStoreStatusMsg.includes('Stop Loss') ||
+                    botStoreStatusMsg.includes('Stop losses') ||
+                    botStoreStatusMsg.includes('Stop Losses') ||
+                    botStoreStatusMsg.includes('Wins Reached') ||
+                    botStoreStatusMsg.includes('wins reached') ||
+                    botStoreStatusMsg.includes('Losses Reached') ||
+                    botStoreStatusMsg.includes('losses reached') ||
+                    botStoreStatusMsg.includes('Single Trade') ||
+                    botStoreStatusMsg.includes('Single trade') ||
+                    botStoreStatusMsg.includes('manually') ||
+                    botStoreStatusMsg.includes('Reset clicked');
+
+                // Only intercept genuine crashes: balance issues, martingale cap exceeded, etc.
+                const isGenuineCrash =
+                    !isNormalStepFinish &&
+                    botStoreStatusMsg &&
+                    (
+                        botStoreStatusMsg.includes('Balance') ||
+                        botStoreStatusMsg.includes('balance') ||
+                        botStoreStatusMsg.includes('Martingale') ||
+                        botStoreStatusMsg.includes('martingale') ||
+                        botStoreStatusMsg.includes('capital') ||
+                        botStoreStatusMsg.includes('Capital') ||
+                        (botStoreStatusMsg.includes('Stopped:') && !isNormalStepFinish)
+                    );
+
+                if (isGenuineCrash) {
                     const reason = botStoreStatusMsg.replace(/^Stopped:\s*/, '');
+                    // eslint-disable-next-line @typescript-eslint/no-use-before-define
                     addAuditLog(`🛑 [Step ${playlistCurrentStepIdxRef.current + 1}] LaxPrime Safety Stop: ${reason}`, 'error');
                     setPlaylistStatus('completed');
                     handleStop(reason);
                 }
+                // else: normal TP/SL finish — let the playlist's own logic handle advancement to next step
             }
         }
         prevBotStoreRunningRef.current = botStoreIsRunning;
