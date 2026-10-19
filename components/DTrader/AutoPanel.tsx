@@ -29,8 +29,9 @@ const PATTERN_COLORS: Record<string, string> = {
   E: 'bg-teal-500', O: 'bg-amber-500', D: 'bg-red-500', M: 'bg-green-500',
   V: 'bg-teal-600', U: 'bg-blue-600', SE: 'bg-cyan-600', SO: 'bg-purple-600',
   R: 'bg-emerald-600', F: 'bg-rose-600',
+  HE: 'bg-emerald-400', LE: 'bg-sky-500', HO: 'bg-amber-400', LO: 'bg-pink-400',
 };
-const PATTERN_TYPES_LIST = ['E','O','D','M','V','U','SE','SO','R','F'];
+const PATTERN_TYPES_LIST = ['E','O','D','M','V','U','SE','SO','R','F','HE','LE','HO','LO'];
 
 // ─── Tiny UI primitives ───────────────────────────────────────────────────────
 

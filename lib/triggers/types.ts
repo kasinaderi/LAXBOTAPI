@@ -12,7 +12,7 @@ export interface EntryDigitTrigger {
     useMulti?: boolean;
 }
 
-export type PatternStep = 'E' | 'O' | 'D' | 'M' | 'V' | 'U' | 'SE' | 'SO' | 'R' | 'F';
+export type PatternStep = 'E' | 'O' | 'D' | 'M' | 'V' | 'U' | 'SE' | 'SO' | 'R' | 'F' | 'LE' | 'LO' | 'HE' | 'HO';
 
 export interface DigitPatternTrigger {
     enabled: boolean;

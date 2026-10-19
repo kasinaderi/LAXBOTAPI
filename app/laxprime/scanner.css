@@ -284,6 +284,27 @@ main:has(.lp-root) {
   border-bottom: 1px solid var(--glass-border);
   padding-bottom: 10px;
 }
+.lp-hdr-tool-btns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lp-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+}
+.lp-btn-label {
+  display: inline-flex;
+  align-items: center;
+}
+.lp-word-desktop {
+  display: inline;
+}
+.lp-arrow-ind {
+  font-size: 10px;
+  margin-left: 2px;
+}
 .lp-sec-title {
   font-size: 13px;
   font-weight: 900;
@@ -2055,5 +2076,64 @@ main:has(.lp-root) {
   .lp-sw-step { padding: 6px 8px; gap: 6px; }
   .lp-sw-rm-step { margin-left: 0; }
   .lp-sw-steps-hdr { flex-wrap: wrap; }
-  .lp-switcher-btn { font-size: 9px; padding: 4px 10px; }
+
+  /* ── Strategy Builder Header & 3-box tool row on mobile ── */
+  .lp-ss-hdr {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    gap: 6px !important;
+    padding-bottom: 8px !important;
+  }
+  .lp-sec-title {
+    font-size: 11px !important;
+    letter-spacing: 0.5px !important;
+    flex: 1 1 auto !important;
+  }
+  .lp-add-strat-btn {
+    padding: 4px 8px !important;
+    font-size: 9.5px !important;
+    border-radius: 6px !important;
+    white-space: nowrap !important;
+  }
+  .lp-hdr-tool-btns {
+    display: grid !important;
+    grid-template-columns: repeat(3, 1fr) !important;
+    gap: 4px !important;
+    width: 100% !important;
+    margin-top: 2px !important;
+  }
+  .lp-virt-toggle-btn,
+  .lp-switcher-btn {
+    padding: 5px 2px !important;
+    font-size: 8.5px !important;
+    gap: 2px !important;
+    border-radius: 6px !important;
+    white-space: nowrap !important;
+    min-width: 0 !important;
+    width: 100% !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+    letter-spacing: -0.2px !important;
+    box-sizing: border-box !important;
+  }
+  .lp-word-desktop {
+    display: none !important;
+  }
+  .lp-btn-icon {
+    font-size: 9px !important;
+  }
+  .lp-arrow-ind {
+    font-size: 7.5px !important;
+    margin-left: 1px !important;
+  }
+  .lp-virt-active-dot,
+  .lp-sw-active-dot {
+    width: 5px !important;
+    height: 5px !important;
+    margin-left: 1px !important;
+  }
 }

@@ -88,6 +88,71 @@ export function evaluateEntryDigitStateful(
     };
 }
 
+/**
+ * Frequency helper for 1000-tick statistical pattern tokens:
+ * - HE: Highest Even digit in 1000 ticks (most frequent even digit)
+ * - LE: Least Even digit in 1000 ticks (least frequent even digit)
+ * - HO: Highest Odd digit in 1000 ticks (most frequent odd digit)
+ * - LO: Least Odd digit in 1000 ticks (least frequent odd digit)
+ */
+export function match1000FreqToken(token: string, d: number, digits: number[], idx: number): boolean {
+    if (idx < 0 || idx >= digits.length) return false;
+
+    // Parity check upfront: HE/LE must be even; HO/LO must be odd
+    if ((token === 'HE' || token === 'LE') && d % 2 !== 0) return false;
+    if ((token === 'HO' || token === 'LO') && d % 2 === 0) return false;
+
+    // Window of up to 1000 ticks ending at idx (inclusive)
+    const startIdx = Math.max(0, idx - 999);
+    const windowDigits = digits.slice(startIdx, idx + 1);
+    if (windowDigits.length === 0) return false;
+
+    const freq: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    for (let i = 0; i < windowDigits.length; i++) {
+        const dig = windowDigits[i];
+        if (dig >= 0 && dig <= 9) {
+            freq[dig]++;
+        }
+    }
+
+    const evens = [0, 2, 4, 6, 8];
+    const odds  = [1, 3, 5, 7, 9];
+
+    if (token === 'HE') {
+        let maxFreq = -1;
+        for (const e of evens) {
+            if (freq[e] > maxFreq) maxFreq = freq[e];
+        }
+        return maxFreq > 0 && freq[d] === maxFreq;
+    }
+
+    if (token === 'LE') {
+        let minFreq = Infinity;
+        for (const e of evens) {
+            if (freq[e] < minFreq) minFreq = freq[e];
+        }
+        return freq[d] === minFreq;
+    }
+
+    if (token === 'HO') {
+        let maxFreq = -1;
+        for (const o of odds) {
+            if (freq[o] > maxFreq) maxFreq = freq[o];
+        }
+        return maxFreq > 0 && freq[d] === maxFreq;
+    }
+
+    if (token === 'LO') {
+        let minFreq = Infinity;
+        for (const o of odds) {
+            if (freq[o] < minFreq) minFreq = freq[o];
+        }
+        return freq[d] === minFreq;
+    }
+
+    return false;
+}
+
 export function evaluateDigitPatternTrigger(ticks: number[], config: DigitPatternTrigger): boolean {
     if (!config.enabled) return true;
     if (ticks.length < config.pattern.length) return false;
@@ -151,6 +216,15 @@ export function evaluateDigitPatternTrigger(ticks: number[], config: DigitPatter
                     stepRes = lastRf[i] === 'F';
                 }
                 break;
+
+            case 'HE':
+            case 'LE':
+            case 'HO':
+            case 'LO': {
+                const tickIdx = ticks.length - config.pattern.length + i;
+                stepRes = match1000FreqToken(step, digit, ticks, tickIdx);
+                break;
+            }
 
             default: stepRes = false;
         }

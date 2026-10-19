@@ -16,6 +16,10 @@ const PATTERN_TYPES = [
     { value: 'U', label: 'U=Under', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
     { value: 'SE', label: 'SE=Same Even', color: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30' },
     { value: 'SO', label: 'SO=Same Odd', color: 'bg-purple-500/20 text-purple-400 border-purple-500/30' },
+    { value: 'HE', label: 'HE=Highest Even', color: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' },
+    { value: 'LE', label: 'LE=Least Even', color: 'bg-sky-500/20 text-sky-400 border-sky-500/30' },
+    { value: 'HO', label: 'HO=Highest Odd', color: 'bg-amber-500/20 text-amber-400 border-amber-500/30' },
+    { value: 'LO', label: 'LO=Least Odd', color: 'bg-pink-500/20 text-pink-400 border-pink-500/30' },
 ];
 
 const PATTERN_COLORS: Record<string, string> = {
@@ -27,6 +31,10 @@ const PATTERN_COLORS: Record<string, string> = {
     U: 'bg-blue-600',
     SE: 'bg-cyan-600',
     SO: 'bg-purple-600',
+    HE: 'bg-emerald-400',
+    LE: 'bg-sky-500',
+    HO: 'bg-amber-400',
+    LO: 'bg-pink-400',
 };
 
 export function DigitPattern() {
@@ -58,7 +66,7 @@ export function DigitPattern() {
     };
 
     const cycleStep = (index: number) => {
-        const types = ['E', 'O', 'D', 'M', 'V', 'U', 'SE', 'SO'];
+        const types = ['E', 'O', 'D', 'M', 'V', 'U', 'SE', 'SO', 'HE', 'LE', 'HO', 'LO'];
         const current = config.pattern[index];
         const next = types[(types.indexOf(current) + 1) % types.length] as PatternStep;
         const newPattern = [...config.pattern];
@@ -286,7 +294,7 @@ export function DigitPattern() {
                         Detect pattern: {config.pattern.map((s, i) => (
                             <span key={i}>
                                 <span className={s === 'M' ? 'text-green-400' : s === 'D' ? 'text-red-400' : 'text-teal-400'}>
-                                    {s === 'E' ? 'Even' : s === 'O' ? 'Odd' : s === 'D' ? 'Differs' : s === 'M' ? 'Matches' : s === 'V' ? 'Over' : s === 'U' ? 'Under' : s === 'SE' ? 'SameEven' : 'SameOdd'}
+                                    {s === 'E' ? 'Even' : s === 'O' ? 'Odd' : s === 'D' ? 'Differs' : s === 'M' ? 'Matches' : s === 'V' ? 'Over' : s === 'U' ? 'Under' : s === 'SE' ? 'SameEven' : s === 'SO' ? 'SameOdd' : s === 'HE' ? 'HiEven' : s === 'LE' ? 'LoEven' : s === 'HO' ? 'HiOdd' : s === 'LO' ? 'LoOdd' : s}
                                 </span>
                                 {i < config.pattern.length - 1 && ' → '}
                             </span>

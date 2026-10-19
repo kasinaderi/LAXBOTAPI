@@ -23,7 +23,7 @@ import { feedRsiSignal, RsiSignalConfig, MaType, resetRsiSignalState, consumeRsi
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface PatternTrigger {
-  token: string;    // E | O | V | U | M | D | SE | SO | R | F
+  token: string;    // E | O | V | U | M | D | SE | SO | R | F | HE | LE | HO | LO
   barrier?: number; // Only for V (Over) and U (Under)
 }
 
@@ -46,11 +46,14 @@ export interface Condition {
   patternRetrigger: string;
   digitBarrier?: number;
   targetDigits?: number[];
-  topCount?: number;            // For TOP () DIGITS ARE: number of top digits (1..9)
-  allAboveMinPct?: boolean;     // For TOP () DIGITS ARE: whether each top digit must be above the min %
+  topCount?: number;            // For TOP/LOWEST () DIGITS ARE: number of ranked digits (1..9)
+  rankType?: 'TOP' | 'LOWEST';  // For TOP/LOWEST () DIGITS ARE: 'TOP' (most frequent) or 'LOWEST' (least frequent), defaults to 'TOP'
+  allAboveMinPct?: boolean;     // For TOP/LOWEST () DIGITS ARE: whether each digit must pass the % threshold
+  pctCompare?: 'ABOVE' | 'BELOW'; // For TOP/LOWEST () DIGITS ARE: 'ABOVE' (>= %) or 'BELOW' (<= %), defaults to 'ABOVE' for TOP, 'BELOW' for LOWEST
   patternBoxes?: PatternBox[];         // Multi-Entry Sequence (OR across boxes, AND within)
   patternBoxMode?: 'OR' | 'THEN' | 'THENALL'; // How boxes relate: OR=any fires, THEN=Box1→lock→Box2, THENALL=Box1→all markets Box2
   thenTimeout?: number;               // THEN/THENALL: ticks to wait for Box2 before resetting (default 20)
+  thenTimeouts?: number[];            // THEN/THENALL: per-box timeouts (index 1 = Box2, index 2 = Box3, index 3 = Box4)
   thenMaxTrades?: number;             // THENALL: max trades Box2 fires per round (default 3)
   useCustomContracts?: boolean;        // DIGIT_PATTERN only: override trade contracts per loss step
   customContracts?: { type: string; barrier: number }[]; // Trade contract per loss step
@@ -316,7 +319,9 @@ export function createCondition(): Condition {
     join: 'AND',
     period: 100,
     topCount: 3,
+    rankType: 'TOP',
     allAboveMinPct: true,
+    pctCompare: 'ABOVE',
     pattern: ['E', 'E', 'E', 'E'],
     patternRetrigger: 'any',
     patternBoxes: [
@@ -393,6 +398,71 @@ function compare(a: number, op: string, b: number): boolean {
   }
 }
 
+/**
+ * Frequency helper for 1000-tick statistical pattern tokens:
+ * - HE: Highest Even digit in 1000 ticks (most frequent even digit)
+ * - LE: Least Even digit in 1000 ticks (least frequent even digit)
+ * - HO: Highest Odd digit in 1000 ticks (most frequent odd digit)
+ * - LO: Least Odd digit in 1000 ticks (least frequent odd digit)
+ */
+export function match1000FreqToken(token: string, d: number, digits: number[], idx: number): boolean {
+  if (idx < 0 || idx >= digits.length) return false;
+
+  // Parity check upfront: HE/LE must be even; HO/LO must be odd
+  if ((token === 'HE' || token === 'LE') && d % 2 !== 0) return false;
+  if ((token === 'HO' || token === 'LO') && d % 2 === 0) return false;
+
+  // Window of up to 1000 ticks ending at idx (inclusive)
+  const startIdx = Math.max(0, idx - 999);
+  const windowDigits = digits.slice(startIdx, idx + 1);
+  if (windowDigits.length === 0) return false;
+
+  const freq: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  for (let i = 0; i < windowDigits.length; i++) {
+    const dig = windowDigits[i];
+    if (dig >= 0 && dig <= 9) {
+      freq[dig]++;
+    }
+  }
+
+  const evens = [0, 2, 4, 6, 8];
+  const odds  = [1, 3, 5, 7, 9];
+
+  if (token === 'HE') {
+    let maxFreq = -1;
+    for (const e of evens) {
+      if (freq[e] > maxFreq) maxFreq = freq[e];
+    }
+    return maxFreq > 0 && freq[d] === maxFreq;
+  }
+
+  if (token === 'LE') {
+    let minFreq = Infinity;
+    for (const e of evens) {
+      if (freq[e] < minFreq) minFreq = freq[e];
+    }
+    return freq[d] === minFreq;
+  }
+
+  if (token === 'HO') {
+    let maxFreq = -1;
+    for (const o of odds) {
+      if (freq[o] > maxFreq) maxFreq = freq[o];
+    }
+    return maxFreq > 0 && freq[d] === maxFreq;
+  }
+
+  if (token === 'LO') {
+    let minFreq = Infinity;
+    for (const o of odds) {
+      if (freq[o] < minFreq) minFreq = freq[o];
+    }
+    return freq[d] === minFreq;
+  }
+
+  return false;
+}
+
 function matchPatternToken(token: string, digits: number[], quotes: number[], idx: number): boolean {
   const d    = digits[idx];
   const prev = digits[idx - 1];
@@ -409,6 +479,10 @@ function matchPatternToken(token: string, digits: number[], quotes: number[], id
     case 'SO': return d % 2 !== 0 && idx > 0 && d === prev;
     case 'R':  return idx > 0 && q > pq;
     case 'F':  return idx > 0 && q < pq;
+    case 'HE': return match1000FreqToken('HE', d, digits, idx);
+    case 'LE': return match1000FreqToken('LE', d, digits, idx);
+    case 'HO': return match1000FreqToken('HO', d, digits, idx);
+    case 'LO': return match1000FreqToken('LO', d, digits, idx);
     default:   return false;
   }
 }
@@ -439,6 +513,10 @@ function matchTrigger(
     case 'SO': return d % 2 !== 0 && d === pd;
     case 'R':  return q > pq;
     case 'F':  return q < pq;
+    case 'HE': return match1000FreqToken('HE', d, digits, idx);
+    case 'LE': return match1000FreqToken('LE', d, digits, idx);
+    case 'HO': return match1000FreqToken('HO', d, digits, idx);
+    case 'LO': return match1000FreqToken('LO', d, digits, idx);
     default:   return false;
   }
 }
@@ -699,7 +777,7 @@ function evaluateCondition(
         return compare((maxFreq / period) * 100, cond.comparator, cond.value);
       }
 
-      // ── TOP (N) DIGITS ARE (EVEN | ODD | OVER | UNDER) ──────────────────
+      // ── TOP / LOWEST (N) DIGITS ARE (EVEN | ODD | OVER | UNDER) ──────────────────
       const p = Math.max(1, cond.period || 100);
       const sub = digits.slice(-p);
       if (sub.length < p && digits.length < p) return false;
@@ -710,8 +788,10 @@ function evaluateCondition(
       sub.forEach(d => { if (d >= 0 && d <= 9) freq[d]++; });
 
       const topN = Math.max(1, Math.min(9, cond.topCount ?? 3));
+      const rankType = cond.rankType || 'TOP'; // 'TOP' | 'LOWEST'
       const category = cond.digitValue || 'EVEN'; // 'EVEN' | 'ODD' | 'OVER' | 'UNDER'
       const barrier = cond.digitBarrier ?? 4;
+      const pctCompare = cond.pctCompare || (rankType === 'LOWEST' ? 'BELOW' : 'ABOVE');
 
       const isMatching = (d: number): boolean => {
         if (category === 'EVEN') return d % 2 === 0;
@@ -721,10 +801,14 @@ function evaluateCondition(
         return false;
       };
 
-      // Sort all 10 digits by frequency descending.
+      // Sort all 10 digits by frequency:
+      // - LOWEST: ascending frequency (least frequent first)
+      // - TOP: descending frequency (most frequent first)
       // Tie-breaker: matching category digits come before non-matching digits
       const digitsByRank = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].sort((a, b) => {
-        if (freq[b] !== freq[a]) return freq[b] - freq[a];
+        if (freq[a] !== freq[b]) {
+          return rankType === 'LOWEST' ? freq[a] - freq[b] : freq[b] - freq[a];
+        }
         const aM = isMatching(a);
         const bM = isMatching(b);
         if (aM && !bM) return -1;
@@ -732,22 +816,26 @@ function evaluateCondition(
         return a - b;
       });
 
-      // The top N most frequent digits in the market
-      const topDigits = digitsByRank.slice(0, topN);
+      // The selected N ranked digits (top N most frequent OR lowest N least frequent)
+      const selectedDigits = digitsByRank.slice(0, topN);
 
-      // Check 1: Are all top N digits in the target category?
-      const allCategoryMatch = topDigits.every(d => isMatching(d));
+      // Check 1: Are all selected N digits in the target category?
+      const allCategoryMatch = selectedDigits.every(d => isMatching(d));
       if (!allCategoryMatch) return false;
 
-      // Check 2: If "and all above () percent" is enabled, are all top N digits above the min percentage?
+      // Check 2: If percentage threshold is enabled, check each selected digit
       const checkMinPct = cond.allAboveMinPct ?? true;
       if (checkMinPct) {
-        const minPct = cond.value ?? 10;
-        const allAbove = topDigits.every(d => {
+        const targetPct = cond.value ?? 10;
+        const allPctMatch = selectedDigits.every(d => {
           const pct = (freq[d] / actualPeriod) * 100;
-          return pct >= minPct;
+          if (pctCompare === 'BELOW') {
+            return pct <= (targetPct + 1e-6);
+          } else {
+            return pct >= (targetPct - 1e-6);
+          }
         });
-        if (!allAbove) return false;
+        if (!allPctMatch) return false;
       }
 
       return true;
@@ -829,9 +917,10 @@ function evalStrategy(s: Strategy, digits: number[], quotes: number[], symbol?: 
 
 // Per-strategy THEN/THENALL state (lives outside React so it persists across ticks)
 interface ThenState {
-  phase: 'scanning_box1' | 'locked_box2';
-  lockedSymbol: string | null; // THEN: market where Box1 was found
-  ticksWaited: number;         // ticks elapsed (real ticks, not per-market iterations)
+  phase: 'scanning_box1' | 'locked_box2' | 'waiting_next_box';
+  currentBoxIndex: number;     // 0 = scanning Box 1, 1 = waiting Box 2, 2 = waiting Box 3, 3 = waiting Box 4
+  lockedSymbol: string | null; // THEN: market where Box1 was found (and locked onto)
+  ticksWaited: number;         // ticks elapsed while waiting for current target box
   tradesThisRound: number;     // THENALL: trades fired this round
   lastTickEpoch: number;       // epoch of last tick where we incremented ticksWaited
 }
@@ -2313,6 +2402,18 @@ export const useBotStore = create<BotStoreState>()(
           //   1. The global martingale state (currentStake / lossCount) is always
           //      fully updated before ANY next trade fires.
           //   2. No two strategies can race to update the ladder with stale stakes.
+          // ── Stale in-flight trade watchdog: auto-clear any stuck trades (> 15s) ─
+          if (eng.activeTrades.size > 0) {
+            for (const [reqId, tr] of eng.activeTrades.entries()) {
+              if (now - tr.startTime > 15000) {
+                eng.activeTrades.delete(reqId);
+              }
+            }
+          }
+          if (eng.activeVirtual.length > 0) {
+            eng.activeVirtual = eng.activeVirtual.filter(vt => (now - (vt.lastEpoch || now)) < 30000);
+          }
+
           const hasAnyActiveGlobally = eng.activeTrades.size > 0;
           const hasVirt = eng.activeVirtual.length > 0;
           if (hasAnyActiveGlobally || hasVirt) {
@@ -2359,27 +2460,36 @@ export const useBotStore = create<BotStoreState>()(
             }
           }
 
-          // ── THEN / THENALL sequential box gate ────────────────────────────
-          // Only applies when a DIGIT_PATTERN condition has patternBoxMode set to
-          // THEN or THENALL. In these modes we bypass normal OR-box evaluation
-          // and instead run a two-phase state machine per strategy.
+          // ── THEN / THENALL sequential box gate (supports up to 4 boxes) ───
+          // In these modes we bypass normal OR-box evaluation and instead run
+          // a sequential multi-stage state machine per strategy (Box 1 → Box 2 → Box 3 → Box 4).
+          // Intermediate boxes advancing resets the timeout for the next box.
+          // Any timeout along the way reverts back to scanning Box 1.
+          // Matching the final box triggers execution & Continuous Lock activation.
           const dpCondForMode = s.conditions.find(c => c.type === 'DIGIT_PATTERN');
           const boxMode = dpCondForMode?.patternBoxMode ?? 'OR';
 
           if (!isLockNoRecheck && dpCondForMode && (boxMode === 'THEN' || boxMode === 'THENALL')) {
-            const timeout   = Math.max(1, dpCondForMode.thenTimeout   ?? 20);
+            const numBoxes = Math.min(4, Math.max(1, (dpCondForMode.patternBoxes || []).length));
             const maxTrades = Math.max(1, dpCondForMode.thenMaxTrades ?? 3);
 
             // Initialise thenState for this strategy if needed
             if (!eng.thenState[stratId]) {
               eng.thenState[stratId] = {
-                phase: 'scanning_box1', lockedSymbol: null,
-                ticksWaited: 0, tradesThisRound: 0, lastTickEpoch: 0,
+                phase: 'scanning_box1',
+                currentBoxIndex: 0,
+                lockedSymbol: null,
+                ticksWaited: 0,
+                tradesThisRound: 0,
+                lastTickEpoch: 0,
               };
             }
             const ts = eng.thenState[stratId];
+            if (ts.currentBoxIndex === undefined) {
+              ts.currentBoxIndex = ts.phase === 'locked_box2' ? 1 : 0;
+            }
 
-            if (ts.phase === 'scanning_box1') {
+            if (ts.currentBoxIndex === 0) {
               // ── Phase 1: scan all markets for Box 1 ──────────────────────
               // Only evaluate other (non-DIGIT_PATTERN) conditions AND Box 1
               const otherCondsPass = s.conditions
@@ -2389,20 +2499,30 @@ export const useBotStore = create<BotStoreState>()(
               const box1Pass = otherCondsPass && evaluateOneBox(dpCondForMode, 0, digits, quotes);
 
               if (box1Pass) {
-                // Box 1 matched — lock and switch to phase 2
-                ts.phase = 'locked_box2';
-                ts.lockedSymbol = symbol;
-                ts.ticksWaited = 0;
-                ts.tradesThisRound = 0;
-                ts.lastTickEpoch = 0;
-                const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
-                set({ botStatusMsg: `⏳ ${boxMode}: Box 1 matched on ${mLabel} — waiting for Box 2 (${timeout} ticks timeout)` });
+                if (numBoxes > 1) {
+                  // Box 1 matched — lock and switch to waiting for Box 2
+                  ts.currentBoxIndex = 1;
+                  ts.phase = 'locked_box2';
+                  ts.lockedSymbol = symbol;
+                  ts.ticksWaited = 0;
+                  ts.tradesThisRound = 0;
+                  ts.lastTickEpoch = 0;
+                  const box2Timeout = Math.max(1, dpCondForMode.thenTimeouts?.[1] ?? dpCondForMode.thenTimeout ?? 20);
+                  const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
+                  set({ botStatusMsg: `⏳ ${boxMode}: Box 1 matched on ${mLabel} — waiting for Box 2 (${box2Timeout} ticks timeout)` });
+                  continue; // Wait for Box 2, do not fire trade yet
+                } else {
+                  // Only 1 box configured, treat as triggered
+                  // Fall through to trade execution below
+                }
+              } else {
+                continue; // Box 1 not matched
               }
-              // Either way: no trade fires in phase 1
-              continue;
 
             } else {
-              // ── Phase 2: locked_box2 ──────────────────────────────────────
+              // ── Phase 2: waiting for Box (targetBox + 1), where targetBox = ts.currentBoxIndex (1, 2, or 3) ──
+              const targetBox = ts.currentBoxIndex;
+              const thisTimeout = Math.max(1, dpCondForMode.thenTimeouts?.[targetBox] ?? dpCondForMode.thenTimeout ?? 20);
 
               if (boxMode === 'THEN') {
                 // ── THEN: only operate on the locked market ─────────────────
@@ -2413,40 +2533,51 @@ export const useBotStore = create<BotStoreState>()(
                 ts.ticksWaited++;
 
                 // Check timeout on the locked market's ticks
-                if (ts.ticksWaited >= timeout) {
+                if (ts.ticksWaited >= thisTimeout) {
                   const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
+                  ts.currentBoxIndex = 0;
                   ts.phase = 'scanning_box1';
                   ts.lockedSymbol = null;
                   ts.ticksWaited = 0;
                   ts.tradesThisRound = 0;
-                  set({ botStatusMsg: `⌛ THEN timeout after ${timeout} ticks on ${mLabel} — rescanning Box 1 across all markets` });
+                  set({ botStatusMsg: `⌛ THEN timeout after ${thisTimeout} ticks waiting for Box ${targetBox + 1} on ${mLabel} — rescanning Box 1 across all markets` });
                   continue;
                 }
 
-                // Evaluate Box 2 on the locked market
+                // Evaluate Box (targetBox + 1) on the locked market
                 const otherCondsPass = s.conditions
                   .filter(c => c.type !== 'DIGIT_PATTERN')
                   .every(c => evaluateCondition(c, digits, quotes, symbol, s.tradeType));
-                const box2Pass = otherCondsPass && evaluateOneBox(dpCondForMode, 1, digits, quotes);
-                if (!box2Pass) {
-                  const rem = Math.max(0, timeout - ts.ticksWaited);
+                const boxPass = otherCondsPass && evaluateOneBox(dpCondForMode, targetBox, digits, quotes);
+                if (!boxPass) {
+                  const rem = Math.max(0, thisTimeout - ts.ticksWaited);
                   const mLabel = ALL_MARKETS.find(m => m.value === ts.lockedSymbol)?.label || ts.lockedSymbol;
-                  set({ botStatusMsg: `⏳ THEN: waiting for Box 2 on ${mLabel} (${rem} ticks left)` });
+                  set({ botStatusMsg: `⏳ THEN: waiting for Box ${targetBox + 1} on ${mLabel} (${rem} ticks left)` });
                   continue;
                 }
 
-                // ✅ Box 2 matched — fire trade, reset state
-                ts.phase = 'scanning_box1';
-                ts.lockedSymbol = null;
-                ts.ticksWaited = 0;
-                ts.tradesThisRound = 0;
-                // Fall through to trade-firing code below
+                // Box matched! Is it the final box in the sequence?
+                if (targetBox >= numBoxes - 1) {
+                  // ✅ FINAL box matched! Complete sequence achieved (Box 1 → ... → Final Box)!
+                  ts.currentBoxIndex = 0;
+                  ts.phase = 'scanning_box1';
+                  ts.lockedSymbol = null;
+                  ts.ticksWaited = 0;
+                  ts.tradesThisRound = 0;
+                  // Fall through to trade-firing and Continuous Lock activation code below!
+                } else {
+                  // Intermediate box matched! Advance to the next box in the sequence!
+                  const nextBox = targetBox + 1;
+                  ts.currentBoxIndex = nextBox;
+                  ts.ticksWaited = 0;
+                  const nextTimeout = Math.max(1, dpCondForMode.thenTimeouts?.[nextBox] ?? dpCondForMode.thenTimeout ?? 20);
+                  const mLabel = ALL_MARKETS.find(m => m.value === ts.lockedSymbol)?.label || ts.lockedSymbol;
+                  set({ botStatusMsg: `⏳ THEN: Box ${targetBox + 1} matched on ${mLabel} — waiting for Box ${nextBox + 1} (${nextTimeout} ticks timeout)` });
+                  continue; // Don't fire trade yet, wait for next box!
+                }
 
               } else {
-                // ── THENALL: watch ALL markets for Box 2 ────────────────────
-                // The anchor market where Box 1 was found (ts.lockedSymbol) advances the tick count.
-                // If it's a single market or the anchor market ticks, advance ticksWaited.
-                // We also advance if a new epoch arrives to ensure ticksWaited never stalls.
+                // ── THENALL: watch ALL markets for Box (targetBox + 1) ────────
                 const thisEpoch = regime?.lastEpoch ?? now;
                 if (symbol === ts.lockedSymbol || thisEpoch !== ts.lastTickEpoch) {
                   ts.ticksWaited++;
@@ -2454,35 +2585,48 @@ export const useBotStore = create<BotStoreState>()(
                 }
 
                 // Timeout check
-                if (ts.ticksWaited >= timeout) {
+                if (ts.ticksWaited >= thisTimeout) {
+                  ts.currentBoxIndex = 0;
                   ts.phase = 'scanning_box1';
                   ts.lockedSymbol = null;
                   ts.ticksWaited = 0;
                   ts.tradesThisRound = 0;
-                  set({ botStatusMsg: `⌛ THENALL timeout after ${timeout} ticks — rescanning Box 1 across all markets` });
+                  set({ botStatusMsg: `⌛ THENALL timeout after ${thisTimeout} ticks waiting for Box ${targetBox + 1} — rescanning Box 1 across all markets` });
                   continue;
                 }
 
-                // Evaluate Box 2 on this market
+                // Evaluate Box (targetBox + 1) on this market
                 const otherCondsPass = s.conditions
                   .filter(c => c.type !== 'DIGIT_PATTERN')
                   .every(c => evaluateCondition(c, digits, quotes, symbol, s.tradeType));
-                const box2Pass = otherCondsPass && evaluateOneBox(dpCondForMode, 1, digits, quotes);
-                if (!box2Pass) {
-                  const rem = Math.max(0, timeout - ts.ticksWaited);
-                  set({ botStatusMsg: `⏳ THENALL: waiting for Box 2 across markets (${rem} ticks left)` });
+                const boxPass = otherCondsPass && evaluateOneBox(dpCondForMode, targetBox, digits, quotes);
+                if (!boxPass) {
+                  const rem = Math.max(0, thisTimeout - ts.ticksWaited);
+                  set({ botStatusMsg: `⏳ THENALL: waiting for Box ${targetBox + 1} across markets (${rem} ticks left)` });
                   continue;
                 }
 
-                // ✅ Box 2 matched on this market — fire trade
-                ts.tradesThisRound++;
-                if (cLock?.enabled || ts.tradesThisRound >= maxTrades) {
-                  ts.phase = 'scanning_box1';
-                  ts.lockedSymbol = null;
+                // Box matched! Is it the final box in the sequence?
+                if (targetBox >= numBoxes - 1) {
+                  // ✅ FINAL Box matched on this market! Fire trade
+                  ts.tradesThisRound++;
+                  if (cLock?.enabled || ts.tradesThisRound >= maxTrades) {
+                    ts.currentBoxIndex = 0;
+                    ts.phase = 'scanning_box1';
+                    ts.lockedSymbol = null;
+                    ts.ticksWaited = 0;
+                    ts.tradesThisRound = 0;
+                  }
+                  // Fall through to trade-firing and Continuous Lock activation code below!
+                } else {
+                  // Intermediate box matched! Advance to the next box!
+                  const nextBox = targetBox + 1;
+                  ts.currentBoxIndex = nextBox;
                   ts.ticksWaited = 0;
-                  ts.tradesThisRound = 0;
+                  const nextTimeout = Math.max(1, dpCondForMode.thenTimeouts?.[nextBox] ?? dpCondForMode.thenTimeout ?? 20);
+                  set({ botStatusMsg: `⏳ THENALL: Box ${targetBox + 1} matched on ${symbol} — waiting for Box ${nextBox + 1} across markets (${nextTimeout} ticks timeout)` });
+                  continue; // Don't fire trade yet, wait for next box!
                 }
-                // Fall through to trade-firing code below
               }
             }
 

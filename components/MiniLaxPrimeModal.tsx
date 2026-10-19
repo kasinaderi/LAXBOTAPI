@@ -95,7 +95,7 @@ const CONDITION_TYPES = [
   { value: 'OVER_PCT',      label: 'OVER ( ) % IS' },
   { value: 'UNDER_PCT',     label: 'UNDER ( ) % IS' },
   { value: 'LAST_DIGITS',   label: 'LAST N DIGITS ARE' },
-  { value: 'GREEN_BAR',     label: 'TOP ( ) DIGITS ARE' },
+  { value: 'GREEN_BAR',     label: 'TOP / LOWEST ( ) DIGITS ARE' },
   { value: 'DIGIT_PATTERN', label: 'DIGIT PATTERN' },
   { value: 'DIGIT_APPEARS', label: 'IF DIGIT ( ) APPEARS' },
   { value: 'RSI_SIGNAL',    label: 'RSI SIGNAL [trade_lexx]' },
@@ -135,6 +135,14 @@ function getTokenBgColor(token: string): string {
     case 'O': return '#ea580c';
     case 'D': return '#dc2626';
     case 'M': return '#7c3aed';
+    case 'SE': return '#0891b2';
+    case 'SO': return '#c026d3';
+    case 'R': return '#16a34a';
+    case 'F': return '#e11d48';
+    case 'HE': return '#10b981'; // Emerald (Highest Even)
+    case 'LE': return '#0284c7'; // Sky (Least Even)
+    case 'HO': return '#f59e0b'; // Amber (Highest Odd)
+    case 'LO': return '#db2777'; // Pink (Least Odd)
     default: return '#475569';
   }
 }
@@ -152,8 +160,20 @@ function AdvancedPatternBuilder({ cond, onChange }: {
     : [{ triggers: [{ token: 'E' }] }];
 
   const setBoxes = (next: PatternBox[]) => onChange({ ...cond, patternBoxes: next });
-  const addBox = () => setBoxes([...boxes, { triggers: [{ token: 'E' }] }]);
-  const removeBox = (bi: number) => setBoxes(boxes.filter((_, i) => i !== bi));
+  const addBox = () => {
+    if (boxes.length >= 4) return;
+    const nextBoxes = [...boxes, { triggers: [{ token: 'E' }] }];
+    const nextTimeouts = [...(cond.thenTimeouts || [20, 20, 20, 20])];
+    while (nextTimeouts.length <= boxes.length) {
+      nextTimeouts.push(cond.thenTimeout ?? 20);
+    }
+    onChange({ ...cond, patternBoxes: nextBoxes, thenTimeouts: nextTimeouts });
+  };
+  const removeBox = (bi: number) => {
+    const nextBoxes = boxes.filter((_, i) => i !== bi);
+    const nextTimeouts = cond.thenTimeouts ? cond.thenTimeouts.filter((_, i) => i !== bi) : undefined;
+    onChange({ ...cond, patternBoxes: nextBoxes, thenTimeouts: nextTimeouts });
+  };
 
   const addTrigger = (bi: number) =>
     setBoxes(boxes.map((b, i) => i !== bi ? b : { triggers: [...b.triggers, { token: 'E' }] }));
@@ -209,7 +229,7 @@ function AdvancedPatternBuilder({ cond, onChange }: {
           </div>
         </div>
 
-        {(cond.patternBoxMode ?? 'OR') === 'OR' && (
+        {(cond.patternBoxMode ?? 'OR') === 'OR' && boxes.length < 4 && (
           <button
             onClick={addBox}
             className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/40 text-[10px] font-bold text-indigo-200"
@@ -217,46 +237,62 @@ function AdvancedPatternBuilder({ cond, onChange }: {
             + Add Box
           </button>
         )}
-        {(cond.patternBoxMode === 'THEN' || cond.patternBoxMode === 'THENALL') && boxes.length < 2 && (
+        {(cond.patternBoxMode === 'THEN' || cond.patternBoxMode === 'THENALL') && boxes.length < 4 && (
           <button
             onClick={addBox}
             className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/40 text-[10px] font-bold text-indigo-200"
           >
-            + Add Box 2
+            + Add Box {boxes.length + 1}
           </button>
         )}
       </div>
 
       {/* Orientation hint */}
-      {cond.patternBoxes && cond.patternBoxes.length > 0 && (
-        <p className="text-[10px] text-gray-400">
-          {(cond.patternBoxMode ?? 'OR') === 'OR'
-            ? 'Each trigger = 1 tick · Left = oldest, Right = latest · Multiple boxes = OR alternatives'
-            : cond.patternBoxMode === 'THEN'
-            ? 'Box 1 triggers → locks market → Box 2 must fire within timeout ticks'
-            : 'Box 1 triggers → ALL markets scanned for Box 2 → fires up to max trades'}
-        </p>
-      )}
+      {cond.patternBoxes && cond.patternBoxes.length > 0 && (() => {
+        const mode = cond.patternBoxMode ?? 'OR';
+        const numB = boxes.length;
+        return (
+          <p className="text-[10px] text-gray-400">
+            {mode === 'OR'
+              ? 'Each trigger = 1 tick · Left = oldest, Right = latest · Multiple boxes = OR alternatives'
+              : mode === 'THEN'
+              ? (numB > 2
+                ? `Box 1 triggers → locks market → sequential boxes (Box 2 to Box ${numB}) must match within their timeouts`
+                : 'Box 1 triggers → locks market → Box 2 must fire within timeout ticks')
+              : (numB > 2
+                ? `Box 1 triggers → scans markets for sequential boxes (up to Box ${numB}) → fires up to max trades`
+                : 'Box 1 triggers → ALL markets scanned for Box 2 → fires up to max trades')}
+          </p>
+        );
+      })()}
 
       {/* Boxes Grid */}
       {cond.patternBoxes && cond.patternBoxes.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           {boxes.map((box, bi) => {
             const mode = cond.patternBoxMode ?? 'OR';
-            if ((mode === 'THEN' || mode === 'THENALL') && bi >= 2) return null;
+            if ((mode === 'THEN' || mode === 'THENALL') && bi >= 4) return null;
 
             return (
               <React.Fragment key={bi}>
                 {bi > 0 && (
                   <div className="flex flex-col items-center gap-1.5 px-1">
+                    {/* Mode cycle chip — click to cycle OR→THEN→THENALL (shown on first separator) */}
                     {bi === 1 && (() => {
                       const curMode = cond.patternBoxMode ?? 'OR';
                       const nextMode = curMode === 'OR' ? 'THEN' : curMode === 'THEN' ? 'THENALL' : 'OR';
+                      const modeColors: Record<string, string> = {
+                        OR: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+                        THEN: 'bg-teal-500/20 text-teal-300 border-teal-500/40',
+                        THENALL: 'bg-purple-500/20 text-purple-300 border-purple-500/40',
+                      };
+                      const box2Timeout = cond.thenTimeouts?.[1] ?? cond.thenTimeout ?? 20;
+
                       return (
                         <div className="flex flex-col items-center gap-1">
                           <button
                             onClick={() => onChange({ ...cond, patternBoxMode: nextMode as 'OR' | 'THEN' | 'THENALL' })}
-                            className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm"
+                            className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${modeColors[curMode] || modeColors.OR} border shadow-sm transition-all`}
                             title={`Mode: ${curMode} — click to switch to ${nextMode}`}
                           >
                             {curMode} ▾
@@ -268,9 +304,16 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                                 type="number"
                                 min={1}
                                 max={500}
-                                value={cond.thenTimeout ?? 20}
-                                onChange={e => onChange({ ...cond, thenTimeout: Math.max(1, +e.target.value || 20) })}
+                                value={box2Timeout}
+                                onChange={e => {
+                                  const val = Math.max(1, +e.target.value || 20);
+                                  const nextTimeouts = [...(cond.thenTimeouts || [20, val, 20, 20])];
+                                  while (nextTimeouts.length <= 1) nextTimeouts.push(20);
+                                  nextTimeouts[1] = val;
+                                  onChange({ ...cond, thenTimeout: val, thenTimeouts: nextTimeouts });
+                                }}
                                 className="w-10 bg-black/60 border border-white/10 rounded px-1 text-center text-white text-[10px]"
+                                title="Max ticks to wait for Box 2 before resetting"
                               />
                               <span>t</span>
                             </div>
@@ -285,6 +328,7 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                                 value={cond.thenMaxTrades ?? 3}
                                 onChange={e => onChange({ ...cond, thenMaxTrades: Math.max(1, +e.target.value || 3) })}
                                 className="w-10 bg-black/60 border border-white/10 rounded px-1 text-center text-white text-[10px]"
+                                title="Max trades Box 2 fires per round before resetting to Box 1"
                               />
                               <span>×</span>
                             </div>
@@ -292,9 +336,48 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                         </div>
                       );
                     })()}
-                    {bi > 1 && (
-                      <span className="text-[10px] font-bold text-amber-400">OR</span>
-                    )}
+
+                    {/* Separator for boxes beyond the first pair (Box 3, Box 4) */}
+                    {bi > 1 && (() => {
+                      const curMode = cond.patternBoxMode ?? 'OR';
+                      if (curMode === 'OR') {
+                        return (
+                          <span className="text-[10px] font-bold text-amber-400">OR</span>
+                        );
+                      }
+                      const modeColors: Record<string, string> = {
+                        THEN: 'bg-teal-500/20 text-teal-300 border-teal-500/40',
+                        THENALL: 'bg-purple-500/20 text-purple-300 border-purple-500/40',
+                      };
+                      const boxTimeout = cond.thenTimeouts?.[bi] ?? cond.thenTimeout ?? 20;
+
+                      return (
+                        <div className="flex flex-col items-center gap-1">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${modeColors[curMode] || modeColors.THEN} border shadow-sm`}>
+                            {curMode}
+                          </span>
+                          <div className="flex items-center gap-1 text-[9px] text-gray-300">
+                            <span>TIMEOUT:</span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={500}
+                              value={boxTimeout}
+                              onChange={e => {
+                                const val = Math.max(1, +e.target.value || 20);
+                                const nextTimeouts = [...(cond.thenTimeouts || [20, 20, 20, 20])];
+                                while (nextTimeouts.length <= bi) nextTimeouts.push(20);
+                                nextTimeouts[bi] = val;
+                                onChange({ ...cond, thenTimeouts: nextTimeouts });
+                              }}
+                              className="w-10 bg-black/60 border border-white/10 rounded px-1 text-center text-white text-[10px]"
+                              title={`Max ticks to wait for Box ${bi + 1} before resetting`}
+                            />
+                            <span>t</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
 
@@ -338,6 +421,10 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                             <option value="SO" style={{ background: '#0f172a', color: '#fff' }}>SO</option>
                             <option value="R" style={{ background: '#0f172a', color: '#fff' }}>R</option>
                             <option value="F" style={{ background: '#0f172a', color: '#fff' }}>F</option>
+                            <option value="HE" style={{ background: '#0f172a', color: '#fff' }} title="Highest Even in 1000 ticks">HE</option>
+                            <option value="LE" style={{ background: '#0f172a', color: '#fff' }} title="Least Even in 1000 ticks">LE</option>
+                            <option value="HO" style={{ background: '#0f172a', color: '#fff' }} title="Highest Odd in 1000 ticks">HO</option>
+                            <option value="LO" style={{ background: '#0f172a', color: '#fff' }} title="Least Odd in 1000 ticks">LO</option>
                           </select>
 
                           {bNeedsBarrier && (
@@ -2599,10 +2686,12 @@ export function MiniLaxPrimeModal({
 
                             {cond.type === 'GREEN_BAR' && (() => {
                               const topCount = Math.max(1, cond.topCount ?? 3);
+                              const rankType = cond.rankType || 'TOP'; // 'TOP' | 'LOWEST'
                               const category = cond.digitValue || 'EVEN';
                               const isOverUnder = category === 'OVER' || category === 'UNDER';
                               const barrier = cond.digitBarrier ?? 4;
                               const allAbove = cond.allAboveMinPct ?? true;
+                              const pctCompare = cond.pctCompare || (rankType === 'LOWEST' ? 'BELOW' : 'ABOVE');
 
                               let maxTop = 5;
                               if (category === 'OVER') maxTop = Math.max(1, 9 - barrier);
@@ -2615,18 +2704,44 @@ export function MiniLaxPrimeModal({
 
                               return (
                                 <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-300">
-                                  <span>TOP</span>
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    max={maxTop}
-                                    value={topCount}
+                                  <select
+                                    value={rankType}
                                     onChange={e => {
-                                      const val = Math.max(1, Math.min(maxTop, +e.target.value || 1));
-                                      let b = barrier;
-                                      if (category === 'OVER' && b > 9 - val) b = 9 - val;
-                                      if (category === 'UNDER' && b < val - 1) b = val - 1;
-                                      updateC({ topCount: val, digitBarrier: b });
+                                      const newRank = e.target.value as 'TOP' | 'LOWEST';
+                                      const newPctComp = newRank === 'LOWEST' ? 'BELOW' : 'ABOVE';
+                                      updateC({ rankType: newRank, pctCompare: newPctComp });
+                                    }}
+                                    className="bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-xs font-bold"
+                                    style={{ background: '#0f172a', color: rankType === 'LOWEST' ? '#fb7185' : '#34d399' }}
+                                  >
+                                    <option value="TOP" style={{ background: '#0f172a', color: '#34d399' }}>TOP</option>
+                                    <option value="LOWEST" style={{ background: '#0f172a', color: '#fb7185' }}>LOWEST</option>
+                                  </select>
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    pattern="[0-9]*"
+                                    value={cond.topCount !== undefined ? cond.topCount : 3}
+                                    onFocus={e => e.target.select()}
+                                    onChange={e => {
+                                      const raw = e.target.value.replace(/[^0-9]/g, '');
+                                      if (raw === '') {
+                                        updateC({ topCount: '' as any });
+                                        return;
+                                      }
+                                      const n = parseInt(raw, 10);
+                                      if (!isNaN(n)) {
+                                        const clamped = Math.max(1, Math.min(maxTop, n));
+                                        let b = barrier;
+                                        if (category === 'OVER' && b > 9 - clamped) b = 9 - clamped;
+                                        if (category === 'UNDER' && b < clamped - 1) b = clamped - 1;
+                                        updateC({ topCount: clamped, digitBarrier: b });
+                                      }
+                                    }}
+                                    onBlur={() => {
+                                      if (!cond.topCount || isNaN(+cond.topCount) || +cond.topCount < 1) {
+                                        updateC({ topCount: Math.min(maxTop, 2) });
+                                      }
                                     }}
                                     className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-1 text-center text-white"
                                     style={{ background: '#0f172a', color: '#ffffff' }}
@@ -2638,14 +2753,15 @@ export function MiniLaxPrimeModal({
                                       const newCat = e.target.value;
                                       let newMax = 5;
                                       let b = barrier;
+                                      const curTop = typeof cond.topCount === 'number' ? cond.topCount : 3;
                                       if (newCat === 'OVER') {
-                                        if (b > 9 - topCount) b = Math.max(0, 9 - topCount);
+                                        if (b > 9 - curTop) b = Math.max(0, 9 - curTop);
                                         newMax = Math.max(1, 9 - b);
                                       } else if (newCat === 'UNDER') {
-                                        if (b < topCount - 1) b = Math.min(9, Math.max(0, topCount - 1));
+                                        if (b < curTop - 1) b = Math.min(9, Math.max(0, curTop - 1));
                                         newMax = Math.max(1, b + 1);
                                       }
-                                      const clampedTop = Math.min(topCount, newMax);
+                                      const clampedTop = Math.min(curTop, newMax);
                                       updateC({ digitValue: newCat, topCount: clampedTop, digitBarrier: b });
                                     }}
                                     className="bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white"
@@ -2661,15 +2777,28 @@ export function MiniLaxPrimeModal({
                                     <>
                                       <span>{category}</span>
                                       <input
-                                        type="number"
-                                        min={category === 'OVER' ? 0 : underMinBarrier}
-                                        max={category === 'OVER' ? overMaxBarrier : 9}
-                                        value={barrier}
+                                        type="text"
+                                        inputMode="numeric"
+                                        pattern="[0-9]*"
+                                        value={cond.digitBarrier !== undefined ? cond.digitBarrier : 4}
+                                        onFocus={e => e.target.select()}
                                         onChange={e => {
-                                          let b = +e.target.value;
-                                          if (category === 'OVER') b = Math.max(0, Math.min(overMaxBarrier, b));
-                                          if (category === 'UNDER') b = Math.max(underMinBarrier, Math.min(9, b));
-                                          updateC({ digitBarrier: b });
+                                          const raw = e.target.value.replace(/[^0-9]/g, '');
+                                          if (raw === '') {
+                                            updateC({ digitBarrier: '' as any });
+                                            return;
+                                          }
+                                          let b = parseInt(raw, 10);
+                                          if (!isNaN(b)) {
+                                            if (category === 'OVER') b = Math.max(0, Math.min(overMaxBarrier, b));
+                                            if (category === 'UNDER') b = Math.max(underMinBarrier, Math.min(9, b));
+                                            updateC({ digitBarrier: b });
+                                          }
+                                        }}
+                                        onBlur={() => {
+                                          if ((cond.digitBarrier as any) === '' || isNaN(+(cond.digitBarrier ?? 0))) {
+                                            updateC({ digitBarrier: 4 });
+                                          }
                                         }}
                                         className="w-10 bg-slate-900 border border-cyan-500/40 rounded px-1 py-1 text-center text-cyan-300 font-bold"
                                         style={{ background: '#0f172a' }}
@@ -2688,19 +2817,42 @@ export function MiniLaxPrimeModal({
                                       className="accent-emerald-500 cursor-pointer"
                                     />
                                     <span className={allAbove ? 'text-emerald-400 font-medium' : 'text-gray-500'}>
-                                      and all above
+                                      and each
                                     </span>
                                   </label>
 
                                   {allAbove && (
                                     <>
+                                      <select
+                                        value={pctCompare}
+                                        onChange={e => updateC({ pctCompare: e.target.value as 'ABOVE' | 'BELOW' })}
+                                        className="bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-xs font-bold"
+                                        style={{ background: '#0f172a', color: pctCompare === 'BELOW' ? '#fb7185' : '#34d399' }}
+                                      >
+                                        <option value="ABOVE" style={{ background: '#0f172a', color: '#34d399' }}>&gt;= (above)</option>
+                                        <option value="BELOW" style={{ background: '#0f172a', color: '#fb7185' }}>&lt;= (below)</option>
+                                      </select>
                                       <input
-                                        type="number"
-                                        min="0"
-                                        max="100"
-                                        step="0.5"
-                                        value={cond.value ?? 10}
-                                        onChange={e => updateC({ value: +e.target.value })}
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={cond.value !== undefined ? cond.value : 10}
+                                        onFocus={e => e.target.select()}
+                                        onChange={e => {
+                                          const raw = e.target.value;
+                                          if (raw === '' || raw === '.') {
+                                            updateC({ value: raw as any });
+                                            return;
+                                          }
+                                          const num = parseFloat(raw);
+                                          if (!isNaN(num)) {
+                                            updateC({ value: Math.max(0, Math.min(100, num)) });
+                                          }
+                                        }}
+                                        onBlur={() => {
+                                          if ((cond.value as any) === '' || isNaN(+(cond.value ?? 0))) {
+                                            updateC({ value: 10 });
+                                          }
+                                        }}
                                         className="w-12 bg-slate-900 border border-white/10 rounded px-1 py-1 text-center text-white"
                                         style={{ background: '#0f172a', color: '#ffffff' }}
                                       />
@@ -2710,11 +2862,27 @@ export function MiniLaxPrimeModal({
 
                                   <span>in last</span>
                                   <input
-                                    type="number"
-                                    min="1"
-                                    max="1000"
-                                    value={cond.period || 100}
-                                    onChange={e => updateC({ period: +e.target.value })}
+                                    type="text"
+                                    inputMode="numeric"
+                                    pattern="[0-9]*"
+                                    value={cond.period !== undefined ? cond.period : 100}
+                                    onFocus={e => e.target.select()}
+                                    onChange={e => {
+                                      const raw = e.target.value.replace(/[^0-9]/g, '');
+                                      if (raw === '') {
+                                        updateC({ period: '' as any });
+                                        return;
+                                      }
+                                      const num = parseInt(raw, 10);
+                                      if (!isNaN(num)) {
+                                        updateC({ period: Math.max(1, Math.min(1000, num)) });
+                                      }
+                                    }}
+                                    onBlur={() => {
+                                      if ((cond.period as any) === '' || isNaN(+(cond.period ?? 0))) {
+                                        updateC({ period: 100 });
+                                      }
+                                    }}
                                     className="w-14 bg-slate-900 border border-white/10 rounded px-1 py-1 text-center text-white"
                                     style={{ background: '#0f172a', color: '#ffffff' }}
                                   />

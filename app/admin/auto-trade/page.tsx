@@ -65,7 +65,7 @@ type ContractTypeKey =
 
 type TriggerMode = 'sequential' | 'simultaneous';
 type ContinuousMode = 'after_first' | 'continuous_check';
-type PatternBoxType = 'E' | 'O' | 'D' | 'M' | 'V' | 'U' | 'SE' | 'SO';
+type PatternBoxType = 'E' | 'O' | 'D' | 'M' | 'V' | 'U' | 'SE' | 'SO' | 'HE' | 'LE' | 'HO' | 'LO';
 
 interface PipelineStep {
     id: string;
@@ -117,11 +117,12 @@ const CONTRACT_OPTIONS = [
     { value: 'DIGITUNDER',  label: 'Under' },
 ];
 
-const PATTERN_ALL_TYPES: PatternBoxType[] = ['E', 'O', 'D', 'M', 'V', 'U', 'SE', 'SO'];
+const PATTERN_ALL_TYPES: PatternBoxType[] = ['E', 'O', 'D', 'M', 'V', 'U', 'SE', 'SO', 'HE', 'LE', 'HO', 'LO'];
 
 const PATTERN_LABELS: Record<PatternBoxType, string> = {
     E: 'Even', O: 'Odd', D: 'Differs', M: 'Matches',
     V: 'Over', U: 'Under', SE: 'Same Even', SO: 'Same Odd',
+    HE: 'Highest Even', LE: 'Least Even', HO: 'Highest Odd', LO: 'Least Odd',
 };
 
 const PATTERN_BG: Record<PatternBoxType, string> = {
@@ -133,11 +134,16 @@ const PATTERN_BG: Record<PatternBoxType, string> = {
     U:  'bg-purple-500 shadow-purple-500/30',
     SE: 'bg-cyan-500 shadow-cyan-500/30',
     SO: 'bg-pink-500 shadow-pink-500/30',
+    HE: 'bg-emerald-400 shadow-emerald-400/30',
+    LE: 'bg-sky-500 shadow-sky-500/30',
+    HO: 'bg-amber-400 shadow-amber-400/30',
+    LO: 'bg-pink-400 shadow-pink-400/30',
 };
 
 const PATTERN_DOT: Record<PatternBoxType, string> = {
     E: 'bg-teal-400', O: 'bg-rose-400', D: 'bg-indigo-400', M: 'bg-amber-400',
     V: 'bg-emerald-400', U: 'bg-purple-400', SE: 'bg-cyan-400', SO: 'bg-pink-400',
+    HE: 'bg-emerald-300', LE: 'bg-sky-400', HO: 'bg-amber-300', LO: 'bg-pink-300',
 };
 
 const TARGET_MARKETS = [

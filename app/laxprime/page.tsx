@@ -41,7 +41,7 @@ const CONDITION_TYPES = [
   { value: 'OVER_PCT',      label: 'OVER ( ) % IS' },
   { value: 'UNDER_PCT',     label: 'UNDER ( ) % IS' },
   { value: 'LAST_DIGITS',   label: 'LAST N DIGITS ARE' },
-  { value: 'GREEN_BAR',     label: 'TOP ( ) DIGITS ARE' },
+  { value: 'GREEN_BAR',     label: 'TOP / LOWEST ( ) DIGITS ARE' },
   { value: 'DIGIT_PATTERN', label: 'DIGIT PATTERN' },
   { value: 'DIGIT_APPEARS', label: 'IF DIGIT ( ) APPEARS' },
   { value: 'RSI_SIGNAL',    label: 'RSI SIGNAL [trade_lexx]' },
@@ -59,6 +59,10 @@ const PATTERN_TOKENS = [
   { value: 'SO', label: 'SO', title: 'Same Odd (odd AND = prev digit)' },
   { value: 'R',  label: 'R',  title: 'Rise (quote > prev quote)' },
   { value: 'F',  label: 'F',  title: 'Fall (quote < prev quote)' },
+  { value: 'HE', label: 'HE', title: 'Highest Even (1000t most frequent even)' },
+  { value: 'LE', label: 'LE', title: 'Least Even (1000t least frequent even)' },
+  { value: 'HO', label: 'HO', title: 'Highest Odd (1000t most frequent odd)' },
+  { value: 'LO', label: 'LO', title: 'Least Odd (1000t least frequent odd)' },
 ];
 
 const PATTERN_RETRIGGER = [
@@ -110,11 +114,13 @@ function conditionText(c: Condition): string {
       return `last ${c.lastN} digits are ${c.digitValue}${showB ? ' ' + (c.digitBarrier ?? 4) : ''}`;
     }
     case 'GREEN_BAR': {
+      const rank = c.rankType === 'LOWEST' ? 'LOWEST' : 'TOP';
       const topN = c.topCount ?? 3;
       const cat = c.digitValue || 'EVEN';
       const barrierStr = (cat === 'OVER' || cat === 'UNDER') ? ` ${c.digitBarrier ?? 4}` : '';
-      const minPctStr = (c.allAboveMinPct ?? true) ? ` & all > ${c.value}%` : '';
-      return `TOP ${topN} DIGITS ARE ${cat}${barrierStr}${minPctStr} in last ${c.period} ticks`;
+      const compSym = (c.pctCompare || (rank === 'LOWEST' ? 'BELOW' : 'ABOVE')) === 'BELOW' ? '<=' : '>=';
+      const minPctStr = (c.allAboveMinPct ?? true) ? ` & each ${compSym} ${c.value}%` : '';
+      return `${rank} ${topN} DIGITS ARE ${cat}${barrierStr}${minPctStr} in last ${c.period} ticks`;
     }
     case 'DIGIT_PATTERN': return `PATTERN [${(c.pattern || []).join('→')}]`;
     case 'DIGIT_APPEARS': {
@@ -181,6 +187,14 @@ function getTokenBgColor(token: string): string {
     case 'O': return '#ea580c'; // Orange
     case 'D': return '#dc2626'; // Red
     case 'M': return '#7c3aed'; // Purple
+    case 'SE': return '#0891b2'; // Cyan
+    case 'SO': return '#c026d3'; // Fuchsia
+    case 'R': return '#16a34a'; // Green
+    case 'F': return '#e11d48'; // Rose
+    case 'HE': return '#10b981'; // Emerald (Highest Even)
+    case 'LE': return '#0284c7'; // Sky/Cyan (Least Even)
+    case 'HO': return '#f59e0b'; // Amber (Highest Odd)
+    case 'LO': return '#db2777'; // Pink (Least Odd)
     default: return '#475569';  // Gray
   }
 }
@@ -195,8 +209,21 @@ function AdvancedPatternBuilder({ cond, onChange }: {
 
   const setBoxes = (next: PatternBox[]) => onChange({ ...cond, patternBoxes: next });
 
-  const addBox = () => setBoxes([...boxes, { triggers: [{ token: 'E' }] }]);
-  const removeBox = (bi: number) => setBoxes(boxes.filter((_, i) => i !== bi));
+  const addBox = () => {
+    if (boxes.length >= 4) return;
+    const nextBoxes = [...boxes, { triggers: [{ token: 'E' }] }];
+    const nextTimeouts = [...(cond.thenTimeouts || [20, 20, 20, 20])];
+    while (nextTimeouts.length <= boxes.length) {
+      nextTimeouts.push(cond.thenTimeout ?? 20);
+    }
+    onChange({ ...cond, patternBoxes: nextBoxes, thenTimeouts: nextTimeouts });
+  };
+
+  const removeBox = (bi: number) => {
+    const nextBoxes = boxes.filter((_, i) => i !== bi);
+    const nextTimeouts = cond.thenTimeouts ? cond.thenTimeouts.filter((_, i) => i !== bi) : undefined;
+    onChange({ ...cond, patternBoxes: nextBoxes, thenTimeouts: nextTimeouts });
+  };
 
   const addTrigger = (bi: number) =>
     setBoxes(boxes.map((b, i) => i !== bi ? b : { triggers: [...b.triggers, { token: 'E' }] }));
@@ -258,22 +285,27 @@ function AdvancedPatternBuilder({ cond, onChange }: {
             }}></div>
           </div>
         </div>
-        {/* Only show +Add Box when OR mode (THEN/THENALL only need 2 boxes) */}
-        {(cond.patternBoxMode ?? 'OR') === 'OR' && (
+        {/* Show +Add Box when < 4 boxes */}
+        {(cond.patternBoxMode ?? 'OR') === 'OR' && boxes.length < 4 && (
           <button className="lp-apb-add-btn" onClick={addBox}>+ Add Box</button>
         )}
-        {(cond.patternBoxMode === 'THEN' || cond.patternBoxMode === 'THENALL') && boxes.length < 2 && (
-          <button className="lp-apb-add-btn" onClick={addBox}>+ Add Box 2</button>
+        {(cond.patternBoxMode === 'THEN' || cond.patternBoxMode === 'THENALL') && boxes.length < 4 && (
+          <button className="lp-apb-add-btn" onClick={addBox}>+ Add Box {boxes.length + 1}</button>
         )}
       </div>
 
       {/* Dynamic orientation hint based on mode */}
       {cond.patternBoxes && cond.patternBoxes.length > 0 && (() => {
         const mode = cond.patternBoxMode ?? 'OR';
+        const numB = boxes.length;
         const hintMap: Record<string, string> = {
           OR:      'Each trigger = 1 tick · Left = oldest, Right = latest · Multiple boxes = OR alternatives',
-          THEN:    'Box 1 triggers → locks market → Box 2 must fire within timeout ticks',
-          THENALL: 'Box 1 triggers → ALL markets scanned for Box 2 → fires up to max trades',
+          THEN:    numB > 2
+            ? `Box 1 triggers → locks market → sequential boxes (Box 2 to Box ${numB}) must match within their timeouts`
+            : 'Box 1 triggers → locks market → Box 2 must fire within timeout ticks',
+          THENALL: numB > 2
+            ? `Box 1 triggers → scans markets for sequential boxes (up to Box ${numB}) → fires up to max trades`
+            : 'Box 1 triggers → ALL markets scanned for Box 2 → fires up to max trades',
         };
         return (
           <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)', marginBottom: 2, paddingLeft: 2 }}>
@@ -287,8 +319,8 @@ function AdvancedPatternBuilder({ cond, onChange }: {
         <div className="lp-apb-grid">
           {boxes.map((box, bi) => {
             const mode = cond.patternBoxMode ?? 'OR';
-            // In THEN/THENALL mode: hide any boxes beyond the first 2
-            if ((mode === 'THEN' || mode === 'THENALL') && bi >= 2) return null;
+            // In THEN/THENALL mode: allow up to 4 boxes
+            if ((mode === 'THEN' || mode === 'THENALL') && bi >= 4) return null;
 
             return (
               <React.Fragment key={bi}>
@@ -296,7 +328,7 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                 {bi > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '0 4px', gap: '6px' }}>
 
-                    {/* Mode cycle chip — click to cycle OR→THEN→THENALL */}
+                    {/* Mode cycle chip — click to cycle OR→THEN→THENALL (shown on first separator) */}
                     {bi === 1 && (() => {
                       const curMode = cond.patternBoxMode ?? 'OR';
                       const nextMode = curMode === 'OR' ? 'THEN' : curMode === 'THEN' ? 'THENALL' : 'OR';
@@ -306,6 +338,8 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                         THENALL: { bg: 'rgba(139,92,246,0.15)', color: '#a78bfa', glow: '0 0 6px rgba(139,92,246,0.4)' },
                       };
                       const st = modeStyles[curMode];
+                      const box2Timeout = cond.thenTimeouts?.[1] ?? cond.thenTimeout ?? 20;
+
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
                           <button
@@ -324,15 +358,21 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                             {curMode} ▾
                           </button>
 
-                          {/* THEN / THENALL config inputs */}
+                          {/* THEN / THENALL config inputs for Box 2 */}
                           {(curMode === 'THEN' || curMode === 'THENALL') && (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', alignItems: 'center', minWidth: '72px' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
                                 <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap' }}>⏱ TIMEOUT</span>
                                 <input
                                   type="number" min={1} max={500}
-                                  value={cond.thenTimeout ?? 20}
-                                  onChange={e => onChange({ ...cond, thenTimeout: Math.max(1, +e.target.value || 20) })}
+                                  value={box2Timeout}
+                                  onChange={e => {
+                                    const val = Math.max(1, +e.target.value || 20);
+                                    const nextTimeouts = [...(cond.thenTimeouts || [20, val, 20, 20])];
+                                    while (nextTimeouts.length <= 1) nextTimeouts.push(20);
+                                    nextTimeouts[1] = val;
+                                    onChange({ ...cond, thenTimeout: val, thenTimeouts: nextTimeouts });
+                                  }}
                                   style={{
                                     width: '34px', textAlign: 'center', fontSize: 9,
                                     background: 'rgba(0,0,0,0.4)', color: '#fff',
@@ -369,10 +409,62 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                       );
                     })()}
 
-                    {/* Simple separator for boxes beyond the first pair (OR mode only) */}
-                    {bi > 1 && (
-                      <span style={{ fontSize: 9, fontWeight: 900, color: '#f59e0b', letterSpacing: 1, background: 'rgba(245,158,11,0.1)', borderRadius: 4, padding: '2px 4px' }}>OR</span>
-                    )}
+                    {/* Separator for boxes beyond the first pair (Box 3, Box 4) */}
+                    {bi > 1 && (() => {
+                      const curMode = cond.patternBoxMode ?? 'OR';
+                      if (curMode === 'OR') {
+                        return (
+                          <span style={{ fontSize: 9, fontWeight: 900, color: '#f59e0b', letterSpacing: 1, background: 'rgba(245,158,11,0.1)', borderRadius: 4, padding: '2px 4px' }}>OR</span>
+                        );
+                      }
+                      const modeStyles: Record<string, { bg: string; color: string; glow: string }> = {
+                        THEN:    { bg: 'rgba(20,184,166,0.15)', color: '#2dd4bf', glow: '0 0 6px rgba(20,184,166,0.35)' },
+                        THENALL: { bg: 'rgba(139,92,246,0.15)', color: '#a78bfa', glow: '0 0 6px rgba(139,92,246,0.4)' },
+                      };
+                      const st = modeStyles[curMode] || modeStyles.THEN;
+                      const boxTimeout = cond.thenTimeouts?.[bi] ?? cond.thenTimeout ?? 20;
+
+                      return (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                          <span
+                            style={{
+                              fontSize: 8, fontWeight: 900, letterSpacing: 1,
+                              background: st.bg, color: st.color,
+                              border: `1px solid ${st.color}40`,
+                              borderRadius: 4, padding: '3px 7px',
+                              boxShadow: st.glow,
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {curMode}
+                          </span>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                            <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap' }}>⏱ TIMEOUT</span>
+                            <input
+                              type="number" min={1} max={500}
+                              value={boxTimeout}
+                              onChange={e => {
+                                const val = Math.max(1, +e.target.value || 20);
+                                const nextTimeouts = [...(cond.thenTimeouts || [20, 20, 20, 20])];
+                                while (nextTimeouts.length <= bi) nextTimeouts.push(20);
+                                nextTimeouts[bi] = val;
+                                onChange({ ...cond, thenTimeouts: nextTimeouts });
+                              }}
+                              style={{
+                                width: '34px', textAlign: 'center', fontSize: 9,
+                                background: 'rgba(0,0,0,0.4)', color: '#fff',
+                                border: `1px solid ${st.color}40`, borderRadius: 3,
+                                padding: '1px 2px', outline: 'none',
+                                MozAppearance: 'textfield',
+                              } as React.CSSProperties}
+                              title={`Max ticks to wait for Box ${bi + 1} before resetting`}
+                            />
+                            <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.3)' }}>t</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               <div className={`lp-apb-card ${bi === 0 ? 'active-step' : ''}`}>
@@ -424,6 +516,10 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                         <option value="SO">SO</option>
                         <option value="R">R</option>
                         <option value="F">F</option>
+                        <option value="HE" title="Highest Even in 1000 ticks">HE</option>
+                        <option value="LE" title="Least Even in 1000 ticks">LE</option>
+                        <option value="HO" title="Highest Odd in 1000 ticks">HO</option>
+                        <option value="LO" title="Least Odd in 1000 ticks">LO</option>
                       </select>
 
                       {/* Barrier Select (0-9) inside badge */}
@@ -1021,10 +1117,12 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
 
       {cond.type === 'GREEN_BAR' && (() => {
         const topCount = Math.max(1, cond.topCount ?? 3);
+        const rankType = cond.rankType || 'TOP'; // 'TOP' | 'LOWEST'
         const category = cond.digitValue || 'EVEN'; // 'EVEN' | 'ODD' | 'OVER' | 'UNDER'
         const isOverUnder = category === 'OVER' || category === 'UNDER';
         const barrier = cond.digitBarrier ?? 4;
         const allAbove = cond.allAboveMinPct ?? true;
+        const pctCompare = cond.pctCompare || (rankType === 'LOWEST' ? 'BELOW' : 'ABOVE');
 
         // Calculate max topCount based on category
         let maxTop = 5;
@@ -1039,19 +1137,45 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
 
         return (
           <>
-            <span className="lp-txt">TOP</span>
+            <select
+              className="lp-sel lp-cmp"
+              value={rankType}
+              onChange={e => {
+                const newRank = e.target.value as 'TOP' | 'LOWEST';
+                const newPctComp = newRank === 'LOWEST' ? 'BELOW' : 'ABOVE';
+                u({ rankType: newRank, pctCompare: newPctComp });
+              }}
+              style={{ fontWeight: 800, color: rankType === 'LOWEST' ? '#fb7185' : '#34d399' }}
+            >
+              <option value="TOP">TOP</option>
+              <option value="LOWEST">LOWEST</option>
+            </select>
             <input
               className="lp-num lp-sm"
-              type="number"
-              min={1}
-              max={maxTop}
-              value={topCount}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={cond.topCount !== undefined ? cond.topCount : 3}
+              onFocus={e => e.target.select()}
               onChange={e => {
-                const val = Math.max(1, Math.min(maxTop, +e.target.value || 1));
-                let b = barrier;
-                if (category === 'OVER' && b > 9 - val) b = 9 - val;
-                if (category === 'UNDER' && b < val - 1) b = val - 1;
-                u({ topCount: val, digitBarrier: b });
+                const raw = e.target.value.replace(/[^0-9]/g, '');
+                if (raw === '') {
+                  u({ topCount: '' as any });
+                  return;
+                }
+                const n = parseInt(raw, 10);
+                if (!isNaN(n)) {
+                  const clamped = Math.max(1, Math.min(maxTop, n));
+                  let b = barrier;
+                  if (category === 'OVER' && b > 9 - clamped) b = 9 - clamped;
+                  if (category === 'UNDER' && b < clamped - 1) b = clamped - 1;
+                  u({ topCount: clamped, digitBarrier: b });
+                }
+              }}
+              onBlur={() => {
+                if (!cond.topCount || isNaN(+cond.topCount) || +cond.topCount < 1) {
+                  u({ topCount: Math.min(maxTop, 2) });
+                }
               }}
               style={{ width: '40px', textAlign: 'center' }}
             />
@@ -1063,14 +1187,15 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
                 const newCat = e.target.value;
                 let newMax = 5;
                 let b = barrier;
+                const curTop = typeof cond.topCount === 'number' ? cond.topCount : 3;
                 if (newCat === 'OVER') {
-                  if (b > 9 - topCount) b = Math.max(0, 9 - topCount);
+                  if (b > 9 - curTop) b = Math.max(0, 9 - curTop);
                   newMax = Math.max(1, 9 - b);
                 } else if (newCat === 'UNDER') {
-                  if (b < topCount - 1) b = Math.min(9, Math.max(0, topCount - 1));
+                  if (b < curTop - 1) b = Math.min(9, Math.max(0, curTop - 1));
                   newMax = Math.max(1, b + 1);
                 }
-                const clampedTop = Math.min(topCount, newMax);
+                const clampedTop = Math.min(curTop, newMax);
                 u({ digitValue: newCat, topCount: clampedTop, digitBarrier: b });
               }}
             >
@@ -1085,15 +1210,28 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
                 <span className="lp-txt">{category}</span>
                 <input
                   className="lp-num lp-sm"
-                  type="number"
-                  min={category === 'OVER' ? 0 : underMinBarrier}
-                  max={category === 'OVER' ? overMaxBarrier : 9}
-                  value={barrier}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={cond.digitBarrier !== undefined ? cond.digitBarrier : 4}
+                  onFocus={e => e.target.select()}
                   onChange={e => {
-                    let b = +e.target.value;
-                    if (category === 'OVER') b = Math.max(0, Math.min(overMaxBarrier, b));
-                    if (category === 'UNDER') b = Math.max(underMinBarrier, Math.min(9, b));
-                    u({ digitBarrier: b });
+                    const raw = e.target.value.replace(/[^0-9]/g, '');
+                    if (raw === '') {
+                      u({ digitBarrier: '' as any });
+                      return;
+                    }
+                    let b = parseInt(raw, 10);
+                    if (!isNaN(b)) {
+                      if (category === 'OVER') b = Math.max(0, Math.min(overMaxBarrier, b));
+                      if (category === 'UNDER') b = Math.max(underMinBarrier, Math.min(9, b));
+                      u({ digitBarrier: b });
+                    }
+                  }}
+                  onBlur={() => {
+                    if ((cond.digitBarrier as any) === '' || isNaN(+(cond.digitBarrier ?? 0))) {
+                      u({ digitBarrier: 4 });
+                    }
                   }}
                   title={category === 'OVER'
                     ? `Max barrier is ${overMaxBarrier} so that at least ${topCount} digits can be over ${overMaxBarrier}`
@@ -1111,20 +1249,43 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
                 style={{ cursor: 'pointer', accentColor: '#10b981' }}
               />
               <span className="lp-txt" style={{ fontSize: '11px', color: allAbove ? '#10b981' : '#64748b' }}>
-                and all above
+                and each
               </span>
             </label>
 
             {allAbove && (
               <>
+                <select
+                  className="lp-sel lp-cmp"
+                  value={pctCompare}
+                  onChange={e => u({ pctCompare: e.target.value as 'ABOVE' | 'BELOW' })}
+                  style={{ fontSize: '11px', padding: '2px 4px', fontWeight: 700, color: pctCompare === 'BELOW' ? '#fb7185' : '#34d399' }}
+                >
+                  <option value="ABOVE">&gt;= (above)</option>
+                  <option value="BELOW">&lt;= (below)</option>
+                </select>
                 <input
                   className="lp-num lp-sm"
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={0.5}
-                  value={cond.value ?? 10}
-                  onChange={e => u({ value: +e.target.value })}
+                  type="text"
+                  inputMode="decimal"
+                  value={cond.value !== undefined ? cond.value : 10}
+                  onFocus={e => e.target.select()}
+                  onChange={e => {
+                    const raw = e.target.value;
+                    if (raw === '' || raw === '.') {
+                      u({ value: raw as any });
+                      return;
+                    }
+                    const num = parseFloat(raw);
+                    if (!isNaN(num)) {
+                      u({ value: Math.max(0, Math.min(100, num)) });
+                    }
+                  }}
+                  onBlur={() => {
+                    if ((cond.value as any) === '' || isNaN(+(cond.value ?? 0))) {
+                      u({ value: 10 });
+                    }
+                  }}
                   style={{ width: '44px', textAlign: 'center' }}
                 />
                 <span className="lp-unit">%</span>
@@ -1134,11 +1295,27 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
             <span className="lp-unit" style={{ marginLeft: 2 }}>in last</span>
             <input
               className="lp-num lp-sm"
-              type="number"
-              min={1}
-              max={1000}
-              value={cond.period || 100}
-              onChange={e => u({ period: +e.target.value })}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={cond.period !== undefined ? cond.period : 100}
+              onFocus={e => e.target.select()}
+              onChange={e => {
+                const raw = e.target.value.replace(/[^0-9]/g, '');
+                if (raw === '') {
+                  u({ period: '' as any });
+                  return;
+                }
+                const num = parseInt(raw, 10);
+                if (!isNaN(num)) {
+                  u({ period: Math.max(1, Math.min(1000, num)) });
+                }
+              }}
+              onBlur={() => {
+                if ((cond.period as any) === '' || isNaN(+(cond.period ?? 0))) {
+                  u({ period: 100 });
+                }
+              }}
               style={{ width: '52px', textAlign: 'center' }}
             />
             <span className="lp-unit">ticks</span>
@@ -2284,28 +2461,40 @@ export default function LaxPrimePage() {
           <div className="lp-strategy-section">
             <div className="lp-ss-hdr">
               <span className="lp-sec-title">STRATEGY BUILDER</span>
-              <button
-                className={`lp-virt-toggle-btn ${continuousLock?.enabled ? 'active' : ''}`}
-                onClick={() => setShowContinuousLockPanel(v => !v)}
-                title="Toggle Continuous Lock panel"
-                style={continuousLock?.enabled ? { borderColor: 'rgba(245, 158, 11, 0.5)', color: '#fbbf24', background: 'rgba(245, 158, 11, 0.15)' } : undefined}>
-                🔒 CONTINUOUS LOCK {showContinuousLockPanel ? '▲' : '▼'}
-                {continuousLock?.enabled && <span className="lp-virt-active-dot" style={{ background: '#f59e0b' }} />}
-              </button>
-              <button
-                className="lp-virt-toggle-btn"
-                onClick={() => setShowVirtualPanel(v => !v)}
-                title="Toggle Virtual System panel">
-                ⚗ VIRTUAL SYSTEM {showVirtualPanel ? '▲' : '▼'}
-                {virtualSettings.isVirtualMode && <span className="lp-virt-active-dot" />}
-              </button>
-              <button
-                className={`lp-switcher-btn ${adaptiveSwitch.enabled ? 'active' : ''}`}
-                onClick={() => setShowSwitcherPanel(v => !v)}
-                title="Toggle Switcher panel">
-                ⚡ SWITCHER {showSwitcherPanel ? '▲' : '▼'}
-                {adaptiveSwitch.enabled && <span className="lp-sw-active-dot" />}
-              </button>
+              <div className="lp-hdr-tool-btns">
+                <button
+                  className={`lp-virt-toggle-btn ${continuousLock?.enabled ? 'active' : ''}`}
+                  onClick={() => setShowContinuousLockPanel(v => !v)}
+                  title="Toggle Continuous Lock panel"
+                  style={continuousLock?.enabled ? { borderColor: 'rgba(245, 158, 11, 0.5)', color: '#fbbf24', background: 'rgba(245, 158, 11, 0.15)' } : undefined}>
+                  <span className="lp-btn-icon">🔒</span>
+                  <span className="lp-btn-label">
+                    <span className="lp-word-desktop">CONTINUOUS </span>LOCK
+                  </span>
+                  <span className="lp-arrow-ind">{showContinuousLockPanel ? '▲' : '▼'}</span>
+                  {continuousLock?.enabled && <span className="lp-virt-active-dot" style={{ background: '#f59e0b' }} />}
+                </button>
+                <button
+                  className="lp-virt-toggle-btn"
+                  onClick={() => setShowVirtualPanel(v => !v)}
+                  title="Toggle Virtual System panel">
+                  <span className="lp-btn-icon">⚗</span>
+                  <span className="lp-btn-label">
+                    VIRTUAL<span className="lp-word-desktop"> SYSTEM</span>
+                  </span>
+                  <span className="lp-arrow-ind">{showVirtualPanel ? '▲' : '▼'}</span>
+                  {virtualSettings.isVirtualMode && <span className="lp-virt-active-dot" />}
+                </button>
+                <button
+                  className={`lp-switcher-btn ${adaptiveSwitch.enabled ? 'active' : ''}`}
+                  onClick={() => setShowSwitcherPanel(v => !v)}
+                  title="Toggle Switcher panel">
+                  <span className="lp-btn-icon">⚡</span>
+                  <span className="lp-btn-label">SWITCHER</span>
+                  <span className="lp-arrow-ind">{showSwitcherPanel ? '▲' : '▼'}</span>
+                  {adaptiveSwitch.enabled && <span className="lp-sw-active-dot" />}
+                </button>
+              </div>
               <button className="lp-add-strat-btn"
                 onClick={() => {
                   if (strategies.length >= 5) return;
