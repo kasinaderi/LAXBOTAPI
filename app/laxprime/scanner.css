@@ -2088,26 +2088,22 @@ main:has(.lp-root) {
   .lp-sec-title {
     font-size: 11px !important;
     letter-spacing: 0.5px !important;
-    flex: 1 1 auto !important;
-  }
-  .lp-add-strat-btn {
-    padding: 4px 8px !important;
-    font-size: 9.5px !important;
-    border-radius: 6px !important;
-    white-space: nowrap !important;
+    width: 100% !important;
+    margin-bottom: 2px !important;
   }
   .lp-hdr-tool-btns {
     display: grid !important;
-    grid-template-columns: repeat(3, 1fr) !important;
-    gap: 4px !important;
+    grid-template-columns: repeat(4, 1fr) !important;
+    gap: 3px !important;
     width: 100% !important;
     margin-top: 2px !important;
   }
   .lp-virt-toggle-btn,
-  .lp-switcher-btn {
-    padding: 5px 2px !important;
-    font-size: 8.5px !important;
-    gap: 2px !important;
+  .lp-switcher-btn,
+  .lp-add-strat-btn {
+    padding: 5px 1px !important;
+    font-size: 8px !important;
+    gap: 1.5px !important;
     border-radius: 6px !important;
     white-space: nowrap !important;
     min-width: 0 !important;
@@ -2117,8 +2113,9 @@ main:has(.lp-root) {
     align-items: center !important;
     justify-content: center !important;
     text-align: center !important;
-    letter-spacing: -0.2px !important;
+    letter-spacing: -0.3px !important;
     box-sizing: border-box !important;
+    margin: 0 !important;
   }
   .lp-word-desktop {
     display: none !important;

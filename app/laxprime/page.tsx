@@ -2494,15 +2494,19 @@ export default function LaxPrimePage() {
                   <span className="lp-arrow-ind">{showSwitcherPanel ? '▲' : '▼'}</span>
                   {adaptiveSwitch.enabled && <span className="lp-sw-active-dot" />}
                 </button>
+                <button className="lp-add-strat-btn"
+                  onClick={() => {
+                    if (strategies.length >= 5) return;
+                    setStrategies(p => [...p, createStrategy(p.length)]);
+                  }}
+                  disabled={strategies.length >= 5}
+                  title="Add new strategy">
+                  <span className="lp-btn-icon">+</span>
+                  <span className="lp-btn-label">
+                    <span className="lp-word-desktop">ADD </span>STRAT
+                  </span>
+                </button>
               </div>
-              <button className="lp-add-strat-btn"
-                onClick={() => {
-                  if (strategies.length >= 5) return;
-                  setStrategies(p => [...p, createStrategy(p.length)]);
-                }}
-                disabled={strategies.length >= 5}>
-                + ADD STRATEGY
-              </button>
             </div>
 
             {showContinuousLockPanel && (
