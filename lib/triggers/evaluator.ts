@@ -125,7 +125,9 @@ export function match1000FreqToken(token: string, d: number, digits: number[], i
         for (const e of evens) {
             if (freq[e] > maxFreq) maxFreq = freq[e];
         }
-        return maxFreq > 0 && freq[d] === maxFreq;
+        if (maxFreq <= 0 || freq[d] !== maxFreq) return false;
+        for (const e of evens) { if (e > d && freq[e] === maxFreq) return false; }
+        return true;
     }
 
     if (token === 'LE') {
@@ -133,7 +135,9 @@ export function match1000FreqToken(token: string, d: number, digits: number[], i
         for (const e of evens) {
             if (freq[e] < minFreq) minFreq = freq[e];
         }
-        return freq[d] === minFreq;
+        if (freq[d] !== minFreq) return false;
+        for (const e of evens) { if (e < d && freq[e] === minFreq) return false; }
+        return true;
     }
 
     if (token === 'HO') {
@@ -141,7 +145,9 @@ export function match1000FreqToken(token: string, d: number, digits: number[], i
         for (const o of odds) {
             if (freq[o] > maxFreq) maxFreq = freq[o];
         }
-        return maxFreq > 0 && freq[d] === maxFreq;
+        if (maxFreq <= 0 || freq[d] !== maxFreq) return false;
+        for (const o of odds) { if (o > d && freq[o] === maxFreq) return false; }
+        return true;
     }
 
     if (token === 'LO') {
@@ -149,7 +155,9 @@ export function match1000FreqToken(token: string, d: number, digits: number[], i
         for (const o of odds) {
             if (freq[o] < minFreq) minFreq = freq[o];
         }
-        return freq[d] === minFreq;
+        if (freq[d] !== minFreq) return false;
+        for (const o of odds) { if (o < d && freq[o] === minFreq) return false; }
+        return true;
     }
 
     return false;

@@ -431,35 +431,59 @@ export function match1000FreqToken(token: string, d: number, digits: number[], i
   const odds  = [1, 3, 5, 7, 9];
 
   if (token === 'HE') {
+    // Highest-frequency even digit. Tie-break: numerically largest digit wins.
     let maxFreq = -1;
     for (const e of evens) {
       if (freq[e] > maxFreq) maxFreq = freq[e];
     }
-    return maxFreq > 0 && freq[d] === maxFreq;
+    if (maxFreq <= 0 || freq[d] !== maxFreq) return false;
+    // Tie-break: d must be the LARGEST digit among those tied at maxFreq
+    for (const e of evens) {
+      if (e > d && freq[e] === maxFreq) return false;
+    }
+    return true;
   }
 
   if (token === 'LE') {
+    // Find the strict minimum frequency among even digits.
+    // If there's a tie we pick the numerically-lowest digit as the sole LE
+    // so the result matches what external frequency sites typically show.
     let minFreq = Infinity;
     for (const e of evens) {
       if (freq[e] < minFreq) minFreq = freq[e];
     }
-    return freq[d] === minFreq;
+    if (freq[d] !== minFreq) return false; // digit must be at minimum frequency
+    // Tie-break: d must be the smallest digit among those tied at minFreq
+    for (const e of evens) {
+      if (e < d && freq[e] === minFreq) return false; // a smaller even digit is equally rare
+    }
+    return true;
   }
 
   if (token === 'HO') {
+    // Highest-frequency odd digit. Tie-break: numerically largest digit wins.
     let maxFreq = -1;
     for (const o of odds) {
       if (freq[o] > maxFreq) maxFreq = freq[o];
     }
-    return maxFreq > 0 && freq[d] === maxFreq;
+    if (maxFreq <= 0 || freq[d] !== maxFreq) return false;
+    for (const o of odds) {
+      if (o > d && freq[o] === maxFreq) return false;
+    }
+    return true;
   }
 
   if (token === 'LO') {
+    // Least-frequency odd digit. Tie-break: numerically smallest digit wins.
     let minFreq = Infinity;
     for (const o of odds) {
       if (freq[o] < minFreq) minFreq = freq[o];
     }
-    return freq[d] === minFreq;
+    if (freq[d] !== minFreq) return false;
+    for (const o of odds) {
+      if (o < d && freq[o] === minFreq) return false;
+    }
+    return true;
   }
 
   return false;
