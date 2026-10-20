@@ -405,19 +405,17 @@ function compare(a: number, op: string, b: number): boolean {
  * - HO: Highest Odd digit in 1000 ticks (most frequent odd digit)
  * - LO: Least Odd digit in 1000 ticks (least frequent odd digit)
  */
-export function match1000FreqToken(token: string, d: number, digits: number[], idx: number): boolean {
+export function match1000FreqToken(token: string, d: number, digits: number[], idx: number, symbol?: string): boolean {
   if (idx < 0 || idx >= digits.length) return false;
 
-  // Parity check upfront: HE/LE must be even; HO/LO must be odd
+  // Strict parity check upfront: HE/LE must be even; HO/LO must be odd
   if ((token === 'HE' || token === 'LE') && d % 2 !== 0) return false;
   if ((token === 'HO' || token === 'LO') && d % 2 === 0) return false;
 
   // Window of up to 1000 ticks BEFORE the current tick (exclusive of idx).
-  // We evaluate frequency from preceding history so the arriving tick does NOT
-  // inflate its own count and invalidate the match (key fix for LE/HE/LO/HO).
   const startIdx = Math.max(0, idx - 1000);
-  const windowDigits = digits.slice(startIdx, idx); // excludes current tick at idx
-  if (windowDigits.length === 0) return false;
+  const windowDigits = digits.slice(startIdx, idx);
+  if (windowDigits.length < 20) return false;
 
   const freq: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
   for (let i = 0; i < windowDigits.length; i++) {
@@ -430,66 +428,74 @@ export function match1000FreqToken(token: string, d: number, digits: number[], i
   const evens = [0, 2, 4, 6, 8];
   const odds  = [1, 3, 5, 7, 9];
 
-  if (token === 'HE') {
-    // Highest-frequency even digit. Tie-break: numerically largest digit wins.
-    let maxFreq = -1;
-    for (const e of evens) {
-      if (freq[e] > maxFreq) maxFreq = freq[e];
-    }
-    if (maxFreq <= 0 || freq[d] !== maxFreq) return false;
-    // Tie-break: d must be the LARGEST digit among those tied at maxFreq
-    for (const e of evens) {
-      if (e > d && freq[e] === maxFreq) return false;
-    }
-    return true;
-  }
-
   if (token === 'LE') {
-    // Find the strict minimum frequency among even digits.
-    // If there's a tie we pick the numerically-lowest digit as the sole LE
-    // so the result matches what external frequency sites typically show.
     let minFreq = Infinity;
+    let leDigit = -1;
     for (const e of evens) {
-      if (freq[e] < minFreq) minFreq = freq[e];
+      if (freq[e] < minFreq) {
+        minFreq = freq[e];
+        leDigit = e;
+      }
     }
-    if (freq[d] !== minFreq) return false; // digit must be at minimum frequency
-    // Tie-break: d must be the smallest digit among those tied at minFreq
-    for (const e of evens) {
-      if (e < d && freq[e] === minFreq) return false; // a smaller even digit is equally rare
+    const matched = (d === leDigit);
+    if (matched) {
+      console.log(`[1000FreqToken LE] Market: ${symbol || "unknown"} | Digit: ${d} | LE: ${leDigit} (${minFreq}/${windowDigits.length}t) | Evens: {0:${freq[0]}, 2:${freq[2]}, 4:${freq[4]}, 6:${freq[6]}, 8:${freq[8]}}`);
     }
-    return true;
+    return matched;
   }
 
-  if (token === 'HO') {
-    // Highest-frequency odd digit. Tie-break: numerically largest digit wins.
+  if (token === 'HE') {
     let maxFreq = -1;
-    for (const o of odds) {
-      if (freq[o] > maxFreq) maxFreq = freq[o];
+    let heDigit = -1;
+    for (const e of [8, 6, 4, 2, 0]) {
+      if (freq[e] > maxFreq) {
+        maxFreq = freq[e];
+        heDigit = e;
+      }
     }
-    if (maxFreq <= 0 || freq[d] !== maxFreq) return false;
-    for (const o of odds) {
-      if (o > d && freq[o] === maxFreq) return false;
+    const matched = (maxFreq > 0 && d === heDigit);
+    if (matched) {
+      console.log(`[1000FreqToken HE] Market: ${symbol || "unknown"} | Digit: ${d} | HE: ${heDigit} (${maxFreq}/${windowDigits.length}t) | Evens: {0:${freq[0]}, 2:${freq[2]}, 4:${freq[4]}, 6:${freq[6]}, 8:${freq[8]}}`);
     }
-    return true;
+    return matched;
   }
 
   if (token === 'LO') {
-    // Least-frequency odd digit. Tie-break: numerically smallest digit wins.
     let minFreq = Infinity;
+    let loDigit = -1;
     for (const o of odds) {
-      if (freq[o] < minFreq) minFreq = freq[o];
+      if (freq[o] < minFreq) {
+        minFreq = freq[o];
+        loDigit = o;
+      }
     }
-    if (freq[d] !== minFreq) return false;
-    for (const o of odds) {
-      if (o < d && freq[o] === minFreq) return false;
+    const matched = (d === loDigit);
+    if (matched) {
+      console.log(`[1000FreqToken LO] Market: ${symbol || "unknown"} | Digit: ${d} | LO: ${loDigit} (${minFreq}/${windowDigits.length}t) | Odds: {1:${freq[1]}, 3:${freq[3]}, 5:${freq[5]}, 7:${freq[7]}, 9:${freq[9]}}`);
     }
-    return true;
+    return matched;
+  }
+
+  if (token === 'HO') {
+    let maxFreq = -1;
+    let hoDigit = -1;
+    for (const o of [9, 7, 5, 3, 1]) {
+      if (freq[o] > maxFreq) {
+        maxFreq = freq[o];
+        hoDigit = o;
+      }
+    }
+    const matched = (maxFreq > 0 && d === hoDigit);
+    if (matched) {
+      console.log(`[1000FreqToken HO] Market: ${symbol || "unknown"} | Digit: ${d} | HO: ${hoDigit} (${maxFreq}/${windowDigits.length}t) | Odds: {1:${freq[1]}, 3:${freq[3]}, 5:${freq[5]}, 7:${freq[7]}, 9:${freq[9]}}`);
+    }
+    return matched;
   }
 
   return false;
 }
 
-function matchPatternToken(token: string, digits: number[], quotes: number[], idx: number): boolean {
+function matchPatternToken(token: string, digits: number[], quotes: number[], idx: number, symbol?: string): boolean {
   const d    = digits[idx];
   const prev = digits[idx - 1];
   const q    = quotes[idx];
@@ -505,10 +511,10 @@ function matchPatternToken(token: string, digits: number[], quotes: number[], id
     case 'SO': return d % 2 !== 0 && idx > 0 && d === prev;
     case 'R':  return idx > 0 && q > pq;
     case 'F':  return idx > 0 && q < pq;
-    case 'HE': return match1000FreqToken('HE', d, digits, idx);
-    case 'LE': return match1000FreqToken('LE', d, digits, idx);
-    case 'HO': return match1000FreqToken('HO', d, digits, idx);
-    case 'LO': return match1000FreqToken('LO', d, digits, idx);
+    case 'HE': return match1000FreqToken('HE', d, digits, idx, symbol);
+    case 'LE': return match1000FreqToken('LE', d, digits, idx, symbol);
+    case 'HO': return match1000FreqToken('HO', d, digits, idx, symbol);
+    case 'LO': return match1000FreqToken('LO', d, digits, idx, symbol);
     default:   return false;
   }
 }
@@ -518,7 +524,8 @@ function matchTrigger(
   trig: PatternTrigger,
   digits: number[],
   quotes: number[],
-  idx: number
+  idx: number,
+  symbol?: string
 ): boolean {
   if (idx < 0 || idx >= digits.length) return false;
 
@@ -539,35 +546,17 @@ function matchTrigger(
     case 'SO': return d % 2 !== 0 && d === pd;
     case 'R':  return q > pq;
     case 'F':  return q < pq;
-    case 'HE': return match1000FreqToken('HE', d, digits, idx);
-    case 'LE': return match1000FreqToken('LE', d, digits, idx);
-    case 'HO': return match1000FreqToken('HO', d, digits, idx);
-    case 'LO': return match1000FreqToken('LO', d, digits, idx);
+    case 'HE': return match1000FreqToken('HE', d, digits, idx, symbol);
+    case 'LE': return match1000FreqToken('LE', d, digits, idx, symbol);
+    case 'HO': return match1000FreqToken('HO', d, digits, idx, symbol);
+    case 'LO': return match1000FreqToken('LO', d, digits, idx, symbol);
     default:   return false;
   }
 }
 
-function evaluateDigitPattern(cond: Condition, digits: number[], quotes: number[]): boolean {
+function evaluateDigitPattern(cond: Condition, digits: number[], quotes: number[], symbol?: string): boolean {
   const boxes = cond.patternBoxes;
 
-  // ── Multi-Entry Sequence (box format) ──────────────────────────────────────
-  //
-  // Each BOX is an ALTERNATIVE SEQUENCE (OR across boxes — any single box
-  // matching is enough to fire).
-  //
-  // Within a box, triggers are SEQUENTIAL:
-  //   trigger[0] = oldest tick in the window
-  //   trigger[1] = next tick
-  //   ...
-  //   trigger[N-1] = the LATEST (newest) tick
-  //
-  // Example: Box 1 with [O, O, O, E] means:
-  //   digits[-3]=Odd  AND  digits[-2]=Odd  AND  digits[-1]=Odd  AND  digits[0]=Even
-  //
-  // Example: Box 1 with [U:7, E] AND Box 2 with [V:2]:
-  //   Box 1: 2 ticks ago=Under7 AND latest=Even  → fires OR
-  //   Box 2: latest=Over2                          → fires
-  //
   if (boxes && boxes.length > 0) {
     // Try each box as an alternative; return true as soon as one box fully matches.
     for (const box of boxes) {
@@ -579,13 +568,7 @@ function evaluateDigitPattern(cond: Condition, digits: number[], quotes: number[
       // Need at least N ticks in history (+ 1 extra for relative comparisons like SE/SO/R/F)
       if (digits.length < N + 1) continue;
 
-      // Match each trigger against its assigned tick position.
-      // trigger[0] → digits[last - (N-1)]  (oldest in the window)
-      // trigger[N-1] → digits[last]         (newest tick)
       let boxMatches = true;
-      // SE/SO use variable binding across a box sequence:
-      //   First SE in the box captures the digit; subsequent SE tokens must equal it.
-      //   This makes SE→E→SE mean "tick1 and tick3 are the SAME even digit".
       let capturedSE: number | null = null;
       let capturedSO: number | null = null;
       for (let ti = 0; ti < N; ti++) {
@@ -607,7 +590,7 @@ function evaluateDigitPattern(cond: Condition, digits: number[], quotes: number[
           continue;
         }
 
-        if (!matchTrigger(trig, digits, quotes, digitIdx)) {
+        if (!matchTrigger(trig, digits, quotes, digitIdx, symbol)) {
           boxMatches = false;
           break;
         }
@@ -630,7 +613,7 @@ function evaluateDigitPattern(cond: Condition, digits: number[], quotes: number[
     const tempTrig: PatternTrigger = { token };
     if (token === 'V') tempTrig.barrier = 4; // Over 4
     if (token === 'U') tempTrig.barrier = 4; // Under 5 (<= 4)
-    if (!matchTrigger(tempTrig, digits, quotes, digitIdx)) {
+    if (!matchTrigger(tempTrig, digits, quotes, digitIdx, symbol)) {
       return false;
     }
   }
@@ -641,7 +624,7 @@ function evaluateDigitPattern(cond: Condition, digits: number[], quotes: number[
  * Evaluate a single box by index from a condition's patternBoxes array.
  * Returns false if index is out of bounds or box has no triggers.
  */
-function evaluateOneBox(cond: Condition, boxIndex: number, digits: number[], quotes: number[]): boolean {
+function evaluateOneBox(cond: Condition, boxIndex: number, digits: number[], quotes: number[], symbol?: string): boolean {
   const boxes = cond.patternBoxes;
   if (!boxes || boxIndex >= boxes.length) return false;
   const box = boxes[boxIndex];
@@ -671,7 +654,7 @@ function evaluateOneBox(cond: Condition, boxIndex: number, digits: number[], quo
       else if (d !== capturedSO) return false;
       continue;
     }
-    if (!matchTrigger(trig, digits, quotes, digitIdx)) return false;
+    if (!matchTrigger(trig, digits, quotes, digitIdx, symbol)) return false;
   }
   return true;
 }
@@ -867,7 +850,7 @@ function evaluateCondition(
       return true;
     }
     case 'DIGIT_PATTERN':
-      return evaluateDigitPattern(cond, digits, quotes);
+      return evaluateDigitPattern(cond, digits, quotes, symbol);
     case 'DIGIT_APPEARS': {
       const targetDigits = cond.targetDigits && cond.targetDigits.length > 0
         ? cond.targetDigits
@@ -2464,7 +2447,7 @@ export const useBotStore = create<BotStoreState>()(
               eng.retrigger[rtKey] = { lastWasTrue: false, waitingForOpposite: false };
             }
             const rts          = eng.retrigger[rtKey];
-            const patNowTrue   = evaluateDigitPattern(dpCond, digits, quotes);
+            const patNowTrue   = evaluateDigitPattern(dpCond, digits, quotes, symbol);
 
             if (dpCond.patternRetrigger === 'no_contra') {
               if (patNowTrue && rts.lastWasTrue) {
@@ -2522,7 +2505,7 @@ export const useBotStore = create<BotStoreState>()(
                 .filter(c => c.type !== 'DIGIT_PATTERN')
                 .every(c => evaluateCondition(c, digits, quotes, symbol, s.tradeType));
 
-              const box1Pass = otherCondsPass && evaluateOneBox(dpCondForMode, 0, digits, quotes);
+              const box1Pass = otherCondsPass && evaluateOneBox(dpCondForMode, 0, digits, quotes, symbol);
 
               if (box1Pass) {
                 if (numBoxes > 1) {
@@ -2574,7 +2557,7 @@ export const useBotStore = create<BotStoreState>()(
                 const otherCondsPass = s.conditions
                   .filter(c => c.type !== 'DIGIT_PATTERN')
                   .every(c => evaluateCondition(c, digits, quotes, symbol, s.tradeType));
-                const boxPass = otherCondsPass && evaluateOneBox(dpCondForMode, targetBox, digits, quotes);
+                const boxPass = otherCondsPass && evaluateOneBox(dpCondForMode, targetBox, digits, quotes, symbol);
                 if (!boxPass) {
                   const rem = Math.max(0, thisTimeout - ts.ticksWaited);
                   const mLabel = ALL_MARKETS.find(m => m.value === ts.lockedSymbol)?.label || ts.lockedSymbol;
@@ -2625,7 +2608,7 @@ export const useBotStore = create<BotStoreState>()(
                 const otherCondsPass = s.conditions
                   .filter(c => c.type !== 'DIGIT_PATTERN')
                   .every(c => evaluateCondition(c, digits, quotes, symbol, s.tradeType));
-                const boxPass = otherCondsPass && evaluateOneBox(dpCondForMode, targetBox, digits, quotes);
+                const boxPass = otherCondsPass && evaluateOneBox(dpCondForMode, targetBox, digits, quotes, symbol);
                 if (!boxPass) {
                   const rem = Math.max(0, thisTimeout - ts.ticksWaited);
                   set({ botStatusMsg: `⏳ THENALL: waiting for Box ${targetBox + 1} across markets (${rem} ticks left)` });

@@ -1,6 +1,6 @@
-import { derivWS } from './websocket';
+﻿import { derivWS } from './websocket';
 import { DominanceFilter } from '../triggers/dominance-filter'; // Import
-import { evaluateDigitPatternTrigger, evaluateEntryDigitStateful, EntryTriggerState } from '../triggers/evaluator';
+import { evaluateDigitPatternTrigger, evaluateEntryDigitStateful, EntryTriggerState, match1000FreqToken } from '../triggers/evaluator';
 import { TickData, DerivMessage } from './types';
 import { sanitizeStake } from './security';
 import { ticksToDecimals } from './constants';

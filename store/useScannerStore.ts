@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+﻿import { create } from 'zustand';
 import { SmartScanner, ScannerSignal, ScannerTick } from '../lib/scanner/SmartScanner';
 import { ticksToDecimals } from '../lib/deriv/constants';
 import { derivWS } from '../lib/deriv/websocket';
@@ -198,7 +198,7 @@ export const useScannerStore = create<ScannerStoreState>((set, get) => ({
 
         console.log(`[ScannerStore] Fetching history for ${symbol}… (active: ${activeFetches})`);
 
-        derivWS.getTickHistory(symbol, 500)
+        derivWS.getTickHistory(symbol, 1000)
             .then((response: any) => {
                 if (response.history?.times && response.history?.prices) {
                     const times  = response.history.times  as number[];

@@ -95,19 +95,17 @@ export function evaluateEntryDigitStateful(
  * - HO: Highest Odd digit in 1000 ticks (most frequent odd digit)
  * - LO: Least Odd digit in 1000 ticks (least frequent odd digit)
  */
-export function match1000FreqToken(token: string, d: number, digits: number[], idx: number): boolean {
+export function match1000FreqToken(token: string, d: number, digits: number[], idx: number, symbol?: string): boolean {
     if (idx < 0 || idx >= digits.length) return false;
 
-    // Parity check upfront: HE/LE must be even; HO/LO must be odd
+    // Strict parity check upfront: HE/LE must be even; HO/LO must be odd
     if ((token === 'HE' || token === 'LE') && d % 2 !== 0) return false;
     if ((token === 'HO' || token === 'LO') && d % 2 === 0) return false;
 
     // Window of up to 1000 ticks BEFORE the current tick (exclusive of idx).
-    // We evaluate frequency from preceding history so the arriving tick does NOT
-    // inflate its own count and invalidate the match (key fix for LE/HE/LO/HO).
     const startIdx = Math.max(0, idx - 1000);
-    const windowDigits = digits.slice(startIdx, idx); // excludes current tick at idx
-    if (windowDigits.length === 0) return false;
+    const windowDigits = digits.slice(startIdx, idx);
+    if (windowDigits.length < 20) return false;
 
     const freq: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     for (let i = 0; i < windowDigits.length; i++) {
@@ -120,44 +118,68 @@ export function match1000FreqToken(token: string, d: number, digits: number[], i
     const evens = [0, 2, 4, 6, 8];
     const odds  = [1, 3, 5, 7, 9];
 
-    if (token === 'HE') {
-        let maxFreq = -1;
-        for (const e of evens) {
-            if (freq[e] > maxFreq) maxFreq = freq[e];
-        }
-        if (maxFreq <= 0 || freq[d] !== maxFreq) return false;
-        for (const e of evens) { if (e > d && freq[e] === maxFreq) return false; }
-        return true;
-    }
-
     if (token === 'LE') {
         let minFreq = Infinity;
+        let leDigit = -1;
         for (const e of evens) {
-            if (freq[e] < minFreq) minFreq = freq[e];
+            if (freq[e] < minFreq) {
+                minFreq = freq[e];
+                leDigit = e;
+            }
         }
-        if (freq[d] !== minFreq) return false;
-        for (const e of evens) { if (e < d && freq[e] === minFreq) return false; }
-        return true;
+        const matched = (d === leDigit);
+        if (matched) {
+            console.log(`[1000FreqToken LE] Market: ${symbol || "unknown"} | Digit: ${d} | LE: ${leDigit} (${minFreq}/${windowDigits.length}t) | Evens: {0:${freq[0]}, 2:${freq[2]}, 4:${freq[4]}, 6:${freq[6]}, 8:${freq[8]}}`);
+        }
+        return matched;
     }
 
-    if (token === 'HO') {
+    if (token === 'HE') {
         let maxFreq = -1;
-        for (const o of odds) {
-            if (freq[o] > maxFreq) maxFreq = freq[o];
+        let heDigit = -1;
+        for (const e of [8, 6, 4, 2, 0]) {
+            if (freq[e] > maxFreq) {
+                maxFreq = freq[e];
+                heDigit = e;
+            }
         }
-        if (maxFreq <= 0 || freq[d] !== maxFreq) return false;
-        for (const o of odds) { if (o > d && freq[o] === maxFreq) return false; }
-        return true;
+        const matched = (maxFreq > 0 && d === heDigit);
+        if (matched) {
+            console.log(`[1000FreqToken HE] Market: ${symbol || "unknown"} | Digit: ${d} | HE: ${heDigit} (${maxFreq}/${windowDigits.length}t) | Evens: {0:${freq[0]}, 2:${freq[2]}, 4:${freq[4]}, 6:${freq[6]}, 8:${freq[8]}}`);
+        }
+        return matched;
     }
 
     if (token === 'LO') {
         let minFreq = Infinity;
+        let loDigit = -1;
         for (const o of odds) {
-            if (freq[o] < minFreq) minFreq = freq[o];
+            if (freq[o] < minFreq) {
+                minFreq = freq[o];
+                loDigit = o;
+            }
         }
-        if (freq[d] !== minFreq) return false;
-        for (const o of odds) { if (o < d && freq[o] === minFreq) return false; }
-        return true;
+        const matched = (d === loDigit);
+        if (matched) {
+            console.log(`[1000FreqToken LO] Market: ${symbol || "unknown"} | Digit: ${d} | LO: ${loDigit} (${minFreq}/${windowDigits.length}t) | Odds: {1:${freq[1]}, 3:${freq[3]}, 5:${freq[5]}, 7:${freq[7]}, 9:${freq[9]}}`);
+        }
+        return matched;
+    }
+
+    if (token === 'HO') {
+        let maxFreq = -1;
+        let hoDigit = -1;
+        for (const o of [9, 7, 5, 3, 1]) {
+            if (freq[o] > maxFreq) {
+                maxFreq = freq[o];
+                hoDigit = o;
+            }
+        }
+        const matched = (maxFreq > 0 && d === hoDigit);
+        if (matched) {
+            console.log(`[1000FreqToken HO] Market: ${symbol || "unknown"} | Digit: ${d} | HO: ${hoDigit} (${maxFreq}/${windowDigits.length}t) | Odds: {1:${freq[1]}, 3:${freq[3]}, 5:${freq[5]}, 7:${freq[7]}, 9:${freq[9]}}`);
+        }
+        return matched;
     }
 
     return false;

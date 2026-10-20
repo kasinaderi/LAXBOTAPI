@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+﻿import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { ConnectionStatus, AccountInfo, TickData, DerivMessage } from '../lib/deriv/types';
 import { derivWS } from '../lib/deriv/websocket';
@@ -912,11 +912,11 @@ export const useDerivStore = create<DerivState>()(
 
                 // console.log(`[DerivStore] Tick: ${tick.quote} (${precision}) -> ${digit}`);
 
-                const newTicks = state.ticks.slice(-99);
+                const newTicks = state.ticks.slice(-999);
                 newTicks.push(digit);
 
-                const newPriceHistory = state.priceHistory ? state.priceHistory.slice(-99) : [];
-                const newRfHistory = state.rfHistory ? state.rfHistory.slice(-99) : [];
+                const newPriceHistory = state.priceHistory ? state.priceHistory.slice(-999) : [];
+                const newRfHistory = state.rfHistory ? state.rfHistory.slice(-999) : [];
 
                 if (newPriceHistory.length > 0) {
                     const prevPrice = newPriceHistory[newPriceHistory.length - 1];
@@ -1261,7 +1261,7 @@ export const useDerivStore = create<DerivState>()(
                     derivWS.subscribeTicks(symbol);
                     // Guard: only fetch history if socket is genuinely OPEN
                     const fetchHistory = () => {
-                        derivWS.getTickHistory(symbol, 100).then((res: any) => {
+                        derivWS.getTickHistory(symbol, 1000).then((res: any) => {
                             if (res && res.history && res.history.prices) {
                                 const rawPipSize = res.pip_size;
                                 let decimals = 2;
