@@ -1,4 +1,4 @@
-import { DigitPatternTrigger, EntryDigitTrigger } from './types';
+﻿import { DigitPatternTrigger, EntryDigitTrigger } from './types';
 
 export interface EntryTriggerState {
     isActive: boolean;
@@ -102,9 +102,11 @@ export function match1000FreqToken(token: string, d: number, digits: number[], i
     if ((token === 'HE' || token === 'LE') && d % 2 !== 0) return false;
     if ((token === 'HO' || token === 'LO') && d % 2 === 0) return false;
 
-    // Window of up to 1000 ticks ending at idx (inclusive)
-    const startIdx = Math.max(0, idx - 999);
-    const windowDigits = digits.slice(startIdx, idx + 1);
+    // Window of up to 1000 ticks BEFORE the current tick (exclusive of idx).
+    // We evaluate frequency from preceding history so the arriving tick does NOT
+    // inflate its own count and invalidate the match (key fix for LE/HE/LO/HO).
+    const startIdx = Math.max(0, idx - 1000);
+    const windowDigits = digits.slice(startIdx, idx); // excludes current tick at idx
     if (windowDigits.length === 0) return false;
 
     const freq: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
