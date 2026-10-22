@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import {
   Strategy, Condition, PatternBox, PatternTrigger,
-  AdaptiveSwitch, AdaptiveSwitchStep, SwitcherTradeConfig,
+  AdaptiveSwitch, AdaptiveSwitchStep, SwitcherTradeConfig, getManualContractList, ManualContractItem, ManualContractsConfig,
   ALL_MARKETS, TRADE_OPTIONS, normalizeContractType,
   createCondition, createStrategy, needsBarrier,
   useBotStore,
@@ -1372,6 +1372,57 @@ export function MiniLaxPrimeModal({
                   </div>
                 </div>
 
+                {/* Mode 2 Repeat Boxes selector — only visible when mode=continuous_check and a THEN/THENALL DIGIT_PATTERN with multiple boxes exists */}
+                {continuousLock?.mode === 'continuous_check' && (() => {
+                  const dpCond = strategies.flatMap((s: any) => s.conditions || []).find((c: any) =>
+                    c.type === 'DIGIT_PATTERN' && (c.patternBoxMode === 'THEN' || c.patternBoxMode === 'THENALL')
+                  );
+                  const boxes: any[] = dpCond?.patternBoxes || [];
+                  if (boxes.length < 2) return null;
+                  return (
+                    <div className="bg-teal-500/10 border border-teal-500/25 rounded-xl p-3 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-black text-teal-300">🔄 Repeat Boxes (after 1st trigger)</span>
+                        <span className="text-[9px] text-gray-400">
+                          Box 1 = trigger only · tick boxes to repeat while locked
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-2.5">
+                        {boxes.map((_: any, bi: number) => {
+                          const isBox1 = bi === 0;
+                          const curIndices: number[] = (continuousLock?.repeatBoxIndices ?? []) as number[];
+                          const isSelected = !isBox1 && curIndices.includes(bi);
+                          return (
+                            <label key={bi} className={`flex items-center gap-1.5 ${isBox1 ? 'opacity-35 cursor-default' : 'cursor-pointer'}`}>
+                              <input
+                                type="checkbox"
+                                disabled={isBox1}
+                                checked={isBox1 ? false : isSelected}
+                                onChange={() => {
+                                  if (isBox1) return;
+                                  const next = isSelected
+                                    ? curIndices.filter((x: number) => x !== bi)
+                                    : [...curIndices, bi].sort((a, b) => a - b);
+                                  setContinuousLock(prev => ({ ...prev, repeatBoxIndices: next }));
+                                }}
+                                className="accent-teal-500 w-3.5 h-3.5"
+                              />
+                              <span className={`text-[10px] font-bold ${isBox1 ? 'text-gray-500' : isSelected ? 'text-teal-300' : 'text-gray-300'}`}>
+                                Box {bi + 1}{isBox1 ? ' (trigger)' : ''}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      {((continuousLock?.repeatBoxIndices ?? []) as number[]).length === 0 && (
+                        <p className="text-[9px] text-gray-500 italic m-0">
+                          No boxes selected — bot will re-check full sequence each entry (Mode 2 default behavior)
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {/* Trade Pattern Config */}
                 <div className="bg-black/40 border border-white/10 rounded-xl p-3 space-y-2">
                   <div className="flex items-center justify-between flex-wrap gap-2">
@@ -2229,6 +2280,11 @@ export function MiniLaxPrimeModal({
                         className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
                           adaptiveSwitch.mode === 'adaptive' ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'
                         }`}>⚡ ADAPTIVE CONTRACTS</button>
+                      <button type="button"
+                        onClick={() => setAdaptiveSwitch(prev => ({ ...prev, mode: 'manual' }))}
+                        className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                          adaptiveSwitch.mode === 'manual' ? 'bg-sky-600 text-white shadow' : 'text-gray-400 hover:text-white'
+                        }`}>🎛️ MANUAL CONTRACTS</button>
                     </div>
 
                     {/* Dual Contracts System toggle */}
@@ -2325,6 +2381,189 @@ export function MiniLaxPrimeModal({
                               </div>
                             </div>
                           </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* MANUAL CONTRACTS Panel */}
+                    {adaptiveSwitch.mode === 'manual' && (() => {
+                      const mc = adaptiveSwitch.manualContracts || {
+                        contractA: { type: 'DIGITEVEN', barrier: 4, ticks: 1 },
+                        contractB: { type: 'DIGITODD', barrier: 4, ticks: 1 },
+                        activeSide: 'A',
+                        startSide: 'A',
+                        onSwitchVirtualBehavior: 'stay_virtual',
+                      };
+                      const activeSide = mc.activeSide || mc.startSide || 'A';
+                      const startSide = mc.startSide || 'A';
+                      const virtualBehavior = mc.onSwitchVirtualBehavior || 'stay_virtual';
+
+                      const updateMC = (patch: any) => {
+                        setAdaptiveSwitch(prev => ({
+                          ...prev,
+                          manualContracts: { ...mc, ...patch },
+                        }));
+                      };
+
+                      const contractsList = getManualContractList(mc);
+
+                      return (
+                        <div className="space-y-3 bg-sky-500/5 border border-sky-500/20 rounded-xl p-3">
+                          <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                            <div>
+                              <span className="text-[10px] font-bold text-sky-300">🎛️ MANUAL HUD CONTRACTS</span>
+                              <p className="text-[9px] text-gray-500 mt-0.5">Configure 2 (or more) contracts to switch on-the-fly via the Quick HUD.</p>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border text-sky-300 bg-sky-500/20 border-sky-500/30">
+                                ● CONTRACT {activeSide}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => updateMC({ activeSide: activeSide === 'A' ? 'B' : 'A' })}
+                                className="text-[9px] font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 px-1.5 py-0.5 rounded cursor-pointer"
+                              >
+                                ⇌
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Virtual Switch Behavior */}
+                          <div className="bg-black/30 border border-white/10 rounded-lg p-2.5 space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-bold text-gray-300">Virtual Switch Behavior:</span>
+                              <span className="text-[9px] font-bold text-amber-300">
+                                {virtualBehavior === 'switch_to_real' ? '⚡ Switch to Real on click' : '🧪 Stay in Virtual'}
+                              </span>
+                            </div>
+                            <div className="flex bg-black/40 rounded-lg p-0.5 border border-white/5 gap-1">
+                              <button
+                                type="button"
+                                onClick={() => updateMC({ onSwitchVirtualBehavior: 'stay_virtual' })}
+                                className={`flex-1 py-1 rounded text-[9px] font-bold transition-all ${
+                                  virtualBehavior === 'stay_virtual' ? 'bg-indigo-600 text-white' : 'text-gray-400'
+                                }`}
+                              >
+                                STAY VIRTUAL
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => updateMC({ onSwitchVirtualBehavior: 'switch_to_real' })}
+                                className={`flex-1 py-1 rounded text-[9px] font-bold transition-all ${
+                                  virtualBehavior === 'switch_to_real' ? 'bg-amber-600 text-white' : 'text-gray-400'
+                                }`}
+                              >
+                                SWITCH TO REAL
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Start Side */}
+                          <div className="flex items-center gap-2 text-[10px]">
+                            <span className="text-gray-400 font-bold">Start Side:</span>
+                            {contractsList.map((c, idx) => (
+                              <button
+                                key={c.id || idx}
+                                type="button"
+                                onClick={() => updateMC({ startSide: c.id, activeSide: c.id })}
+                                className={`px-2 py-0.5 rounded text-[9px] font-bold border-none ${
+                                  startSide === c.id ? 'bg-sky-600 text-white' : 'bg-white/5 text-gray-400'
+                                } cursor-pointer`}
+                              >
+                                {c.label || `Contract ${c.id}`}
+                              </button>
+                            ))}
+                          </div>
+
+                          {/* Contracts Grid */}
+                          <div className="grid grid-cols-2 gap-2">
+                            {contractsList.map((c, idx) => {
+                              const isA = idx === 0;
+                              const isB = idx === 1;
+                              const isCurActive = (c.id === activeSide) || (isA && activeSide === 'A') || (isB && activeSide === 'B');
+
+                              const updateThisContract = (patch: any) => {
+                                if (isA) updateMC({ contractA: { ...mc.contractA, ...patch } });
+                                else if (isB) updateMC({ contractB: { ...mc.contractB, ...patch } });
+                                if (mc.contracts) {
+                                  const nextC = [...mc.contracts];
+                                  nextC[idx] = { ...nextC[idx], ...patch };
+                                  updateMC({ contracts: nextC });
+                                }
+                              };
+
+                              return (
+                                <div
+                                  key={c.id || idx}
+                                  className={`flex flex-col gap-1.5 p-2.5 rounded-xl border ${
+                                    isCurActive ? 'border-sky-500 bg-sky-500/10' : 'border-white/8 bg-white/2'
+                                  }`}
+                                >
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-[10px] font-bold text-sky-300">
+                                      {c.label || `CONTRACT ${c.id}`} {isCurActive ? '✓' : ''}
+                                    </span>
+                                    {contractsList.length > 2 && idx >= 2 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const nextC = (mc.contracts || contractsList).filter((_, i) => i !== idx);
+                                          updateMC({ contracts: nextC, activeSide: activeSide === c.id ? 'A' : activeSide });
+                                        }}
+                                        className="text-[9px] text-rose-400 hover:text-rose-300 font-bold"
+                                      >
+                                        ✕
+                                      </button>
+                                    )}
+                                  </div>
+                                  <select
+                                    value={c.type || 'DIGITEVEN'}
+                                    onChange={e => updateThisContract({ type: e.target.value })}
+                                    className="w-full bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white text-[10px]"
+                                    style={{ background: '#0f172a', color: '#fff' }}
+                                  >
+                                    {TRADE_OPTIONS.map(opt => <option key={opt.value} value={opt.value} style={{ background: '#0f172a' }}>{opt.label}</option>)}
+                                  </select>
+                                  {needsBarrier(c.type || 'DIGITEVEN') && (
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-[9px] text-gray-400">Barrier:</span>
+                                      <input
+                                        type="number" min={0} max={9}
+                                        value={c.barrier ?? 4}
+                                        onChange={e => updateThisContract({ barrier: Math.min(9, Math.max(0, +e.target.value || 0)) })}
+                                        className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]"
+                                        style={{ background: '#0f172a', color: '#fff' }}
+                                      />
+                                    </div>
+                                  )}
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-[9px] text-sky-400 font-bold">Ticks:</span>
+                                    <input
+                                      type="number" min={1} max={100}
+                                      value={c.ticks ?? 1}
+                                      onChange={e => updateThisContract({ ticks: Math.max(1, +e.target.value || 1) })}
+                                      className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]"
+                                      style={{ background: '#0f172a', color: '#fff' }}
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {contractsList.length < 4 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const nextId = String.fromCharCode(65 + contractsList.length);
+                                const newC = { id: nextId, label: `Contract ${nextId}`, type: 'DIGITEVEN', barrier: 4, ticks: 1 };
+                                updateMC({ contracts: [...contractsList, newC] });
+                              }}
+                              className="w-full py-1 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 text-[9px] font-bold border border-white/10"
+                            >
+                              + Add Contract ({String.fromCharCode(65 + contractsList.length)})
+                            </button>
+                          )}
                         </div>
                       );
                     })()}

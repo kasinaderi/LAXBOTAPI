@@ -1,5 +1,5 @@
 ﻿/**
- * useBotStore — LaxPrime bot engine + persistence
+ * useBotStore â€” LaxPrime bot engine + persistence
  *
  * Settings (stake, strategies, markets, etc.) are persisted to localStorage via
  * Zustand's `persist` middleware.  The bot engine (runScan) registers a single
@@ -18,9 +18,9 @@ import { getActivePageId } from './usePageSettings';
 import { tradeWS } from '../lib/deriv/trade-ws';
 import { feedRsiSignal, RsiSignalConfig, MaType, resetRsiSignalState, consumeRsiSignal } from '../lib/indicators/rsi-signal';
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // TYPES (exported so page.tsx can import them)
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface PatternTrigger {
   token: string;    // E | O | V | U | M | D | SE | SO | R | F | HE | LE | HO | LO
@@ -51,7 +51,7 @@ export interface Condition {
   allAboveMinPct?: boolean;     // For TOP/LOWEST () DIGITS ARE: whether each digit must pass the % threshold
   pctCompare?: 'ABOVE' | 'BELOW'; // For TOP/LOWEST () DIGITS ARE: 'ABOVE' (>= %) or 'BELOW' (<= %), defaults to 'ABOVE' for TOP, 'BELOW' for LOWEST
   patternBoxes?: PatternBox[];         // Multi-Entry Sequence (OR across boxes, AND within)
-  patternBoxMode?: 'OR' | 'THEN' | 'THENALL'; // How boxes relate: OR=any fires, THEN=Box1→lock→Box2, THENALL=Box1→all markets Box2
+  patternBoxMode?: 'OR' | 'THEN' | 'THENALL'; // How boxes relate: OR=any fires, THEN=Box1â†’lockâ†’Box2, THENALL=Box1â†’all markets Box2
   thenTimeout?: number;               // THEN/THENALL: ticks to wait for Box2 before resetting (default 20)
   thenTimeouts?: number[];            // THEN/THENALL: per-box timeouts (index 1 = Box2, index 2 = Box3, index 3 = Box4)
   thenMaxTrades?: number;             // THENALL: max trades Box2 fires per round (default 3)
@@ -103,25 +103,27 @@ export interface Strategy {
 /** Controls the Continuous Lock behaviour (fires from STRATEGY BUILDER panel). */
 export interface ContinuousLockConfig {
   enabled: boolean;
-  /** 'no_recheck'       – lock market+strategy after first trigger, loop pattern without rechecking conditions
-   *  'continuous_check' – lock market+strategy but re-evaluate conditions on every tick before each trade */
+  /** 'no_recheck'       â€“ lock market+strategy after first trigger, loop pattern without rechecking conditions
+   *  'continuous_check' â€“ lock market+strategy but re-evaluate conditions on every tick before each trade */
   mode: 'no_recheck' | 'continuous_check';
   /** T/S trade pattern used while in locked mode (same shape as Strategy.tradePattern) */
   tradePattern: boolean[];
   /** Whether to apply the tradePattern in locked mode */
   useTradePattern: boolean;
   /** Lock-level Take Profit: when hit, unlock and rescan all markets for the next trigger.
-   *  'wins'   → unlock after N wins in this lock session
-   *  'profit' → unlock after $N profit in this lock session */
+   *  'wins'   â†’ unlock after N wins in this lock session
+   *  'profit' â†’ unlock after $N profit in this lock session */
   lockTPEnabled: boolean;
   lockTPMode: 'wins' | 'profit';
   lockTP: number;
   /** Lock-level Stop Loss: when hit, unlock and rescan all markets for the next trigger.
-   *  'losses' → unlock after N losses in this lock session
-   *  'loss'   → unlock after -$N loss in this lock session */
+   *  'losses' â†’ unlock after N losses in this lock session
+   *  'loss'   â†’ unlock after -$N loss in this lock session */
   lockSLEnabled: boolean;
   lockSLMode: 'losses' | 'loss';
   lockSL: number;
+  /** Mode 2 (continuous_check): which 0-based box indices repeat after 1st trigger (e.g. [1, 2] for Box 2 & 3). Defaults to all boxes if undefined. */
+  repeatBoxIndices?: number[];
 }
 
 export interface SwitcherTradeConfig {
@@ -200,10 +202,41 @@ export interface VirtualSwitcherConfig {
   _originalMarkets?: string[];
 }
 
+export interface ManualContractItem {
+  id: string;
+  label: string;
+  type: string;
+  barrier?: number;
+  ticks?: number;
+}
+
+export interface ManualContractsConfig {
+  contractA: AdaptiveContractConfig;
+  contractB: AdaptiveContractConfig;
+  activeSide?: string;
+  startSide?: string;
+  onSwitchVirtualBehavior?: 'stay_virtual' | 'switch_to_real';
+  contracts?: ManualContractItem[];
+}
+
+export function getManualContractList(mc?: ManualContractsConfig): ManualContractItem[] {
+  if (mc?.contracts && mc.contracts.length >= 2) {
+    return mc.contracts;
+  }
+  const a = mc?.contractA || { type: 'DIGITEVEN', barrier: 4, ticks: 1 };
+  const b = mc?.contractB || { type: 'DIGITODD', barrier: 4, ticks: 1 };
+  return [
+    { id: 'A', label: 'Contract A', type: a.type || 'DIGITEVEN', barrier: a.barrier, ticks: a.ticks ?? 1 },
+    { id: 'B', label: 'Contract B', type: b.type || 'DIGITODD', barrier: b.barrier, ticks: b.ticks ?? 1 },
+    ...(mc?.contracts?.slice(2) || []),
+  ];
+}
+
 export interface AdaptiveSwitch {
   enabled: boolean;
   dualMode: boolean;  // Fire exactly 2 contracts per entry; martingale only on both-loss
-  mode?: 'sequence' | 'adaptive'; // 'sequence' (Step sequence) vs 'adaptive' (Auto-switch on loss)
+  mode?: 'sequence' | 'adaptive' | 'manual'; // 'sequence' (Step sequence) vs 'adaptive' (Auto-switch on loss) vs 'manual' (Manual HUD switch)
+  manualContracts?: ManualContractsConfig;
   adaptiveContracts?: {
     contractA: AdaptiveContractConfig;
     contractB: AdaptiveContractConfig;
@@ -248,9 +281,9 @@ interface PerStrategyState {
   cooldown: boolean;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // CONSTANTS (exported)
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const ALL_MARKETS = [
   { value: '1HZ10V',  label: 'V10(1s)'  },
@@ -279,11 +312,11 @@ export const TRADE_OPTIONS = [
   { value: 'DIGITOVER',  label: '>(OVER)'   },
   { value: 'DIGITUNDER', label: '<(UNDER)'  },
   { value: 'DIGITMATCH', label: '=(MATCH)'  },
-  { value: 'DIGITDIFF',  label: '≠(DIFF)'   },
+  { value: 'DIGITDIFF',  label: 'â‰ (DIFF)'   },
   { value: 'CALL',       label: 'RISE'      },
   { value: 'PUT',        label: 'FALL'      },
-  { value: 'RUNHIGH',    label: '↑ ONLY UPS'  },
-  { value: 'RUNLOW',     label: '↓ ONLY DOWNS' },
+  { value: 'RUNHIGH',    label: 'â†‘ ONLY UPS'  },
+  { value: 'RUNLOW',     label: 'â†“ ONLY DOWNS' },
 ];
 
 export function normalizeContractType(raw: string | undefined | null): string {
@@ -302,9 +335,9 @@ export function normalizeContractType(raw: string | undefined | null): string {
   return u;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // FACTORY HELPERS (exported)
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function createCondition(): Condition {
   return {
@@ -325,9 +358,9 @@ export function createCondition(): Condition {
     pattern: ['E', 'E', 'E', 'E'],
     patternRetrigger: 'any',
     patternBoxes: [
-      // Box 1: 2-tick sequence — tick before last = Under 7  AND  last tick = Even
+      // Box 1: 2-tick sequence â€” tick before last = Under 7  AND  last tick = Even
       { triggers: [{ token: 'U', barrier: 7 }, { token: 'E' }] },
-      // Box 2: single-tick — last digit = Over 2 (alternative trigger)
+      // Box 2: single-tick â€” last digit = Over 2 (alternative trigger)
       { triggers: [{ token: 'V', barrier: 2 }] },
     ],
     useCustomContracts: false,
@@ -367,25 +400,25 @@ export function checkIsOpposite(contractType: string, prediction: number, digit:
   const norm = normalizeContractType(contractType);
   switch (norm) {
     // Digit contracts: wait for the OTHER digit outcome before retriggering
-    case 'DIGITEVEN':  return digit % 2 !== 0;   // after EVEN → wait for ODD
-    case 'DIGITODD':   return digit % 2 === 0;   // after ODD  → wait for EVEN
-    case 'DIGITOVER':  return digit <= prediction; // after OVER → wait for UNDER
-    case 'DIGITUNDER': return digit > prediction;  // after UNDER → wait for OVER
-    case 'DIGITMATCH': return digit !== prediction; // after MATCH → wait for DIFF
-    case 'DIGITDIFF':  return digit === prediction; // after DIFF  → wait for MATCH
+    case 'DIGITEVEN':  return digit % 2 !== 0;   // after EVEN â†’ wait for ODD
+    case 'DIGITODD':   return digit % 2 === 0;   // after ODD  â†’ wait for EVEN
+    case 'DIGITOVER':  return digit <= prediction; // after OVER â†’ wait for UNDER
+    case 'DIGITUNDER': return digit > prediction;  // after UNDER â†’ wait for OVER
+    case 'DIGITMATCH': return digit !== prediction; // after MATCH â†’ wait for DIFF
+    case 'DIGITDIFF':  return digit === prediction; // after DIFF  â†’ wait for MATCH
     // Rise/Fall: wait for the OPPOSITE direction tick
     case 'CALL':
-    case 'RUNHIGH':   return quote < prevQuote;  // after RISE → wait for a FALL tick
+    case 'RUNHIGH':   return quote < prevQuote;  // after RISE â†’ wait for a FALL tick
     case 'PUT':
-    case 'RUNLOW':    return quote > prevQuote;  // after FALL → wait for a RISE tick
+    case 'RUNLOW':    return quote > prevQuote;  // after FALL â†’ wait for a RISE tick
     default:           return false;
   }
 }
 
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // PURE EVALUATORS (private)
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function compare(a: number, op: string, b: number): boolean {
   switch (op) {
@@ -596,12 +629,12 @@ function evaluateDigitPattern(cond: Condition, digits: number[], quotes: number[
         }
       }
 
-      if (boxMatches) return true; // OR across boxes — one match is enough
+      if (boxMatches) return true; // OR across boxes â€” one match is enough
     }
     return false; // No box matched
   }
 
-  // ── Legacy string-pattern fallback ────────────────────────────────────────
+  // â”€â”€ Legacy string-pattern fallback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const pat = cond.pattern;
   if (!pat || pat.length === 0) return false;
   const n = pat.length;
@@ -664,11 +697,11 @@ function evaluateOneBox(cond: Condition, boxIndex: number, digits: number[], quo
  * Eligible-Window helper for PCT conditions.
  *
  * When eligibleWindow is OFF (or not set) the helper is a transparent pass-through
- * that returns `rawResult` unchanged — ZERO behavior change.
+ * that returns `rawResult` unchanged â€” ZERO behavior change.
  *
  * When ON:
- *  - If `rawResult` is true  → refresh/extend the expiry timestamp and return true.
- *  - If `rawResult` is false → if the expiry hasn't passed yet, return true (still eligible).
+ *  - If `rawResult` is true  â†’ refresh/extend the expiry timestamp and return true.
+ *  - If `rawResult` is false â†’ if the expiry hasn't passed yet, return true (still eligible).
  *                              Otherwise clear the entry and return false.
  *
  * The expiry map lives in `eng.eligibilityExpiry` (module-scope, ephemeral).
@@ -684,18 +717,18 @@ function applyEligibleWindow(cond: Condition, symbol: string | undefined, rawRes
   const windowMs = Math.max(1, ew.seconds ?? 90) * 1000;
 
   if (rawResult) {
-    // Condition freshly met — set/refresh expiry for this market
+    // Condition freshly met â€” set/refresh expiry for this market
     eng.eligibilityExpiry[key] = now + windowMs;
     return true;
   }
 
-  // Condition not currently met — check if we're still within the window for this market
+  // Condition not currently met â€” check if we're still within the window for this market
   const expiry = eng.eligibilityExpiry[key];
   if (expiry !== undefined && now < expiry) {
     return true; // still eligible
   }
 
-  // Window expired (or was never set) — clean up and return false
+  // Window expired (or was never set) â€” clean up and return false
   delete eng.eligibilityExpiry[key];
   return false;
 }
@@ -786,7 +819,7 @@ function evaluateCondition(
         return compare((maxFreq / period) * 100, cond.comparator, cond.value);
       }
 
-      // ── TOP / LOWEST (N) DIGITS ARE (EVEN | ODD | OVER | UNDER) ──────────────────
+      // â”€â”€ TOP / LOWEST (N) DIGITS ARE (EVEN | ODD | OVER | UNDER) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       const p = Math.max(1, cond.period || 100);
       const sub = digits.slice(-p);
       if (sub.length < p && digits.length < p) return false;
@@ -919,10 +952,10 @@ function evalStrategy(s: Strategy, digits: number[], quotes: number[], symbol?: 
   return result;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // MODULE-SCOPE MUTABLE ENGINE STATE
 // These live outside React/Zustand so they survive page navigation.
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Per-strategy THEN/THENALL state (lives outside React so it persists across ticks)
 interface ThenState {
@@ -932,6 +965,7 @@ interface ThenState {
   ticksWaited: number;         // ticks elapsed while waiting for current target box
   tradesThisRound: number;     // THENALL: trades fired this round
   lastTickEpoch: number;       // epoch of last tick where we incremented ticksWaited
+  repeatStep: number;          // Mode 2 repeat cycle: current position within repeatBoxIndices array
 }
 
 const eng = {
@@ -978,7 +1012,7 @@ const eng = {
   eligibilityExpiry: {} as Record<string, number>,
 };
 
-// Single onTick subscription handle — registered once, lives forever
+// Single onTick subscription handle â€” registered once, lives forever
 let _onTickUnsub: (() => void) | null = null;
 
 function processVirtualSwitcherResult(isWin: boolean, get: () => any, set: (state: any) => void) {
@@ -1044,11 +1078,11 @@ function processVirtualSwitcherResult(isWin: boolean, get: () => any, set: (stat
     const gateBEnabled = Boolean(vs.gateB?.enabled);
 
     if (gateBEnabled) {
-      // ── Gate B enabled: stay VIRTUAL with locked contract (gate_b phase) ──
+      // â”€â”€ Gate B enabled: stay VIRTUAL with locked contract (gate_b phase) â”€â”€
       const lbl = TRADE_OPTIONS.find(o => o.value === activeContract!.contractType)?.label || activeContract!.contractType;
       const barText = activeContract!.barrier !== undefined && needsBarrier(activeContract!.contractType) ? ` ${activeContract!.barrier}` : '';
-      const msg = `🔷 Gate A (${triggeredRule === 'wins' ? winRule!.threshold + ' V-Wins' : lossRule!.threshold + ' V-Losses'}) met! Gate B active — testing ${lbl}${barText} virtually before REAL.`;
-      get().addJournal('switcher', 'Gate A Met → Gate B', msg);
+      const msg = `ðŸ”· Gate A (${triggeredRule === 'wins' ? winRule!.threshold + ' V-Wins' : lossRule!.threshold + ' V-Losses'}) met! Gate B active â€” testing ${lbl}${barText} virtually before REAL.`;
+      get().addJournal('switcher', 'Gate A Met â†’ Gate B', msg);
       set({
         botStatusMsg: msg,
         adaptiveSwitch: {
@@ -1073,7 +1107,7 @@ function processVirtualSwitcherResult(isWin: boolean, get: () => any, set: (stat
         selectedMarkets: newMarket,
       });
     } else {
-      // ── No Gate B: switch directly to REAL trading ──
+      // â”€â”€ No Gate B: switch directly to REAL trading â”€â”€
       useDerivStore.getState().setVirtualSettings({
         isVirtualMode: false,
         startVirtualToReal: false,
@@ -1082,8 +1116,8 @@ function processVirtualSwitcherResult(isWin: boolean, get: () => any, set: (stat
       });
       const lbl = TRADE_OPTIONS.find(o => o.value === activeContract!.contractType)?.label || activeContract!.contractType;
       const barText = activeContract!.barrier !== undefined && needsBarrier(activeContract!.contractType) ? ` ${activeContract!.barrier}` : '';
-      const msg = `⚡ Virtual Switcher: ${triggeredRule === 'wins' ? winRule!.threshold + ' V-Wins' : lossRule!.threshold + ' V-Losses'} met! Switched to REAL (${lbl}${barText})${activeContract!.market ? ` on ${activeContract!.market}` : ''}.`;
-      get().addJournal('switcher', 'Gate A Met → REAL', msg);
+      const msg = `âš¡ Virtual Switcher: ${triggeredRule === 'wins' ? winRule!.threshold + ' V-Wins' : lossRule!.threshold + ' V-Losses'} met! Switched to REAL (${lbl}${barText})${activeContract!.market ? ` on ${activeContract!.market}` : ''}.`;
+      get().addJournal('switcher', 'Gate A Met â†’ REAL', msg);
       set({
         botStatusMsg: msg,
         adaptiveSwitch: {
@@ -1171,7 +1205,7 @@ function processGateBResult(isWin: boolean, get: () => any, set: (state: any) =>
   }
 
   if (gbCount >= gbThreshold) {
-    // ── Gate B condition met: switch to REAL with the locked contract ──
+    // â”€â”€ Gate B condition met: switch to REAL with the locked contract â”€â”€
     useDerivStore.getState().setVirtualSettings({
       isVirtualMode: false,
       startVirtualToReal: false,
@@ -1181,8 +1215,8 @@ function processGateBResult(isWin: boolean, get: () => any, set: (state: any) =>
     const ac = vs._activeContract!;
     const lbl = TRADE_OPTIONS.find(o => o.value === ac.contractType)?.label || ac.contractType;
     const barText = ac.barrier !== undefined && needsBarrier(ac.contractType) ? ` ${ac.barrier}` : '';
-    const gbMsg = `⚡ Gate B (${gbThreshold} ${gbMode === 'consec' ? 'consecutive ' : 'total '}${gbTriggerType}) met! Switched to REAL (${lbl}${barText}).`;
-    get().addJournal('switcher', 'Gate B Met → REAL', gbMsg);
+    const gbMsg = `âš¡ Gate B (${gbThreshold} ${gbMode === 'consec' ? 'consecutive ' : 'total '}${gbTriggerType}) met! Switched to REAL (${lbl}${barText}).`;
+    get().addJournal('switcher', 'Gate B Met â†’ REAL', gbMsg);
     set({
       botStatusMsg: gbMsg,
       adaptiveSwitch: {
@@ -1267,7 +1301,7 @@ function processVirtualSwitcherRealResult(isWin: boolean, get: () => any, set: (
   }
 
   if (count >= retRule.threshold) {
-    // 🔄 SWITCH BACK TO VIRTUAL TRADING!
+    // ðŸ”„ SWITCH BACK TO VIRTUAL TRADING!
     useDerivStore.getState().setVirtualSettings({
       isVirtualMode: true,
       startVirtualToReal: false,
@@ -1278,7 +1312,7 @@ function processVirtualSwitcherRealResult(isWin: boolean, get: () => any, set: (
     const vc = vs.virtualContract || { contractType: 'DIGITEVEN', ticks: 1 };
     const virtContract = normalizeContractType(vc.contractType || (vc as any).type || 'DIGITEVEN');
     const virtLabel = TRADE_OPTIONS.find(o => o.value === virtContract)?.label || virtContract;
-    const rMsg = `🎯 Virtual Switcher: Target (${retRule.threshold} ${retRule.mode === 'consec' ? 'consecutive ' : 'total '}${retRule.triggerType}) met! Switched BACK to VIRTUAL (${virtLabel}).`;
+    const rMsg = `ðŸŽ¯ Virtual Switcher: Target (${retRule.threshold} ${retRule.mode === 'consec' ? 'consecutive ' : 'total '}${retRule.triggerType}) met! Switched BACK to VIRTUAL (${virtLabel}).`;
     get().addJournal('switcher', 'Returned to Virtual', rMsg);
     set({
       selectedMarkets: originalMarkets,
@@ -1342,9 +1376,9 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
 
   const isRoundWin = netProfit >= 0;
 
-  // ── Dual-mode split result ────────────────────────────────────────────────
+  // â”€â”€ Dual-mode split result â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // In dual mode (2 contracts, same entry), only count as a loss when BOTH lose.
-  // If exactly one wins and one loses it's a push — no martingale, no win/loss stat.
+  // If exactly one wins and one loses it's a push â€” no martingale, no win/loss stat.
   const isDualPush = dualMode && wonCount > 0 && lostCount > 0;
 
   // 1. Martingale / Compounding update (only once per round!)
@@ -1352,7 +1386,7 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
   const isCompounding = useDerivStore.getState().compoundProfits;
   if (ss) {
     if (isDualPush) {
-      // Push (1W+1L): one contract offset the other — treat as a win for martingale/compounding.
+      // Push (1W+1L): one contract offset the other â€” treat as a win for martingale/compounding.
       ss.totalProfit += netProfit;
       if (!isVirtual) {
         ss.lossCount = 0;
@@ -1398,7 +1432,7 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
             ss.currentStake = nextStake; // Preserve accurate stake, DO NOT reset to base!
             delete eng.roundState[roundId];
             get().stopBot(
-              `⛔ Max Martingale / Insufficient Balance: Next stake USD ${nextStake.toFixed(2)} exceeds account balance USD ${balance.toFixed(2)}. Bot stopped to protect remaining funds.`
+              `â›” Max Martingale / Insufficient Balance: Next stake USD ${nextStake.toFixed(2)} exceeds account balance USD ${balance.toFixed(2)}. Bot stopped to protect remaining funds.`
             );
             return;
           }
@@ -1438,8 +1472,21 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
 
       const activeCfg = curSide === 'A' ? (ac.contractA || { type: 'DIGITEVEN' }) : (ac.contractB || { type: 'DIGITODD' });
       const lbl = TRADE_OPTIONS.find(o => o.value === activeCfg.type)?.label || activeCfg.type;
-      const pushTag = isDualPush ? ' ⇌ PUSH' : '';
-      set({ adaptiveLiveStatus: `⚡ ADAPTIVE: ${lbl} (Side ${curSide})${pushTag} [Auto-Switch on Loss]` });
+      const pushTag = isDualPush ? ' â‡Œ PUSH' : '';
+      set({ adaptiveLiveStatus: `âš¡ ADAPTIVE: ${lbl} (Side ${curSide})${pushTag} [Auto-Switch on Loss]` });
+    } else if (aSwState.mode === 'manual') {
+      const mc = aSwState.manualContracts || {
+        contractA: { type: 'DIGITEVEN', barrier: 4, ticks: 1 },
+        contractB: { type: 'DIGITODD', barrier: 4, ticks: 1 },
+        activeSide: 'A',
+        startSide: 'A',
+      };
+      const curSide = mc.activeSide || mc.startSide || 'A';
+      const list = getManualContractList(mc);
+      const activeCfg = list.find(c => c.id === curSide) || (curSide === 'B' ? mc.contractB : mc.contractA) || { type: 'DIGITEVEN' };
+      const lbl = TRADE_OPTIONS.find(o => o.value === activeCfg.type)?.label || activeCfg.type;
+      const barText = activeCfg.barrier !== undefined && needsBarrier(activeCfg.type) ? ` ${activeCfg.barrier}` : '';
+      set({ adaptiveLiveStatus: `🎛️ MANUAL: ${lbl}${barText} [Side ${curSide}]` });
     } else if (aSwState.steps.length > 0) {
       const pos = eng.adaptivePos;
       // Clamp index
@@ -1468,7 +1515,7 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
           const lbl = TRADE_OPTIONS.find(o => o.value === t.contractType)?.label || t.contractType;
           return t.count > 1 ? `${lbl} (x${t.count})` : lbl;
         }).join(' + ');
-        const pushTag = isDualPush ? ' ⇌ PUSH' : '';
+        const pushTag = isDualPush ? ' â‡Œ PUSH' : '';
         set({ adaptiveLiveStatus: `${nextLabel}${pushTag} [Step ${pos.stepIndex + 1}, ${pos.repCount + 1}/${nextStep.reps}]` });
       }
     }
@@ -1494,7 +1541,7 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
         vVirtualLossesB: 0,
         vResultHistoryB: [],
       });
-      set({ botStatusMsg: `⚡ Double Virt: Real Trade (${completedReps}/${targetReps}) finished. Returning to Virtual for Stage B Gate.` });
+      set({ botStatusMsg: `âš¡ Double Virt: Real Trade (${completedReps}/${targetReps}) finished. Returning to Virtual for Stage B Gate.` });
     } else {
       useDerivStore.getState().setVirtualSettings({
         isVirtualMode: true,
@@ -1506,7 +1553,7 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
         vVirtualLossesB: 0,
         vResultHistoryB: [],
       });
-      set({ botStatusMsg: `⚡ Double Virt: Stage B Reps Completed (${completedReps}/${targetReps})! Remaining in Stage B execution cycle.` });
+      set({ botStatusMsg: `âš¡ Double Virt: Stage B Reps Completed (${completedReps}/${targetReps})! Remaining in Stage B execution cycle.` });
     }
   }
 
@@ -1516,7 +1563,7 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
   // If this was real mode, update the status message
   if (!isVirtual) {
     const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
-    const resultLabel = isDualPush ? '⇌ PUSH' : isRoundWin ? '✓ WON' : '✗ LOST';
+    const resultLabel = isDualPush ? 'â‡Œ PUSH' : isRoundWin ? 'âœ“ WON' : 'âœ— LOST';
     const logType: JournalLog['type'] = isRoundWin ? 'success' : isDualPush ? 'info' : 'warn';
     const curStats = get().globalStats;
     const curPnl = curStats.totalProfit + netProfit;
@@ -1531,15 +1578,15 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
   }
 }
 
-// Exported set of requestIds placed by the bot — lets the UI read from Deriv store directly (instant)
+// Exported set of requestIds placed by the bot â€” lets the UI read from Deriv store directly (instant)
 export const botTradeIds = new Set<string>();
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // STORE INTERFACE
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface BotStoreState {
-  // ── Persisted settings ─────────────────────────────────────────────────────
+  // â”€â”€ Persisted settings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   stake:          string;
   targetProfit:   string;
   targetProfitMode: 'profit' | 'wins';
@@ -1556,16 +1603,16 @@ interface BotStoreState {
   adaptiveLiveStatus: string; // e.g. 'Even [Step 1, 1/2]'
   continuousLock: ContinuousLockConfig;
 
-  // ── Session state (NOT persisted) ─────────────────────────────────────────
+  // â”€â”€ Session state (NOT persisted) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   isRunning:    boolean;
   botStatusMsg: string;
   lastSignal:   string;
   tradeLogs:    TradeLog[];
   journalLogs:  JournalLog[];
   globalStats:  { won: number; lost: number; totalProfit: number; totalTrades: number };
-  signalFlash:  Record<string, number>;   // symbol → timestamp of last signal
+  signalFlash:  Record<string, number>;   // symbol â†’ timestamp of last signal
 
-  // ── Settings setters ───────────────────────────────────────────────────────
+  // â”€â”€ Settings setters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   setStake:           (v: string) => void;
   setTargetProfit:    (v: string) => void;
   setTargetProfitMode: (mode: 'profit' | 'wins') => void;
@@ -1581,33 +1628,33 @@ interface BotStoreState {
   setAdaptiveSwitch:  (v: AdaptiveSwitch) => void;
   setContinuousLock:  (v: ContinuousLockConfig) => void;
 
-  // ── Bot controls ───────────────────────────────────────────────────────────
+  // â”€â”€ Bot controls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   startBot:   () => void;
   stopBot:    (reason?: string) => void;
   resetAll:   () => void;
   set_status: (msg: string) => void;
 
-  // ── Log helpers ────────────────────────────────────────────────────────────
+  // â”€â”€ Log helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   addLog:       (log: TradeLog) => void;
   updateLog:    (id: string, patch: Partial<TradeLog>) => void;
   addJournal:   (type: JournalLog['type'], title: string, message: string) => void;
   clearJournal: () => void;
 
-  // ── Internal (called by engine / tradeWS listener) ─────────────────────────
+  // â”€â”€ Internal (called by engine / tradeWS listener) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   _runScan:           (symbol: string) => void;
   _handleTradeEvent:  (type: string, data: any) => void;
   _flashSignal:       (symbol: string) => void;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // STORE DEFINITION
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const useBotStore = create<BotStoreState>()(
   persist(
     (set, get) => ({
 
-      // ── Defaults ─────────────────────────────────────────────────────────────
+      // â”€â”€ Defaults â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       stake:           '1',
       targetProfit:    '100',
       targetProfitMode: 'profit',
@@ -1623,6 +1670,14 @@ export const useBotStore = create<BotStoreState>()(
       adaptiveSwitch:  {
         enabled: false,
         dualMode: false,
+        mode: 'sequence',
+        manualContracts: {
+          contractA: { type: 'DIGITEVEN', barrier: 4, ticks: 1 },
+          contractB: { type: 'DIGITODD', barrier: 4, ticks: 1 },
+          activeSide: 'A',
+          startSide: 'A',
+          onSwitchVirtualBehavior: 'stay_virtual',
+        },
         steps: [
           { contractType: 'DIGITEVEN', reps: 2 },
           { contractType: 'DIGITODD',  reps: 2 },
@@ -1640,6 +1695,7 @@ export const useBotStore = create<BotStoreState>()(
         lockSLEnabled: false,
         lockSLMode: 'losses',
         lockSL: 3,
+        repeatBoxIndices: undefined,
       },
 
       isRunning:    false,
@@ -1650,7 +1706,7 @@ export const useBotStore = create<BotStoreState>()(
       globalStats:  { won: 0, lost: 0, totalProfit: 0, totalTrades: 0 },
       signalFlash:  {},
 
-      // ── Setters ───────────────────────────────────────────────────────────────
+      // â”€â”€ Setters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       setStake:           (v) => set({ stake: v }),
       setTargetProfit:    (v) => set({ targetProfit: v }),
       setTargetProfitMode: (mode) => set({ targetProfitMode: mode }),
@@ -1703,7 +1759,7 @@ export const useBotStore = create<BotStoreState>()(
       },
 
 
-      // ── Bot controls ─────────────────────────────────────────────────────────
+      // â”€â”€ Bot controls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
       startBot: () => {
         // Reset mutable engine state on each start
@@ -1905,7 +1961,7 @@ export const useBotStore = create<BotStoreState>()(
         });
         eng.lastTradeTime = 0;
         botTradeIds.clear();
-        // Only clear session data — stake, targetProfit, stopLoss, martingale
+        // Only clear session data â€” stake, targetProfit, stopLoss, martingale
         // and tradingMode are intentionally preserved across resets.
         set({
           tradeLogs:    [],
@@ -1919,7 +1975,7 @@ export const useBotStore = create<BotStoreState>()(
 
       set_status: (msg: string) => set({ botStatusMsg: msg }),
 
-      // ── Core scan engine ─────────────────────────────────────────────────────
+      // â”€â”€ Core scan engine â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
       _runScan: (symbol: string) => {
         const state = get();
@@ -1928,7 +1984,7 @@ export const useBotStore = create<BotStoreState>()(
 
         const derivState = useDerivStore.getState();
         const isVirtual  = derivState.virtualSettings.isVirtualMode;
-        // For real mode: we allow scanning even if not yet authorized — trades queue up
+        // For real mode: we allow scanning even if not yet authorized â€” trades queue up
         // and retry until the socket is ready. Only block if we have no token at all.
         if (!isVirtual && !derivState.account?.token && !derivState.token) return;
 
@@ -1937,7 +1993,7 @@ export const useBotStore = create<BotStoreState>()(
         const { strategies, martingale, tradingMode, targetProfit, stopLoss } = state;
         const account  = derivState.account;
 
-        // ── Settle pending virtual trades for this symbol ─────────────────────
+        // â”€â”€ Settle pending virtual trades for this symbol â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const remaining: any[] = [];
         const resolved:  any[] = [];
 
@@ -2049,7 +2105,7 @@ export const useBotStore = create<BotStoreState>()(
           eng.lastTradeTime = now;
         }
 
-        // ── Virtual streak tracking & stop-limit checks (once per round) ────────
+        // â”€â”€ Virtual streak tracking & stop-limit checks (once per round) â”€â”€â”€â”€â”€â”€â”€â”€
         // Run AFTER all contracts in each round settle so that dual-mode pushes
         // (1 win + 1 loss in the same round) don't corrupt the streak counters.
         const settledRoundIds = new Set<string>();
@@ -2064,7 +2120,7 @@ export const useBotStore = create<BotStoreState>()(
           const roundContracts = resolved.filter((r: any) => r.roundId === roundId);
           const roundWon  = roundContracts.filter((r: any) =>  r.isWin).length;
           const roundLost = roundContracts.filter((r: any) => !r.isWin).length;
-          // Dual push (1W+1L): treat as a WIN — reset loss streak (mirrors real mode)
+          // Dual push (1W+1L): treat as a WIN â€” reset loss streak (mirrors real mode)
           const isDualRoundPush = roundContracts.length >= 2 && roundWon > 0 && roundLost > 0;
           // Dual both-loss: counts as exactly 1 loss, not 2
           const isDualBothLoss  = roundContracts.length >= 2 && roundLost === roundContracts.length;
@@ -2203,7 +2259,7 @@ export const useBotStore = create<BotStoreState>()(
                 set({ botStatusMsg: `Virtual condition met (${smartMatched ? 'Smart Pattern' : `Threshold [${vsV.vThreshold}]`})! Switching to REAL.` });
               }
             } else {
-              // ── Double Virtual Mode (2-Stage Cascade) ─────────────────────
+              // â”€â”€ Double Virtual Mode (2-Stage Cascade) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
               if (vDoubleStage === 'A') {
                 let thresholdPassedA = false;
                 if (vsV.startVirtualToReal) {
@@ -2242,7 +2298,7 @@ export const useBotStore = create<BotStoreState>()(
                   vConsecWinsB = 0; vConsecLossesB = 0; vVirtualWinsB = 0; vVirtualLossesB = 0;
                   vStageBCompletedReps = 0;
                   newVirtMode = true; // Stay in virtual for Stage B gate
-                  set({ botStatusMsg: `⚡ Double Virt: Stage A Gate Passed ${smartMatched ? '(Smart Pattern)' : `[Stage A Gate]`}! Advanced to Stage B.` });
+                  set({ botStatusMsg: `âš¡ Double Virt: Stage A Gate Passed ${smartMatched ? '(Smart Pattern)' : `[Stage A Gate]`}! Advanced to Stage B.` });
                 }
               } else if (vDoubleStage === 'B') {
                 if (isRoundWinB) {
@@ -2285,7 +2341,7 @@ export const useBotStore = create<BotStoreState>()(
 
                 if (stageBPassed) {
                   newVirtMode = false; // Trigger REAL trade for Stage B
-                  set({ botStatusMsg: `⚡ Double Virt: Stage B Gate Passed [Stage B Gate]! Switching to REAL.` });
+                  set({ botStatusMsg: `âš¡ Double Virt: Stage B Gate Passed [Stage B Gate]! Switching to REAL.` });
                 }
                 useDerivStore.getState().setVirtualSettings({ vResultHistoryB: newHistoryB });
               }
@@ -2303,7 +2359,7 @@ export const useBotStore = create<BotStoreState>()(
           });
         }
 
-        // Legacy (no roundId) streak tracking — one per unsettled contract
+        // Legacy (no roundId) streak tracking â€” one per unsettled contract
         for (const rt of resolved) {
           if (!rt.roundId) {
             const curPhase = get().adaptiveSwitch?.virtualSwitcher?._phase || 'virtual';
@@ -2335,7 +2391,7 @@ export const useBotStore = create<BotStoreState>()(
           }
         }
 
-        // ── Evaluate new triggers ─────────────────────────────────────────────
+        // â”€â”€ Evaluate new triggers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const regime = useScannerStore.getState().marketRegimes[symbol];
         if (!regime || !regime.historyReady) return;
 
@@ -2360,7 +2416,7 @@ export const useBotStore = create<BotStoreState>()(
             }
           }
 
-          // ── GLOBAL shared martingale state (across ALL strategies and ALL markets) ─
+          // â”€â”€ GLOBAL shared martingale state (across ALL strategies and ALL markets) â”€
           // Every strategy and every market share ONE stake ladder. A loss on ANY
           // strategy/market advances the global martingale for the NEXT trade,
           // regardless of which strategy fires next. A win resets it for all.
@@ -2373,7 +2429,7 @@ export const useBotStore = create<BotStoreState>()(
           }
           const ss = eng.strategyState[GLOBAL_KEY];
 
-          // ── 1-second cooldown per strategy+market ─────────────────────────
+          // â”€â”€ 1-second cooldown per strategy+market â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           // Cooldown ONLY applies when Continuous Lock is NOT active.
           // When Continuous Lock is enabled, the bot scans markets freely and,
           // once locked, executes on every single tick without cooldown delay.
@@ -2381,10 +2437,10 @@ export const useBotStore = create<BotStoreState>()(
 
           // When Continuous Lock is enabled in 'no_recheck' mode and already locked,
           // we bypass ALL entry condition guards (noContradiction, patternRetrigger,
-          // THEN/THENALL, and evalStrategy) — initial trigger is already met.
+          // THEN/THENALL, and evalStrategy) â€” initial trigger is already met.
           const isLockNoRecheck = Boolean(cLock?.enabled && eng.lockState.locked && cLock.mode === 'no_recheck');
 
-          // ── No Contradiction (Wait for Opposite) guard ─────────────────────
+          // â”€â”€ No Contradiction (Wait for Opposite) guard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           if (!isLockNoRecheck) {
             const lock = eng.waitingForOpposite[ck];
             if (s.noContradiction && lock) {
@@ -2404,14 +2460,14 @@ export const useBotStore = create<BotStoreState>()(
             }
           }
 
-          // ── ONE TRADE AT A TIME GLOBALLY (critical for martingale accuracy) ─
+          // â”€â”€ ONE TRADE AT A TIME GLOBALLY (critical for martingale accuracy) â”€
           //
           // All strategies share ONE stake ladder, so if ANY strategy/market
           // has an in-flight trade, we block ALL others. This guarantees:
           //   1. The global martingale state (currentStake / lossCount) is always
           //      fully updated before ANY next trade fires.
           //   2. No two strategies can race to update the ladder with stale stakes.
-          // ── Stale in-flight trade watchdog: auto-clear any stuck trades (> 15s) ─
+          // â”€â”€ Stale in-flight trade watchdog: auto-clear any stuck trades (> 15s) â”€
           if (eng.activeTrades.size > 0) {
             for (const [reqId, tr] of eng.activeTrades.entries()) {
               if (now - tr.startTime > 15000) {
@@ -2426,7 +2482,7 @@ export const useBotStore = create<BotStoreState>()(
           const hasAnyActiveGlobally = eng.activeTrades.size > 0;
           const hasVirt = eng.activeVirtual.length > 0;
           if (hasAnyActiveGlobally || hasVirt) {
-            // ── Mode 1 no_recheck: keep the pattern marching on EVERY real tick ──
+            // â”€â”€ Mode 1 no_recheck: keep the pattern marching on EVERY real tick â”€â”€
             // Without this, ticks consumed while a trade is settling do NOT advance
             // the pattern index, shifting subsequent S/T positions by the number of
             // blocked ticks and causing the wrong tick to be traded.
@@ -2469,9 +2525,9 @@ export const useBotStore = create<BotStoreState>()(
             }
           }
 
-          // ── THEN / THENALL sequential box gate (supports up to 4 boxes) ───
+          // â”€â”€ THEN / THENALL sequential box gate (supports up to 4 boxes) â”€â”€â”€
           // In these modes we bypass normal OR-box evaluation and instead run
-          // a sequential multi-stage state machine per strategy (Box 1 → Box 2 → Box 3 → Box 4).
+          // a sequential multi-stage state machine per strategy (Box 1 â†’ Box 2 â†’ Box 3 â†’ Box 4).
           // Intermediate boxes advancing resets the timeout for the next box.
           // Any timeout along the way reverts back to scanning Box 1.
           // Matching the final box triggers execution & Continuous Lock activation.
@@ -2491,6 +2547,7 @@ export const useBotStore = create<BotStoreState>()(
                 ticksWaited: 0,
                 tradesThisRound: 0,
                 lastTickEpoch: 0,
+                repeatStep: 0,
               };
             }
             const ts = eng.thenState[stratId];
@@ -2498,8 +2555,110 @@ export const useBotStore = create<BotStoreState>()(
               ts.currentBoxIndex = ts.phase === 'locked_box2' ? 1 : 0;
             }
 
-            if (ts.currentBoxIndex === 0) {
-              // ── Phase 1: scan all markets for Box 1 ──────────────────────
+            // â”€â”€ Mode 2 Repeat-Box Cycle (continuous_check + locked + repeatBoxIndices set) â”€â”€
+            const isRepeatCycleMode = Boolean(
+              cLock?.enabled &&
+              cLock.mode === 'continuous_check' &&
+              eng.lockState.locked &&
+              cLock.repeatBoxIndices &&
+              cLock.repeatBoxIndices.length > 0
+            );
+
+            if (isRepeatCycleMode) {
+              const rIndices = cLock!.repeatBoxIndices!; // e.g. [1, 2]
+              const rStep = ts.repeatStep ?? 0;
+              const repeatBoxIdx = rIndices[rStep];     // 0-based box index to evaluate
+              const repeatTimeout = Math.max(1, dpCondForMode.thenTimeouts?.[repeatBoxIdx] ?? dpCondForMode.thenTimeout ?? 20);
+
+              if (boxMode === 'THEN') {
+                // Only operate on the locked market
+                if (symbol !== eng.lockState.symbol) continue;
+                ts.ticksWaited++;
+
+                if (ts.ticksWaited >= repeatTimeout) {
+                  // Timeout â€” reset repeat cycle from the beginning
+                  ts.repeatStep = 0;
+                  ts.ticksWaited = 0;
+                  const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
+                  set({ botStatusMsg: `âŒ› Repeat Cycle timeout waiting for Box ${repeatBoxIdx + 1} on ${mLabel} â€” restarting repeat cycle` });
+                  continue;
+                }
+
+                // Evaluate the target repeat box on the locked market
+                const otherCondsPass = s.conditions
+                  .filter(c => c.type !== 'DIGIT_PATTERN')
+                  .every(c => evaluateCondition(c, digits, quotes, symbol, s.tradeType));
+                const boxPass = otherCondsPass && evaluateOneBox(dpCondForMode, repeatBoxIdx, digits, quotes, symbol);
+
+                if (!boxPass) {
+                  const rem = Math.max(0, repeatTimeout - ts.ticksWaited);
+                  const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
+                  set({ botStatusMsg: `ðŸ”„ Repeat [${rStep + 1}/${rIndices.length}] waiting for Box ${repeatBoxIdx + 1} on ${mLabel} (${rem} ticks left)` });
+                  continue;
+                }
+
+                // Box matched!
+                if (rStep >= rIndices.length - 1) {
+                  // All repeat boxes passed â€” fire trade, reset to start of repeat cycle
+                  ts.repeatStep = 0;
+                  ts.ticksWaited = 0;
+                  // Fall through to trade execution below
+                } else {
+                  // Advance to next repeat box
+                  ts.repeatStep = rStep + 1;
+                  ts.ticksWaited = 0;
+                  const nextBoxIdx = rIndices[rStep + 1];
+                  const nextTimeout = Math.max(1, dpCondForMode.thenTimeouts?.[nextBoxIdx] ?? dpCondForMode.thenTimeout ?? 20);
+                  const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
+                  set({ botStatusMsg: `ðŸ”„ Repeat [${rStep + 2}/${rIndices.length}] Box ${repeatBoxIdx + 1} matched â†’ waiting for Box ${nextBoxIdx + 1} on ${mLabel} (${nextTimeout} ticks)` });
+                  continue;
+                }
+
+              } else {
+                // THENALL: watch ALL markets for each repeat box in sequence
+                const thisEpoch = regime?.lastEpoch ?? now;
+                if (symbol === eng.lockState.symbol || thisEpoch !== ts.lastTickEpoch) {
+                  ts.ticksWaited++;
+                  ts.lastTickEpoch = thisEpoch;
+                }
+
+                if (ts.ticksWaited >= repeatTimeout) {
+                  ts.repeatStep = 0;
+                  ts.ticksWaited = 0;
+                  set({ botStatusMsg: `âŒ› Repeat Cycle timeout waiting for Box ${repeatBoxIdx + 1} â€” restarting repeat cycle` });
+                  continue;
+                }
+
+                const otherCondsPass = s.conditions
+                  .filter(c => c.type !== 'DIGIT_PATTERN')
+                  .every(c => evaluateCondition(c, digits, quotes, symbol, s.tradeType));
+                const boxPass = otherCondsPass && evaluateOneBox(dpCondForMode, repeatBoxIdx, digits, quotes, symbol);
+
+                if (!boxPass) {
+                  const rem = Math.max(0, repeatTimeout - ts.ticksWaited);
+                  set({ botStatusMsg: `ðŸ”„ Repeat [${rStep + 1}/${rIndices.length}] waiting for Box ${repeatBoxIdx + 1} across markets (${rem} ticks left)` });
+                  continue;
+                }
+
+                if (rStep >= rIndices.length - 1) {
+                  // All repeat boxes passed â€” fire trade, reset repeat cycle
+                  ts.repeatStep = 0;
+                  ts.ticksWaited = 0;
+                  // Fall through to trade execution
+                } else {
+                  ts.repeatStep = rStep + 1;
+                  ts.ticksWaited = 0;
+                  const nextBoxIdx = rIndices[rStep + 1];
+                  const nextTimeout = Math.max(1, dpCondForMode.thenTimeouts?.[nextBoxIdx] ?? dpCondForMode.thenTimeout ?? 20);
+                  set({ botStatusMsg: `ðŸ”„ Repeat [${rStep + 2}/${rIndices.length}] Box ${repeatBoxIdx + 1} matched on ${symbol} â†’ waiting for Box ${nextBoxIdx + 1} across markets (${nextTimeout} ticks)` });
+                  continue;
+                }
+              }
+
+              // If we reach here, all repeat boxes passed â†’ fall through to trade execution
+
+            } else if (ts.currentBoxIndex === 0) {
+              // â”€â”€ Phase 1: scan all markets for Box 1 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
               // Only evaluate other (non-DIGIT_PATTERN) conditions AND Box 1
               const otherCondsPass = s.conditions
                 .filter(c => c.type !== 'DIGIT_PATTERN')
@@ -2509,7 +2668,7 @@ export const useBotStore = create<BotStoreState>()(
 
               if (box1Pass) {
                 if (numBoxes > 1) {
-                  // Box 1 matched — lock and switch to waiting for Box 2
+                  // Box 1 matched â€” lock and switch to waiting for Box 2
                   ts.currentBoxIndex = 1;
                   ts.phase = 'locked_box2';
                   ts.lockedSymbol = symbol;
@@ -2518,7 +2677,7 @@ export const useBotStore = create<BotStoreState>()(
                   ts.lastTickEpoch = 0;
                   const box2Timeout = Math.max(1, dpCondForMode.thenTimeouts?.[1] ?? dpCondForMode.thenTimeout ?? 20);
                   const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
-                  set({ botStatusMsg: `⏳ ${boxMode}: Box 1 matched on ${mLabel} — waiting for Box 2 (${box2Timeout} ticks timeout)` });
+                  set({ botStatusMsg: `â³ ${boxMode}: Box 1 matched on ${mLabel} â€” waiting for Box 2 (${box2Timeout} ticks timeout)` });
                   continue; // Wait for Box 2, do not fire trade yet
                 } else {
                   // Only 1 box configured, treat as triggered
@@ -2529,13 +2688,13 @@ export const useBotStore = create<BotStoreState>()(
               }
 
             } else {
-              // ── Phase 2: waiting for Box (targetBox + 1), where targetBox = ts.currentBoxIndex (1, 2, or 3) ──
+              // â”€â”€ Phase 2: waiting for Box (targetBox + 1), where targetBox = ts.currentBoxIndex (1, 2, or 3) â”€â”€
               const targetBox = ts.currentBoxIndex;
               const thisTimeout = Math.max(1, dpCondForMode.thenTimeouts?.[targetBox] ?? dpCondForMode.thenTimeout ?? 20);
 
               if (boxMode === 'THEN') {
-                // ── THEN: only operate on the locked market ─────────────────
-                // Skip all other markets entirely — no tick counting, no evaluation
+                // â”€â”€ THEN: only operate on the locked market â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // Skip all other markets entirely â€” no tick counting, no evaluation
                 if (symbol !== ts.lockedSymbol) continue;
 
                 // Count one real tick on every incoming tick of the locked market
@@ -2549,7 +2708,7 @@ export const useBotStore = create<BotStoreState>()(
                   ts.lockedSymbol = null;
                   ts.ticksWaited = 0;
                   ts.tradesThisRound = 0;
-                  set({ botStatusMsg: `⌛ THEN timeout after ${thisTimeout} ticks waiting for Box ${targetBox + 1} on ${mLabel} — rescanning Box 1 across all markets` });
+                  set({ botStatusMsg: `âŒ› THEN timeout after ${thisTimeout} ticks waiting for Box ${targetBox + 1} on ${mLabel} â€” rescanning Box 1 across all markets` });
                   continue;
                 }
 
@@ -2561,13 +2720,13 @@ export const useBotStore = create<BotStoreState>()(
                 if (!boxPass) {
                   const rem = Math.max(0, thisTimeout - ts.ticksWaited);
                   const mLabel = ALL_MARKETS.find(m => m.value === ts.lockedSymbol)?.label || ts.lockedSymbol;
-                  set({ botStatusMsg: `⏳ THEN: waiting for Box ${targetBox + 1} on ${mLabel} (${rem} ticks left)` });
+                  set({ botStatusMsg: `â³ THEN: waiting for Box ${targetBox + 1} on ${mLabel} (${rem} ticks left)` });
                   continue;
                 }
 
                 // Box matched! Is it the final box in the sequence?
                 if (targetBox >= numBoxes - 1) {
-                  // ✅ FINAL box matched! Complete sequence achieved (Box 1 → ... → Final Box)!
+                  // âœ… FINAL box matched! Complete sequence achieved (Box 1 â†’ ... â†’ Final Box)!
                   ts.currentBoxIndex = 0;
                   ts.phase = 'scanning_box1';
                   ts.lockedSymbol = null;
@@ -2581,12 +2740,12 @@ export const useBotStore = create<BotStoreState>()(
                   ts.ticksWaited = 0;
                   const nextTimeout = Math.max(1, dpCondForMode.thenTimeouts?.[nextBox] ?? dpCondForMode.thenTimeout ?? 20);
                   const mLabel = ALL_MARKETS.find(m => m.value === ts.lockedSymbol)?.label || ts.lockedSymbol;
-                  set({ botStatusMsg: `⏳ THEN: Box ${targetBox + 1} matched on ${mLabel} — waiting for Box ${nextBox + 1} (${nextTimeout} ticks timeout)` });
+                  set({ botStatusMsg: `â³ THEN: Box ${targetBox + 1} matched on ${mLabel} â€” waiting for Box ${nextBox + 1} (${nextTimeout} ticks timeout)` });
                   continue; // Don't fire trade yet, wait for next box!
                 }
 
               } else {
-                // ── THENALL: watch ALL markets for Box (targetBox + 1) ────────
+                // â”€â”€ THENALL: watch ALL markets for Box (targetBox + 1) â”€â”€â”€â”€â”€â”€â”€â”€
                 const thisEpoch = regime?.lastEpoch ?? now;
                 if (symbol === ts.lockedSymbol || thisEpoch !== ts.lastTickEpoch) {
                   ts.ticksWaited++;
@@ -2600,7 +2759,7 @@ export const useBotStore = create<BotStoreState>()(
                   ts.lockedSymbol = null;
                   ts.ticksWaited = 0;
                   ts.tradesThisRound = 0;
-                  set({ botStatusMsg: `⌛ THENALL timeout after ${thisTimeout} ticks waiting for Box ${targetBox + 1} — rescanning Box 1 across all markets` });
+                  set({ botStatusMsg: `âŒ› THENALL timeout after ${thisTimeout} ticks waiting for Box ${targetBox + 1} â€” rescanning Box 1 across all markets` });
                   continue;
                 }
 
@@ -2611,13 +2770,13 @@ export const useBotStore = create<BotStoreState>()(
                 const boxPass = otherCondsPass && evaluateOneBox(dpCondForMode, targetBox, digits, quotes, symbol);
                 if (!boxPass) {
                   const rem = Math.max(0, thisTimeout - ts.ticksWaited);
-                  set({ botStatusMsg: `⏳ THENALL: waiting for Box ${targetBox + 1} across markets (${rem} ticks left)` });
+                  set({ botStatusMsg: `â³ THENALL: waiting for Box ${targetBox + 1} across markets (${rem} ticks left)` });
                   continue;
                 }
 
                 // Box matched! Is it the final box in the sequence?
                 if (targetBox >= numBoxes - 1) {
-                  // ✅ FINAL Box matched on this market! Fire trade
+                  // âœ… FINAL Box matched on this market! Fire trade
                   ts.tradesThisRound++;
                   if (cLock?.enabled || ts.tradesThisRound >= maxTrades) {
                     ts.currentBoxIndex = 0;
@@ -2633,16 +2792,16 @@ export const useBotStore = create<BotStoreState>()(
                   ts.currentBoxIndex = nextBox;
                   ts.ticksWaited = 0;
                   const nextTimeout = Math.max(1, dpCondForMode.thenTimeouts?.[nextBox] ?? dpCondForMode.thenTimeout ?? 20);
-                  set({ botStatusMsg: `⏳ THENALL: Box ${targetBox + 1} matched on ${symbol} — waiting for Box ${nextBox + 1} across markets (${nextTimeout} ticks timeout)` });
+                  set({ botStatusMsg: `â³ THENALL: Box ${targetBox + 1} matched on ${symbol} â€” waiting for Box ${nextBox + 1} across markets (${nextTimeout} ticks timeout)` });
                   continue; // Don't fire trade yet, wait for next box!
                 }
               }
             }
 
           } else if (!isLockNoRecheck) {
-            // ── Normal OR mode ─────────────────────────────────────────────
+            // â”€â”€ Normal OR mode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             // When Continuous Lock is enabled in 'no_recheck' mode and already locked,
-            // we bypass condition evaluation — initial trigger is already met.
+            // we bypass condition evaluation â€” initial trigger is already met.
             if (!evalStrategy(s, digits, quotes, symbol)) {
               // Reset no_contra edge when pattern clears
               if (dpCond && dpCond.patternRetrigger === 'no_contra') {
@@ -2653,7 +2812,7 @@ export const useBotStore = create<BotStoreState>()(
             }
           }
 
-          // ── EARLY LOCK ACTIVATION ──────────────────────────────────────────
+          // â”€â”€ EARLY LOCK ACTIVATION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           // When the trigger condition fires, lock onto this market & strategy,
           // and immediately execute Step 1 (pos 0) of the trade pattern on this tick.
           if (cLock?.enabled && !eng.lockState.locked) {
@@ -2664,10 +2823,15 @@ export const useBotStore = create<BotStoreState>()(
             eng.lockState.initialTriggered = true;
             eng.lockState.patternIndex = 0;
             const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
-            set({ botStatusMsg: `🔒 TRIGGER HIT on ${mLabel}! Locked to Strategy ${si + 1} (${cLock.mode === 'no_recheck' ? 'No Re-check' : 'Check Each Entry'})` });
+            set({ botStatusMsg: `ðŸ”’ TRIGGER HIT on ${mLabel}! Locked to Strategy ${si + 1} (${cLock.mode === 'no_recheck' ? 'No Re-check' : 'Check Each Entry'})` });
+            // Reset repeat cycle for Mode 2
+            if (eng.thenState[stratId]) {
+              eng.thenState[stratId].repeatStep = 0;
+              eng.thenState[stratId].ticksWaited = 0;
+            }
           }
 
-          // ── TRADE PATTERN EXECUTION ────────────────────────────────────────
+          // â”€â”€ TRADE PATTERN EXECUTION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           if (cLock?.enabled) {
             // When Continuous Lock is ON, Continuous Lock's trade pattern is the ONLY pattern.
             // Strategy-level trade pattern is strictly ignored.
@@ -2677,7 +2841,7 @@ export const useBotStore = create<BotStoreState>()(
             eng.lockState.patternIndex = (pos + 1) % pat.length;
             if (!shouldTrade) {
               const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
-              set({ botStatusMsg: `⏭ Locked Pattern SKIP: Strategy ${si + 1} on ${mLabel} (step ${pos + 1}/${pat.length})` });
+              set({ botStatusMsg: `â­ Locked Pattern SKIP: Strategy ${si + 1} on ${mLabel} (step ${pos + 1}/${pat.length})` });
               continue;
             }
           } else if (s.useTradePattern && s.tradePattern && s.tradePattern.length > 0) {
@@ -2689,7 +2853,7 @@ export const useBotStore = create<BotStoreState>()(
             if (!shouldTrade) {
               eng.cooldown[ck] = now;
               const mLabel = ALL_MARKETS.find(m => m.value === symbol)?.label || symbol;
-              set({ botStatusMsg: `⏭ Pattern SKIP: Strategy ${si + 1} on ${mLabel} (pos ${pos + 1})` });
+              set({ botStatusMsg: `â­ Pattern SKIP: Strategy ${si + 1} on ${mLabel} (pos ${pos + 1})` });
               continue;
             }
           }
@@ -2721,7 +2885,7 @@ export const useBotStore = create<BotStoreState>()(
             const isLockMode1 = Boolean(cLock?.enabled && cLock?.mode === 'no_recheck');
 
             if (isVirtual && vs._phase !== 'gate_b') {
-              // ── Gate A virtual phase: trade the test contract ──
+              // â”€â”€ Gate A virtual phase: trade the test contract â”€â”€
               const vc = vs.virtualContract || { contractType: 'DIGITEVEN', ticks: 1 };
               const targetContract = normalizeContractType(vc.contractType || (vc as any).type || 'DIGITEVEN');
               const targetTicks = isLockMode1 ? 1 : Math.max(1, vc.ticks || s.ticks || 1);
@@ -2734,10 +2898,10 @@ export const useBotStore = create<BotStoreState>()(
               const lbl = TRADE_OPTIONS.find(o => o.value === targetContract)?.label || targetContract;
               const barText = vc.barrier !== undefined && needsBarrier(targetContract) ? ` ${vc.barrier}` : '';
               const mMode = vs.onVirtualWins?.mode === 'consec' ? 'Streak' : 'Total';
-              set({ adaptiveLiveStatus: `🧪 V-SWITCHER [Virtual]: Testing ${lbl}${barText} (${mMode}: ${vs._consecWins || 0}W / ${vs._consecLosses || 0}L)` });
+              set({ adaptiveLiveStatus: `ðŸ§ª V-SWITCHER [Virtual]: Testing ${lbl}${barText} (${mMode}: ${vs._consecWins || 0}W / ${vs._consecLosses || 0}L)` });
 
             } else if (isVirtual && vs._phase === 'gate_b') {
-              // ── Gate B virtual phase: trade the locked contract (set by Gate A) ──
+              // â”€â”€ Gate B virtual phase: trade the locked contract (set by Gate A) â”€â”€
               const defaultRule = vs._activeRule === 'losses' ? vs.onVirtualLosses : vs.onVirtualWins;
               const ac = vs._activeContract || { contractType: defaultRule?.contractType || (vs._activeRule === 'losses' ? 'DIGITOVER' : 'DIGITUNDER'), barrier: defaultRule?.barrier, ticks: defaultRule?.ticks || 1 };
               const targetContract = normalizeContractType(ac.contractType || (ac as any).type || 'DIGITUNDER');
@@ -2757,10 +2921,10 @@ export const useBotStore = create<BotStoreState>()(
               const gbCount = gbTrigger === 'wins' ? (gbMode === 'consec' ? vs._gateBConsecWins || 0 : vs._gateBTotalWins || 0)
                 : gbTrigger === 'losses' ? (gbMode === 'consec' ? vs._gateBConsecLosses || 0 : vs._gateBTotalLosses || 0)
                 : (vs._gateBTotalTrades || 0);
-              set({ adaptiveLiveStatus: `🔷 V-SWITCHER [Gate B]: ${lbl}${barText} virtual (${gbCount}/${gbThresh} ${gbTrigger} to REAL)` });
+              set({ adaptiveLiveStatus: `ðŸ”· V-SWITCHER [Gate B]: ${lbl}${barText} virtual (${gbCount}/${gbThresh} ${gbTrigger} to REAL)` });
 
             } else {
-              // ── Real phase: trade the locked contract for real ──
+              // â”€â”€ Real phase: trade the locked contract for real â”€â”€
               const defaultRule = vs._activeRule === 'losses' ? vs.onVirtualLosses : vs.onVirtualWins;
               const ac = vs._activeContract || { contractType: defaultRule?.contractType || (vs._activeRule === 'losses' ? 'DIGITOVER' : 'DIGITUNDER'), barrier: defaultRule?.barrier, ticks: defaultRule?.ticks || 1 };
               const targetContract = normalizeContractType(ac.contractType || (ac as any).type || 'DIGITUNDER');
@@ -2782,11 +2946,42 @@ export const useBotStore = create<BotStoreState>()(
               const rCount = rRule.triggerType === 'wins' ? (rRule.mode === 'consec' ? vs._rConsecWins || 0 : vs._rTotalWins || 0)
                 : rRule.triggerType === 'losses' ? (rRule.mode === 'consec' ? vs._rConsecLosses || 0 : vs._rTotalLosses || 0)
                 : (vs._rTotalTrades || 0);
-              set({ adaptiveLiveStatus: `⚡ V-SWITCHER [REAL]: Trading ${lbl}${barText} (${rCount}/${rRule.threshold} ${rRule.triggerType} to Virtual)` });
+              set({ adaptiveLiveStatus: `âš¡ V-SWITCHER [REAL]: Trading ${lbl}${barText} (${rCount}/${rRule.threshold} ${rRule.triggerType} to Virtual)` });
             }
           } else if (aSwitch.enabled) {
+            const isManualMode = aSwitch.mode === 'manual';
             const isAdaptiveMode = aSwitch.mode === 'adaptive';
-            if (isAdaptiveMode) {
+
+            if (isManualMode) {
+              const mc = aSwitch.manualContracts || {
+                contractA: { type: 'DIGITEVEN', barrier: 4, ticks: 1 },
+                contractB: { type: 'DIGITODD', barrier: 4, ticks: 1 },
+                activeSide: 'A',
+                startSide: 'A',
+              };
+              const activeSide = mc.activeSide || mc.startSide || 'A';
+              const list = getManualContractList(mc);
+              const activeContract = list.find(c => c.id === activeSide) || (activeSide === 'B' ? mc.contractB : mc.contractA) || { type: 'DIGITEVEN', barrier: 4, ticks: 1 };
+              const altContract = list.find(c => c.id !== activeSide) || (activeSide === 'B' ? mc.contractA : mc.contractB) || { type: 'DIGITODD', barrier: 4, ticks: 1 };
+
+              if (aSwitch.dualMode) {
+                tradesToPlace = [
+                  { contractType: activeContract.type || 'DIGITEVEN', barrier: needsBarrier(activeContract.type || 'DIGITEVEN') ? (activeContract.barrier ?? s.prediction ?? 4) : undefined, count: 1, ticks: activeContract.ticks || s.ticks },
+                  { contractType: altContract.type || 'DIGITODD', barrier: needsBarrier(altContract.type || 'DIGITODD') ? (altContract.barrier ?? s.prediction ?? 4) : undefined, count: 1, ticks: altContract.ticks || s.ticks },
+                ];
+              } else {
+                tradesToPlace = [{
+                  contractType: activeContract.type || 'DIGITEVEN',
+                  barrier: needsBarrier(activeContract.type || 'DIGITEVEN') ? (activeContract.barrier ?? s.prediction ?? 4) : undefined,
+                  count: 1,
+                  ticks: activeContract.ticks || s.ticks,
+                }];
+              }
+
+              const lblA = TRADE_OPTIONS.find(o => o.value === (activeContract.type || 'DIGITEVEN'))?.label || activeContract.type;
+              const barText = activeContract.barrier !== undefined && needsBarrier(activeContract.type) ? ` ${activeContract.barrier}` : '';
+              set({ adaptiveLiveStatus: `🎛️ MANUAL: ${lblA}${barText} (Side ${activeSide})` });
+            } else if (isAdaptiveMode) {
               const ac = aSwitch.adaptiveContracts || {
                 contractA: { type: 'DIGITEVEN', barrier: 4, ticks: 5 },
                 contractB: { type: 'DIGITODD', barrier: 4, ticks: 5 },
@@ -2812,7 +3007,7 @@ export const useBotStore = create<BotStoreState>()(
               }
 
               const lblA = TRADE_OPTIONS.find(o => o.value === (activeContract.type || 'DIGITEVEN'))?.label || activeContract.type;
-              set({ adaptiveLiveStatus: `⚡ ADAPTIVE: ${lblA} (Side ${activeSide}) [Auto-Switch on Loss]` });
+              set({ adaptiveLiveStatus: `âš¡ ADAPTIVE: ${lblA} (Side ${activeSide}) [Auto-Switch on Loss]` });
             } else if (aSwitch.steps.length > 0) {
               const pos = eng.adaptivePos;
               if (pos.stepIndex >= aSwitch.steps.length) {
@@ -2865,7 +3060,7 @@ export const useBotStore = create<BotStoreState>()(
             }
           }
 
-          // ── Dual-mode override: exactly 2 trades, count = 1 each ─────────────
+          // â”€â”€ Dual-mode override: exactly 2 trades, count = 1 each â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           const isDualMode = aSwitch.enabled && aSwitch.dualMode && !aSwitch.virtualSwitcher?.enabled;
           if (isDualMode) {
             const slotA = tradesToPlace[0] ?? { contractType: 'DIGITEVEN', count: 1, ticks: s.ticks };
@@ -2895,7 +3090,7 @@ export const useBotStore = create<BotStoreState>()(
             }
           }
 
-          // ── Cross-market delay guard (only applies when NOT locked in Continuous Lock) ──
+          // â”€â”€ Cross-market delay guard (only applies when NOT locked in Continuous Lock) â”€â”€
           if (!cLock?.enabled) {
             const delayMs = parseFloat(state.crossMarketDelay || '1.5') * 1000;
             if (now - eng.lastTradeTime < delayMs) {
@@ -2952,7 +3147,7 @@ export const useBotStore = create<BotStoreState>()(
               return t.count > 1 ? `${l} (x${t.count})` : l;
             }).join(' + ');
             set({
-              lastSignal:   `[VIRTUAL] Strategy ${si + 1} on ${mLabel} → ${labels}`,
+              lastSignal:   `[VIRTUAL] Strategy ${si + 1} on ${mLabel} â†’ ${labels}`,
               botStatusMsg: `[VIRTUAL] ${labels} on ${mLabel}`,
             });
 
@@ -2964,7 +3159,7 @@ export const useBotStore = create<BotStoreState>()(
             if (balance !== undefined && balance !== null && !isNaN(balance) && (totalRequiredStake > balance || tradeStake > balance)) {
               delete eng.roundState[roundId];
               get().stopBot(
-                `⛔ Insufficient Balance: Required stake USD ${tradeStake.toFixed(2)} exceeds account balance USD ${balance.toFixed(2)}. Bot stopped to protect remaining funds.`
+                `â›” Insufficient Balance: Required stake USD ${tradeStake.toFixed(2)} exceeds account balance USD ${balance.toFixed(2)}. Bot stopped to protect remaining funds.`
               );
               return;
             }
@@ -3015,8 +3210,8 @@ export const useBotStore = create<BotStoreState>()(
                 return t.count > 1 ? `${l} (x${t.count})` : l;
               }).join(' + ');
               set({
-                lastSignal:   `Strategy ${si + 1} on ${mLabel} → ${labels}`,
-                botStatusMsg: `✓ Sent: ${labels} on ${mLabel} — waiting for result`,
+                lastSignal:   `Strategy ${si + 1} on ${mLabel} â†’ ${labels}`,
+                botStatusMsg: `âœ“ Sent: ${labels} on ${mLabel} â€” waiting for result`,
               });
             } else {
               delete eng.roundState[roundId];
@@ -3025,7 +3220,7 @@ export const useBotStore = create<BotStoreState>()(
           }
         }
       },
-      // ── Trade event handler (called from tradeWS listener below) ─────────────
+      // â”€â”€ Trade event handler (called from tradeWS listener below) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
       _handleTradeEvent: (type: string, data: any) => {
         if (type === 'TRADE_STARTED') {
@@ -3050,7 +3245,7 @@ export const useBotStore = create<BotStoreState>()(
 
           if (isBalanceError) {
             if (errTrade?.roundId) delete eng.roundState[errTrade.roundId];
-            get().stopBot(`⛔ Insufficient Balance: Deriv rejected trade (${errMsg}). Bot stopped to protect remaining funds.`);
+            get().stopBot(`â›” Insufficient Balance: Deriv rejected trade (${errMsg}). Bot stopped to protect remaining funds.`);
             return;
           }
 
@@ -3075,7 +3270,7 @@ export const useBotStore = create<BotStoreState>()(
           }
           // Force tradeWS to reconnect immediately (resets backoff to 0ms) so re-auth happens ASAP
           if (typeof window !== 'undefined') tradeWS.forceReconnect();
-          // Don't block with an error status — just stay ready
+          // Don't block with an error status â€” just stay ready
           set({ botStatusMsg: 'Running. Waiting for conditions...' });
           return;
         }
@@ -3086,7 +3281,7 @@ export const useBotStore = create<BotStoreState>()(
         if (!trade) return;
 
         const { stratId, symbol, stake: tradeStake, roundId } = trade;
-        // Global martingale state — one ladder shared by ALL strategies and markets
+        // Global martingale state â€” one ladder shared by ALL strategies and markets
         const ss = eng.strategyState['__global__'];
         const state      = get();
         const derivState = useDerivStore.getState();
@@ -3098,7 +3293,7 @@ export const useBotStore = create<BotStoreState>()(
         const isWin = rawProfit > 0;
         const resultProfit = isWin ? rawProfit : -tradeStake;
 
-        // ── Extract exit digit from POC ─────────────────────────────────────
+        // â”€â”€ Extract exit digit from POC â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // trade-ws already calls store.updateTradeLog on the Deriv store (with `exit` field).
         // Here we write to the BOT store log using `exitSpot`.
         const pocData = poc || {};
@@ -3143,7 +3338,7 @@ export const useBotStore = create<BotStoreState>()(
         };
         set({ globalStats: newStats });
 
-        // ── Continuous Lock TP / SL check ─────────────────────────────────────
+        // â”€â”€ Continuous Lock TP / SL check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // If the bot is locked to a market+strategy, track wins/losses/profit for
         // this lock session. When the configured lockTP or lockSL is hit we UNLOCK
         // (not stop!) so the bot rescans all markets for the next trigger.
@@ -3184,7 +3379,7 @@ export const useBotStore = create<BotStoreState>()(
           }
 
           if (shouldUnlock) {
-            // Release the lock — bot resumes scanning all markets for a new trigger
+            // Release the lock â€” bot resumes scanning all markets for a new trigger
             eng.lockState.locked = false;
             eng.lockState.stratId = null;
             eng.lockState.stratIndex = -1;
@@ -3196,7 +3391,7 @@ export const useBotStore = create<BotStoreState>()(
             eng.lockState.lockProfit = 0;
             eng.thenState = {};
             eng.waitingForOpposite = {};
-            set({ botStatusMsg: `🔓 UNLOCKED from ${lockedMktLabel} — ${unlockReason}. Rescanning all markets...` });
+            set({ botStatusMsg: `ðŸ”“ UNLOCKED from ${lockedMktLabel} â€” ${unlockReason}. Rescanning all markets...` });
           }
         }
 
@@ -3218,7 +3413,7 @@ export const useBotStore = create<BotStoreState>()(
           }
         } else if (!roundId) {
           // Fallback legacy resolution logic (runs if no roundId is present)
-          // ── Adaptive Switch position advancement ───────────────────────────
+          // â”€â”€ Adaptive Switch position advancement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           const aSwState = get().adaptiveSwitch;
           if (aSwState.enabled && aSwState.steps.length > 0) {
             const pos = eng.adaptivePos;
@@ -3262,7 +3457,7 @@ export const useBotStore = create<BotStoreState>()(
                 if (balance !== undefined && balance !== null && !isNaN(balance) && nextStake > balance) {
                   ss.currentStake = nextStake; // Preserve accurate stake, DO NOT reset to base!
                   get().stopBot(
-                    `⛔ Max Martingale / Insufficient Balance: Next stake USD ${nextStake.toFixed(2)} exceeds account balance USD ${balance.toFixed(2)}. Bot stopped to protect remaining funds.`
+                    `â›” Max Martingale / Insufficient Balance: Next stake USD ${nextStake.toFixed(2)} exceeds account balance USD ${balance.toFixed(2)}. Bot stopped to protect remaining funds.`
                   );
                   return;
                 }
@@ -3275,7 +3470,7 @@ export const useBotStore = create<BotStoreState>()(
           }
         }
 
-        // Real streak tracking → auto-switch to virtual
+        // Real streak tracking â†’ auto-switch to virtual
         // Only runs when a round fully settles (roundFinalWon >= 0) or for
         // legacy single-trade cases (no roundId). Dual pushes (1W+1L) skip
         // streak updates so they don't corrupt rConsecWins/rConsecLosses.
@@ -3314,7 +3509,7 @@ export const useBotStore = create<BotStoreState>()(
           });
         }
 
-        // Stop if limits hit — only check once the full round has settled,
+        // Stop if limits hit â€” only check once the full round has settled,
         // or for legacy single-contract trades (no roundId).
         // Running this per-contract causes premature stops in dual mode when
         // one winning leg tips the profit target before the second contract resolves.
@@ -3326,26 +3521,26 @@ export const useBotStore = create<BotStoreState>()(
 
           if (tpMode === 'wins') {
             if (liveStats.won >= parseInt(state.targetProfit)) {
-              get().stopBot(`🏆 Target wins reached (${liveStats.won}/${state.targetProfit} wins)!`);
+              get().stopBot(`ðŸ† Target wins reached (${liveStats.won}/${state.targetProfit} wins)!`);
             }
           } else {
             if (liveStats.totalProfit >= parseFloat(state.targetProfit)) {
-              get().stopBot(`🏆 Target profit reached (+$${liveStats.totalProfit.toFixed(2)} / Goal: $${state.targetProfit})!`);
+              get().stopBot(`ðŸ† Target profit reached (+$${liveStats.totalProfit.toFixed(2)} / Goal: $${state.targetProfit})!`);
             }
           }
 
           if (slMode === 'losses') {
             if (liveStats.lost >= parseInt(state.stopLoss)) {
-              get().stopBot(`🛑 Stop losses reached (${liveStats.lost}/${state.stopLoss} losses)!`);
+              get().stopBot(`ðŸ›‘ Stop losses reached (${liveStats.lost}/${state.stopLoss} losses)!`);
             }
           } else {
             if (liveStats.totalProfit <= -parseFloat(state.stopLoss)) {
-              get().stopBot(`🛑 Stop loss reached (-$${Math.abs(liveStats.totalProfit).toFixed(2)} / Limit: -$${state.stopLoss})!`);
+              get().stopBot(`ðŸ›‘ Stop loss reached (-$${Math.abs(liveStats.totalProfit).toFixed(2)} / Limit: -$${state.stopLoss})!`);
             }
           }
 
           if (state.tradingMode === 'once') {
-            get().stopBot('⚡ Single trade completed (Trade once per signal mode).');
+            get().stopBot('âš¡ Single trade completed (Trade once per signal mode).');
           }
         }
 
@@ -3364,7 +3559,7 @@ export const useBotStore = create<BotStoreState>()(
         }
         return localStorage;
       }),
-      // Only persist settings — NOT runtime state (isRunning, logs, stats)
+      // Only persist settings â€” NOT runtime state (isRunning, logs, stats)
       partialize: (state) => ({
         stake:           state.stake,
         targetProfit:    state.targetProfit,
