@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import './scanner.css';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -23,15 +23,15 @@ import {
 } from '@/store/useBotStore';
 
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 // CONSTANTS & TYPES
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 
 // Re-export from store for local use
 const ALL_MARKETS  = BOT_ALL_MARKETS;
 const TRADE_OPTIONS = BOT_TRADE_OPTIONS;
 
-/** Map contract type string â†’ Deriv API contract_type */
+/** Map contract type string → Deriv API contract_type */
 function toDerivContract(tradeType: string): string {
   return tradeType;
 }
@@ -54,7 +54,7 @@ const CONDITION_TYPES = [
 const PATTERN_TOKENS = [
   { value: 'E',  label: 'E',  title: 'Even' },
   { value: 'O',  label: 'O',  title: 'Odd' },
-  { value: 'D',  label: 'D',  title: 'Differs (digit â‰  prev digit)' },
+  { value: 'D',  label: 'D',  title: 'Differs (digit ≠ prev digit)' },
   { value: 'M',  label: 'M',  title: 'Matches (digit = prev digit)' },
   { value: 'V',  label: 'V',  title: 'Over 4' },
   { value: 'U',  label: 'U',  title: 'Under 5' },
@@ -104,7 +104,7 @@ const TRADING_MODES = [
 
 /** Human-readable summary of a condition */
 function conditionText(c: Condition): string {
-  const winSuffix = c.eligibleWindow?.enabled ? ` [â± ${c.eligibleWindow.seconds ?? 90}s]` : '';
+  const winSuffix = c.eligibleWindow?.enabled ? ` [⏱ ${c.eligibleWindow.seconds ?? 90}s]` : '';
   switch (c.type) {
     case 'EVEN_PCT':      return `EVEN % ${c.comparator} ${c.value}% in last ${c.period} ticks${winSuffix}`;
     case 'ODD_PCT':       return `ODD % ${c.comparator} ${c.value}% in last ${c.period} ticks${winSuffix}`;
@@ -125,7 +125,7 @@ function conditionText(c: Condition): string {
       const minPctStr = (c.allAboveMinPct ?? true) ? ` & each ${compSym} ${c.value}%` : '';
       return `${rank} ${topN} DIGITS ARE ${cat}${barrierStr}${minPctStr} in last ${c.period} ticks`;
     }
-    case 'DIGIT_PATTERN': return `PATTERN [${(c.pattern || []).join('â†’')}]`;
+    case 'DIGIT_PATTERN': return `PATTERN [${(c.pattern || []).join('→')}]`;
     case 'DIGIT_APPEARS': {
       const targetDigits = c.targetDigits && c.targetDigits.length > 0 ? c.targetDigits : [c.digitBarrier ?? 5];
       return `DIGIT ${targetDigits.join(' AND ')} APPEARS ${c.comparator} ${c.value} times in last ${c.period} ticks`;
@@ -136,7 +136,7 @@ function conditionText(c: Condition): string {
       if (c.rsiMaMode ?? true) parts.push(`MA(${c.rsiMaType || 'SMA'} ${c.rsiMaLength || 14})`);
       if (c.rsiBbMode ?? true) parts.push(`BB(${c.rsiBbType || 'SMA'} ${c.rsiBbLength || 14})`);
       if (c.rsiDivergenceMode ?? true) parts.push('Div');
-      return `RSI(${c.rsiLength || 14}) [${act}] Â· ${parts.join('+')} Â· ${c.rsiTicksPerCandle || 5}t/bar`;
+      return `RSI(${c.rsiLength || 14}) [${act}] · ${parts.join('+')} · ${c.rsiTicksPerCandle || 5}t/bar`;
     }
     default:              return '';
   }
@@ -147,14 +147,14 @@ function strategySummary(s: Strategy, idx: number): string {
   const cond = s.conditions.map((c, i) => `${i > 0 ? c.join + ' ' : ''}${conditionText(c)}`).join(' ');
   const label = TRADE_OPTIONS.find(t => t.value === s.tradeType)?.label || s.tradeType;
   const patternSuffix = s.useTradePattern && s.tradePattern && s.tradePattern.length > 0
-    ? ` [Pattern: ${s.tradePattern.map(t => t ? 'T' : 'S').join('â†’')}]`
+    ? ` [Pattern: ${s.tradePattern.map(t => t ? 'T' : 'S').join('→')}]`
     : '';
   return `If ${cond}, trade ${label} for ${s.ticks} ticks${patternSuffix}.`;
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 // HELPERS
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 
 
 
@@ -162,25 +162,25 @@ const STRATEGY_BG = [
   'lp-strat-blue', 'lp-strat-pink', 'lp-strat-purple', 'lp-strat-green', 'lp-strat-orange',
 ];
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 // CONDITION ROW COMPONENT
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 // DIGIT PATTERN BUILDER COMPONENT
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 // TOKEN needs-barrier helper (for pattern triggers)
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 
 function tokenNeedsBarrier(token: string): boolean {
   return token === 'V' || token === 'U' || token === 'M' || token === 'D';
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// ADVANCED PATTERN BUILDER â€” Multi-Entry Sequence (LaxSniper XV style)
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
+// ADVANCED PATTERN BUILDER — Multi-Entry Sequence (LaxSniper XV style)
+// ───────────────────────────────────────────────────────────────────────────
 
 function getTokenBgColor(token: string): string {
   switch (token) {
@@ -302,13 +302,13 @@ function AdvancedPatternBuilder({ cond, onChange }: {
         const mode = cond.patternBoxMode ?? 'OR';
         const numB = boxes.length;
         const hintMap: Record<string, string> = {
-          OR:      'Each trigger = 1 tick Â· Left = oldest, Right = latest Â· Multiple boxes = OR alternatives',
+          OR:      'Each trigger = 1 tick · Left = oldest, Right = latest · Multiple boxes = OR alternatives',
           THEN:    numB > 2
-            ? `Box 1 triggers â†’ locks market â†’ sequential boxes (Box 2 to Box ${numB}) must match within their timeouts`
-            : 'Box 1 triggers â†’ locks market â†’ Box 2 must fire within timeout ticks',
+            ? `Box 1 triggers → locks market → sequential boxes (Box 2 to Box ${numB}) must match within their timeouts`
+            : 'Box 1 triggers → locks market → Box 2 must fire within timeout ticks',
           THENALL: numB > 2
-            ? `Box 1 triggers â†’ scans markets for sequential boxes (up to Box ${numB}) â†’ fires up to max trades`
-            : 'Box 1 triggers â†’ ALL markets scanned for Box 2 â†’ fires up to max trades',
+            ? `Box 1 triggers → scans markets for sequential boxes (up to Box ${numB}) → fires up to max trades`
+            : 'Box 1 triggers → ALL markets scanned for Box 2 → fires up to max trades',
         };
         return (
           <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)', marginBottom: 2, paddingLeft: 2 }}>
@@ -331,7 +331,7 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                 {bi > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '0 4px', gap: '6px' }}>
 
-                    {/* Mode cycle chip â€” click to cycle ORâ†’THENâ†’THENALL (shown on first separator) */}
+                    {/* Mode cycle chip — click to cycle OR→THEN→THENALL (shown on first separator) */}
                     {bi === 1 && (() => {
                       const curMode = cond.patternBoxMode ?? 'OR';
                       const nextMode = curMode === 'OR' ? 'THEN' : curMode === 'THEN' ? 'THENALL' : 'OR';
@@ -347,7 +347,7 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
                           <button
                             onClick={() => onChange({ ...cond, patternBoxMode: nextMode as 'OR' | 'THEN' | 'THENALL' })}
-                            title={`Mode: ${curMode} â€” click to switch to ${nextMode}`}
+                            title={`Mode: ${curMode} — click to switch to ${nextMode}`}
                             style={{
                               fontSize: 8, fontWeight: 900, letterSpacing: 1,
                               background: st.bg, color: st.color,
@@ -358,14 +358,14 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                               whiteSpace: 'nowrap',
                             }}
                           >
-                            {curMode} â–¾
+                            {curMode} ▾
                           </button>
 
                           {/* THEN / THENALL config inputs for Box 2 */}
                           {(curMode === 'THEN' || curMode === 'THENALL') && (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', alignItems: 'center', minWidth: '72px' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap' }}>â± TIMEOUT</span>
+                                <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap' }}>⏱ TIMEOUT</span>
                                 <input
                                   type="number" min={1} max={500}
                                   value={box2Timeout}
@@ -389,7 +389,7 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                               </div>
                               {curMode === 'THENALL' && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                  <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap' }}>ðŸ”¢ MAX</span>
+                                  <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap' }}>🔢 MAX</span>
                                   <input
                                     type="number" min={1} max={50}
                                     value={cond.thenMaxTrades ?? 3}
@@ -403,7 +403,7 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                                     } as React.CSSProperties}
                                     title="Max trades Box 2 fires per round before resetting to Box 1"
                                   />
-                                  <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.3)' }}>Ã—</span>
+                                  <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.3)' }}>×</span>
                                 </div>
                               )}
                             </div>
@@ -443,7 +443,7 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                           </span>
 
                           <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                            <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap' }}>â± TIMEOUT</span>
+                            <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap' }}>⏱ TIMEOUT</span>
                             <input
                               type="number" min={1} max={500}
                               value={boxTimeout}
@@ -473,9 +473,9 @@ function AdvancedPatternBuilder({ cond, onChange }: {
               <div className={`lp-apb-card ${bi === 0 ? 'active-step' : ''}`}>
                 <div className="lp-apb-card-hdr">
                   <span className="lp-apb-card-title">Box {bi + 1}</span>
-                  <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.3)', marginLeft: 4 }}>oldestâ†’latest</span>
+                  <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.3)', marginLeft: 4 }}>oldest→latest</span>
                   {boxes.length > 1 && (
-                    <button className="lp-apb-card-remove" onClick={() => removeBox(bi)}>âœ•</button>
+                    <button className="lp-apb-card-remove" onClick={() => removeBox(bi)}>✕</button>
                   )}
                 </div>
 
@@ -568,7 +568,7 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                             justifyContent: 'center',
                           }}
                         >
-                          âœ•
+                          ✕
                         </button>
                       )}
                     </div>
@@ -614,7 +614,7 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                 <div className="lp-apb-card-hdr">
                   <span className="lp-custom-box-title">Box {ci + 1}</span>
                   {contracts.length > 1 && (
-                    <button className="lp-apb-card-remove" onClick={() => removeContract(ci)}>âœ•</button>
+                    <button className="lp-apb-card-remove" onClick={() => removeContract(ci)}>✕</button>
                   )}
                 </div>
                 <select className="lp-sel lp-custom-box-sel" value={box.type}
@@ -632,7 +632,7 @@ function AdvancedPatternBuilder({ cond, onChange }: {
                   <input className="lp-num lp-sm lp-custom-box-input" type="number" min={0} max={9}
                     value={box.barrier} onChange={e => updateContractBarrier(ci, +e.target.value)} />
                 ) : (
-                  <div className="lp-custom-box-placeholder">â€”</div>
+                  <div className="lp-custom-box-placeholder">—</div>
                 )}
               </div>
             );
@@ -667,7 +667,7 @@ function RsiSignalBuilder({ cond, onChange }: { cond: Condition; onChange: (c: C
       {/* Header bar */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ fontWeight: 'bold', color: '#a5b4fc' }}>âš¡ RSI Signal [trade_lexx]</span>
+          <span style={{ fontWeight: 'bold', color: '#a5b4fc' }}>⚡ RSI Signal [trade_lexx]</span>
           <span style={{ fontSize: '9px', color: '#64748b' }}>(Synthetic Candle Numerical Engine)</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -740,7 +740,7 @@ function RsiSignalBuilder({ cond, onChange }: { cond: Condition; onChange: (c: C
             marginLeft: 'auto'
           }}
         >
-          {showAdvanced ? 'â–´ Less Settings' : 'â–¾ More Settings'}
+          {showAdvanced ? '▴ Less Settings' : '▾ More Settings'}
         </button>
       </div>
 
@@ -1018,7 +1018,7 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
           <input className="lp-num lp-sm" type="number" min={1} max={1000} value={cond.period}
             onChange={e => u({ period: +e.target.value })} />
           <span className="lp-unit">ticks</span>
-          {/* â”€â”€ Eligible Window â”€â”€ */}
+          {/* ── Eligible Window ── */}
           <button
             type="button"
             title="Eligible Window: keep this market eligible for N seconds after the condition is met"
@@ -1029,7 +1029,7 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
               color: cond.eligibleWindow?.enabled ? '#fff' : '#94a3b8',
               border: cond.eligibleWindow?.enabled ? '1px solid #818cf8' : '1px solid rgba(255,255,255,0.12)',
             }}
-          >â±</button>
+          >⏱</button>
           {cond.eligibleWindow?.enabled && (
             <>
               <input
@@ -1048,10 +1048,10 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
 
       {(cond.type === 'OVER_PCT' || cond.type === 'UNDER_PCT') && (
         <>
-          <span className="lp-unit">(Â </span>
+          <span className="lp-unit">( </span>
           <input className="lp-num lp-sm" type="number" min={0} max={9} value={cond.digitBarrier ?? 4}
             onChange={e => u({ digitBarrier: +e.target.value })} title="Barrier digit" />
-          <span className="lp-unit">Â )</span>
+          <span className="lp-unit"> )</span>
           <select className="lp-sel lp-cmp" value={cond.comparator} onChange={e => u({ comparator: e.target.value })}>
             {COMPARATORS.map(c => <option key={c}>{c}</option>)}
           </select>
@@ -1061,7 +1061,7 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
           <input className="lp-num lp-sm" type="number" min={1} max={1000} value={cond.period}
             onChange={e => u({ period: +e.target.value })} />
           <span className="lp-unit">ticks</span>
-          {/* â”€â”€ Eligible Window â”€â”€ */}
+          {/* ── Eligible Window ── */}
           <button
             type="button"
             title="Eligible Window: keep this market eligible for N seconds after the condition is met"
@@ -1072,7 +1072,7 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
               color: cond.eligibleWindow?.enabled ? '#fff' : '#94a3b8',
               border: cond.eligibleWindow?.enabled ? '1px solid #818cf8' : '1px solid rgba(255,255,255,0.12)',
             }}
-          >â±</button>
+          >⏱</button>
           {cond.eligibleWindow?.enabled && (
             <>
               <input
@@ -1384,7 +1384,7 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
                         }}
                         title="Remove digit"
                       >
-                        Ã—
+                        ×
                       </button>
                     )}
                   </div>
@@ -1476,14 +1476,14 @@ function ConditionRow({ cond, isFirst, onChange, onRemove }: {
         </div>
       )}
 
-      <button className="lp-rm-cond" onClick={onRemove} title="Remove condition">âˆ’</button>
+      <button className="lp-rm-cond" onClick={onRemove} title="Remove condition">−</button>
     </div>
   );
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 // TRADE PATTERN BUILDER COMPONENT
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 
 function TradePatternBuilder({ pattern, onChange }: {
   pattern: boolean[];
@@ -1509,21 +1509,21 @@ function TradePatternBuilder({ pattern, onChange }: {
         ))}
         <button className="lp-tpb-add" onClick={addStep} title="Add trade step">+</button>
         {pattern.length > 1 && (
-          <button className="lp-tpb-rm" onClick={removeLast} title="Remove last step">âˆ’</button>
+          <button className="lp-tpb-rm" onClick={removeLast} title="Remove last step">−</button>
         )}
       </div>
       <div className="lp-tpb-legend">
         <span className="lp-tpb-leg-t">T=TRADE (places contract for set ticks)</span>
         <span className="lp-tpb-leg-s">S=SKIP (skips trade signal)</span>
-        <span style={{ color: '#9ca3af', fontSize: 10 }}>Click cell to toggle T â†” S</span>
+        <span style={{ color: '#9ca3af', fontSize: 10 }}>Click cell to toggle T ↔ S</span>
       </div>
     </div>
   );
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 // STRATEGY BLOCK COMPONENT
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 
 function StrategyBlock({ strategy, index, onChange, onRemove, adaptiveSwitchEnabled }: {
   strategy: Strategy;
@@ -1658,7 +1658,7 @@ function StrategyBlock({ strategy, index, onChange, onRemove, adaptiveSwitchEnab
       {adaptiveSwitchEnabled && (
         <div className="lp-then-row">
           <span className="lp-then-lbl" style={{ color: '#a78bfa' }}>SWITCHER ACTIVE</span>
-          <span style={{ fontSize: 10, color: '#6366f1', fontWeight: 700, marginLeft: 4 }}>â†’ contract determined by SWITCHER</span>
+          <span style={{ fontSize: 10, color: '#6366f1', fontWeight: 700, marginLeft: 4 }}>→ contract determined by SWITCHER</span>
           <span className="lp-then-lbl" style={{ marginLeft: 8 }}>FOR</span>
           <input 
             className="lp-num lp-sm" 
@@ -1687,7 +1687,7 @@ function StrategyBlock({ strategy, index, onChange, onRemove, adaptiveSwitchEnab
           </label>
           {strategy.useTradePattern && (
             <button className="lp-tpb-expand" onClick={() => setShowPattern(v => !v)}>
-              {showPattern ? 'â–² Hide' : 'â–¼ Edit'}
+              {showPattern ? '▲ Hide' : '▼ Edit'}
             </button>
           )}
           {strategy.useTradePattern && (
@@ -1708,10 +1708,10 @@ function StrategyBlock({ strategy, index, onChange, onRemove, adaptiveSwitchEnab
       {continuousLockEnabled && (
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 10px', background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.25)', borderRadius: '6px', fontSize: '10px', color: '#fbbf24', margin: '6px 0' }}>
           <Layers size={12} style={{ color: '#f59e0b', flexShrink: 0 }} />
-          <span>ðŸ”’ <strong>Continuous Lock Active</strong> â€” Strategy Trade Pattern is disabled. Using Locked Trade Pattern loop.</span>
+          <span>🔒 <strong>Continuous Lock Active</strong> — Strategy Trade Pattern is disabled. Using Locked Trade Pattern loop.</span>
         </div>
       )}
-      {/* No Contradiction â€” hidden, always active */}
+      {/* No Contradiction — hidden, always active */}
       <button className="lp-add-cond-btn" onClick={addCond}>+ CONDITION</button>
 
       <div className="lp-summary">{strategySummary(strategy, index)}</div>
@@ -1719,9 +1719,9 @@ function StrategyBlock({ strategy, index, onChange, onRemove, adaptiveSwitchEnab
   );
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 // MARKET CARD COMPONENT
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 
 function MarketCardInner({ symbol, label, isFlashing }: {
   symbol: string;
@@ -1759,7 +1759,7 @@ function MarketCardInner({ symbol, label, isFlashing }: {
         <span className={`lp-scan-badge ${historyReady ? 'ready' : 'loading'}`}>
           {historyReady ? 'SCAN' : '...'}
         </span>
-        {isFlashing && <span className="lp-mc-signal-badge">âš¡ SIGNAL</span>}
+        {isFlashing && <span className="lp-mc-signal-badge">⚡ SIGNAL</span>}
       </div>
       <div className="lp-mc-row">
         <span className="lp-mc-rl">Digits</span>
@@ -1783,12 +1783,12 @@ function MarketCardInner({ symbol, label, isFlashing }: {
   );
 }
 
-// Memoized â€” only re-renders when symbol/label/isFlashing actually change
+// Memoized — only re-renders when symbol/label/isFlashing actually change
 const MarketCard = React.memo(MarketCardInner);
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 // TRADE LOG PANEL
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 
 function TradeLogPanel({ logs: rawLogs, stats, journalLogs = [], onReset, onClearJournal }: {
   logs: TradeLog[];
@@ -1965,7 +1965,7 @@ function TradeLogPanel({ logs: rawLogs, stats, journalLogs = [], onReset, onClea
           </div>
           {combinedLogs.length === 0 ? (
             <div className="lp-tx-empty">
-              <div className="lp-tx-icon">ðŸ“¦</div>
+              <div className="lp-tx-icon">📦</div>
               <span>There are no transactions to display</span>
             </div>
           ) : (
@@ -2012,7 +2012,7 @@ function TradeLogPanel({ logs: rawLogs, stats, journalLogs = [], onReset, onClea
 
                     <div className={`lp-tx-pnl ${isVirt ? 'virt' : (log.profit ?? 0) >= 0 ? 'pos' : 'neg'}`}>
                       {virtLive ? (
-                        <span style={{ fontSize: 9, color: '#818cf8', fontStyle: 'italic' }}>VIRTâ€¦</span>
+                        <span style={{ fontSize: 9, color: '#818cf8', fontStyle: 'italic' }}>VIRT…</span>
                       ) : live ? (
                         <Loader2 size={10} className="lp-spin" />
                       ) : isVirt ? (
@@ -2094,7 +2094,7 @@ function TradeLogPanel({ logs: rawLogs, stats, journalLogs = [], onReset, onClea
           </div>
         ) : (
           <div className="lp-tx-empty" style={{ paddingTop: 24 }}>
-            <div className="lp-tx-icon">ðŸ“</div>
+            <div className="lp-tx-icon">📜</div>
             <span style={{ fontSize: 12, color: '#9ca3af' }}>No journal entries yet.</span>
             <span style={{ fontSize: 10, color: '#6b7280' }}>Bot starts, trades, triggers, and stop reasons will appear here in real-time.</span>
           </div>
@@ -2104,9 +2104,9 @@ function TradeLogPanel({ logs: rawLogs, stats, journalLogs = [], onReset, onClea
   );
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 // MAIN PAGE COMPONENT
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 
 export default function LaxPrimePage() {
   const { status, account, isTradeAuthorized, virtualSettings, setVirtualSettings, compoundProfits, setRiskSettings } = useDerivStore();
@@ -2199,7 +2199,7 @@ export default function LaxPrimePage() {
 
   return (
     <>
-      <div className="lp-risk-disc">âš  Risk Disclaimer!</div>
+      <div className="lp-risk-disc">⚠️ Risk Disclaimer!</div>
 
       <div className={`lp-root ${theme === 'dark' ? 'lp-dark' : ''}`}>
         <div className="lp-main">
@@ -2216,7 +2216,7 @@ export default function LaxPrimePage() {
                 className="lp-theme-toggle"
                 title={theme === 'dark' ? 'Switch to Light' : 'Switch to Dark'}
               >
-                {theme === 'dark' ? 'â˜€ï¸' : 'ðŸŒ‘'}
+                {theme === 'dark' ? '☀️' : '🌑'}
               </button>
             </div>
             <p className="lp-subtitle">
@@ -2228,13 +2228,13 @@ export default function LaxPrimePage() {
           {status === 'connected' && !isTradeAuthorized && (
             <div className="lp-auth-warn">
               <AlertTriangle size={14} />
-              Trade authorization pending â€” trades will execute once Trade WS is authorized
+              Trade authorization pending — trades will execute once Trade WS is authorized
             </div>
           )}
           {status !== 'connected' && (
             <div className="lp-auth-warn lp-disconnected">
               <AlertTriangle size={14} />
-              Not connected â€” please authorize your Deriv account first
+              Not connected — please authorize your Deriv account first
             </div>
           )}
 
@@ -2251,7 +2251,7 @@ export default function LaxPrimePage() {
                   onClick={() => setTargetProfitMode(targetProfitMode === 'profit' ? 'wins' : 'profit')}
                   title="Toggle between USD profit and number of wins"
                 >
-                  {targetProfitMode === 'wins' ? 'ðŸ† Wins' : 'ðŸ’µ USD'}
+                  {targetProfitMode === 'wins' ? '🏆 Wins' : '💵 USD'}
                 </button>
               </div>
               <input className="lp-si" type="number" min="0" value={targetProfit} onChange={e => setTargetProfit(e.target.value)} />
@@ -2264,7 +2264,7 @@ export default function LaxPrimePage() {
                   onClick={() => setStopLossMode(stopLossMode === 'loss' ? 'losses' : 'loss')}
                   title="Toggle between USD loss and number of losses"
                 >
-                  {stopLossMode === 'losses' ? 'ðŸ”¢ Count' : 'ðŸ’µ USD'}
+                  {stopLossMode === 'losses' ? '🔢 Count' : '💵 USD'}
                 </button>
               </div>
               <input className="lp-si" type="number" min="0" value={stopLoss} onChange={e => setStopLoss(e.target.value)} />
@@ -2281,7 +2281,7 @@ export default function LaxPrimePage() {
                   onClick={() => {
                     const now = Date.now();
                     if (now - mgLabelTapRef.current < 400) {
-                      // Double-tap detected â€” toggle compounding
+                      // Double-tap detected — toggle compounding
                       setRiskSettings({ compoundProfits: !compoundProfits });
                       mgLabelTapRef.current = 0;
                     } else {
@@ -2329,7 +2329,7 @@ export default function LaxPrimePage() {
                     : TRADING_MODES.find(m => m.value === tradingMode)?.label}
                 </span>
                 <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', transition: 'transform 0.2s', transform: isModeDropdownOpen ? 'rotate(180deg)' : 'none', flexShrink: 0 }}>
-                  â–¼
+                  ▼
                 </span>
               </div>
 
@@ -2470,31 +2470,31 @@ export default function LaxPrimePage() {
                   onClick={() => setShowContinuousLockPanel(v => !v)}
                   title="Toggle Continuous Lock panel"
                   style={continuousLock?.enabled ? { borderColor: 'rgba(245, 158, 11, 0.5)', color: '#fbbf24', background: 'rgba(245, 158, 11, 0.15)' } : undefined}>
-                  <span className="lp-btn-icon">ðŸ”’</span>
+                  <span className="lp-btn-icon">🔒</span>
                   <span className="lp-btn-label">
                     <span className="lp-word-desktop">CONTINUOUS </span>LOCK
                   </span>
-                  <span className="lp-arrow-ind">{showContinuousLockPanel ? 'â–²' : 'â–¼'}</span>
+                  <span className="lp-arrow-ind">{showContinuousLockPanel ? '▲' : '▼'}</span>
                   {continuousLock?.enabled && <span className="lp-virt-active-dot" style={{ background: '#f59e0b' }} />}
                 </button>
                 <button
                   className="lp-virt-toggle-btn"
                   onClick={() => setShowVirtualPanel(v => !v)}
                   title="Toggle Virtual System panel">
-                  <span className="lp-btn-icon">âš—</span>
+                  <span className="lp-btn-icon">🧪</span>
                   <span className="lp-btn-label">
                     VIRTUAL<span className="lp-word-desktop"> SYSTEM</span>
                   </span>
-                  <span className="lp-arrow-ind">{showVirtualPanel ? 'â–²' : 'â–¼'}</span>
+                  <span className="lp-arrow-ind">{showVirtualPanel ? '▲' : '▼'}</span>
                   {virtualSettings.isVirtualMode && <span className="lp-virt-active-dot" />}
                 </button>
                 <button
                   className={`lp-switcher-btn ${adaptiveSwitch.enabled ? 'active' : ''}`}
                   onClick={() => setShowSwitcherPanel(v => !v)}
                   title="Toggle Switcher panel">
-                  <span className="lp-btn-icon">âš¡</span>
+                  <span className="lp-btn-icon">⚡</span>
                   <span className="lp-btn-label">SWITCHER</span>
-                  <span className="lp-arrow-ind">{showSwitcherPanel ? 'â–²' : 'â–¼'}</span>
+                  <span className="lp-arrow-ind">{showSwitcherPanel ? '▲' : '▼'}</span>
                   {adaptiveSwitch.enabled && <span className="lp-sw-active-dot" />}
                 </button>
                 <button className="lp-add-strat-btn"
@@ -2518,11 +2518,11 @@ export default function LaxPrimePage() {
                 <div className="lp-vp-hdr" style={{ borderBottom: '1px solid rgba(245, 158, 11, 0.2)', paddingBottom: '12px', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <span style={{ fontSize: '13px', fontWeight: 900, color: '#fbbf24', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      ðŸ”’ CONTINUOUS LOCK TRADING
+                      🔒 CONTINUOUS LOCK TRADING
                     </span>
                     {continuousLock?.enabled && (
                       <span className="lp-vp-badge" style={{ background: 'rgba(245, 158, 11, 0.2)', color: '#fbbf24', border: '1px solid rgba(245, 158, 11, 0.4)', fontSize: '9px', fontWeight: 900, padding: '2px 8px', borderRadius: '4px' }}>
-                        â— LOCKED TRADING MODE ACTIVE
+                        ● LOCKED TRADING MODE ACTIVE
                       </span>
                     )}
                   </div>
@@ -2659,7 +2659,7 @@ export default function LaxPrimePage() {
                         Locked Trade Pattern Loop
                       </span>
                       <span style={{ fontSize: '9px', color: '#94a3b8' }}>
-                        Click cells to toggle Trade (T) â†” Skip (S)
+                        Click cells to toggle Trade (T) ↔ Skip (S)
                       </span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -2685,7 +2685,7 @@ export default function LaxPrimePage() {
                         }}
                         style={{ fontSize: '9px', fontWeight: 'bold', background: 'rgba(255,255,255,0.08)', color: '#fff', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer' }}
                       >
-                        âˆ’ Remove Step
+                        − Remove Step
                       </button>
                       <button
                         type="button"
@@ -2740,18 +2740,18 @@ export default function LaxPrimePage() {
                     Loop: {(continuousLock?.tradePattern || [true, false]).map((t, i) => (
                       <span key={i}>
                         <span style={{ color: t ? '#34d399' : '#64748b', fontWeight: 'bold' }}>{t ? 'Trade' : 'Skip'}</span>
-                        {i < (continuousLock?.tradePattern || []).length - 1 && ' â†’ '}
+                        {i < (continuousLock?.tradePattern || []).length - 1 && ' → '}
                       </span>
                     ))}
                   </div>
                 </div>
 
-                {/* â”€â”€ Lock TP / SL Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+                {/* ── Lock TP / SL Card ──────────────────────────────────────────── */}
                 <div style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(245,158,11,0.18)', borderRadius: '10px', padding: '12px 14px' }}>
                   <div style={{ fontSize: '11px', fontWeight: 900, color: '#fbbf24', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    ðŸŽ¯ Lock Session TP / SL
+                    🎯 Lock Session TP / SL
                     <span style={{ fontSize: '9px', fontWeight: 400, color: '#94a3b8', textTransform: 'none', letterSpacing: 0 }}>
-                      â€” unlock &amp; rescan when hit (bot keeps running)
+                      — unlock &amp; rescan when hit (bot keeps running)
                     </span>
                   </div>
 
@@ -2759,7 +2759,7 @@ export default function LaxPrimePage() {
                     {/* Lock TP */}
                     <div style={{ background: 'rgba(16,185,129,0.07)', border: `1px solid ${continuousLock?.lockTPEnabled ? 'rgba(16,185,129,0.45)' : 'rgba(255,255,255,0.08)'}`, borderRadius: '8px', padding: '10px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                        <span style={{ fontSize: '10px', fontWeight: 900, color: '#34d399' }}>âœ… LOCK TAKE PROFIT</span>
+                        <span style={{ fontSize: '10px', fontWeight: 900, color: '#34d399' }}>✅ LOCK TAKE PROFIT</span>
                         <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', position: 'relative' }}>
                           <input type="checkbox" style={{ display: 'none' }}
                             checked={continuousLock?.lockTPEnabled || false}
@@ -2793,7 +2793,7 @@ export default function LaxPrimePage() {
                             onChange={e => setContinuousLock({ ...continuousLock, lockTP: Math.max(0.01, parseFloat(e.target.value) || 1) })}
                             style={{ width: '56px', background: '#0f172a', color: '#34d399', border: '1px solid rgba(16,185,129,0.35)', borderRadius: '5px', fontSize: '11px', fontWeight: 'bold', padding: '3px 6px', textAlign: 'center' }} />
                           <span style={{ fontSize: '9px', color: '#64748b' }}>
-                            {continuousLock?.lockTPMode === 'profit' ? '$ profit â†’ unlock' : 'wins â†’ unlock'}
+                            {continuousLock?.lockTPMode === 'profit' ? '$ profit → unlock' : 'wins → unlock'}
                           </span>
                         </div>
                       )}
@@ -2802,7 +2802,7 @@ export default function LaxPrimePage() {
                     {/* Lock SL */}
                     <div style={{ background: 'rgba(239,68,68,0.07)', border: `1px solid ${continuousLock?.lockSLEnabled ? 'rgba(239,68,68,0.45)' : 'rgba(255,255,255,0.08)'}`, borderRadius: '8px', padding: '10px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                        <span style={{ fontSize: '10px', fontWeight: 900, color: '#f87171' }}>ðŸ›¡ LOCK STOP LOSS</span>
+                        <span style={{ fontSize: '10px', fontWeight: 900, color: '#f87171' }}>🛡️ LOCK STOP LOSS</span>
                         <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', position: 'relative' }}>
                           <input type="checkbox" style={{ display: 'none' }}
                             checked={continuousLock?.lockSLEnabled || false}
@@ -2836,7 +2836,7 @@ export default function LaxPrimePage() {
                             onChange={e => setContinuousLock({ ...continuousLock, lockSL: Math.max(0.01, parseFloat(e.target.value) || 1) })}
                             style={{ width: '56px', background: '#0f172a', color: '#f87171', border: '1px solid rgba(239,68,68,0.35)', borderRadius: '5px', fontSize: '11px', fontWeight: 'bold', padding: '3px 6px', textAlign: 'center' }} />
                           <span style={{ fontSize: '9px', color: '#64748b' }}>
-                            {continuousLock?.lockSLMode === 'loss' ? '$ loss â†’ unlock' : 'losses â†’ unlock'}
+                            {continuousLock?.lockSLMode === 'loss' ? '$ loss → unlock' : 'losses → unlock'}
                           </span>
                         </div>
                       )}
@@ -2851,14 +2851,14 @@ export default function LaxPrimePage() {
             {showVirtualPanel && (
               <div className="lp-vp">
                 <div className="lp-vp-hdr">
-                  <span className="lp-vp-title">âš— VIRTUAL SYSTEM</span>
+                  <span className="lp-vp-title">🧪 VIRTUAL SYSTEM</span>
                   <span className={`lp-vp-badge ${virtualSettings.isVirtualMode ? 'lp-vp-badge--virtual' : 'lp-vp-badge--real'}`}>
-                    {virtualSettings.isVirtualMode ? 'â— VIRTUAL TRACKING ACTIVE' : 'â— REAL EXECUTION ACTIVE'}
+                    {virtualSettings.isVirtualMode ? '● VIRTUAL TRACKING ACTIVE' : '● REAL EXECUTION ACTIVE'}
                   </span>
                   <button
                     className={`lp-vp-force-btn ${virtualSettings.isVirtualMode ? 'lp-vp-force-btn--toreal' : 'lp-vp-force-btn--tovirt'}`}
                     onClick={() => setVirtualSettings({ isVirtualMode: !virtualSettings.isVirtualMode })}>
-                    {virtualSettings.isVirtualMode ? 'â†’ SWITCH TO REAL' : 'â†’ SWITCH TO VIRTUAL'}
+                    {virtualSettings.isVirtualMode ? '→ SWITCH TO REAL' : '→ SWITCH TO VIRTUAL'}
                   </button>
                 </div>
 
@@ -2867,7 +2867,7 @@ export default function LaxPrimePage() {
                     background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)',
                     borderRadius: '8px', padding: '10px 14px', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px',
                   }}>
-                    <span style={{ fontSize: '15px' }}>ðŸ”’</span>
+                    <span style={{ fontSize: '15px' }}>🔒</span>
                     <div>
                       <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#fbbf24' }}>
                         Virtual System Locked by Switcher
@@ -2882,7 +2882,7 @@ export default function LaxPrimePage() {
                 <div className="lp-vp-grid" style={adaptiveSwitch.enabled && adaptiveSwitch.virtualSwitcher?.enabled ? { opacity: 0.35, pointerEvents: 'none' } : undefined}>
                   <div className="lp-vp-card">
                     <div className="lp-vp-card-hdr">
-                      <span className="lp-vp-card-lbl">Start Virtual â†’ Switch to Real</span>
+                      <span className="lp-vp-card-lbl">Start Virtual → Switch to Real</span>
                       <label className="lp-vp-sw">
                         <input type="checkbox" checked={virtualSettings.startVirtualToReal}
                           onChange={e => setVirtualSettings({ startVirtualToReal: e.target.checked })} />
@@ -2893,7 +2893,7 @@ export default function LaxPrimePage() {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%', marginTop: '6px' }}>
                         {/* Double Virtual Toggle */}
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(124, 58, 237, 0.08)', padding: '4px 8px', borderRadius: '6px', border: '1px solid rgba(124, 58, 237, 0.2)' }}>
-                          <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#c4b5fd' }}>âš¡ Double Virtual (2-Stage Cascade)</span>
+                          <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#c4b5fd' }}>⚡ Double Virtual (2-Stage Cascade)</span>
                           <label className="lp-vp-sw">
                             <input type="checkbox" checked={!!virtualSettings.isDoubleVirtual}
                               onChange={e => setVirtualSettings({ isDoubleVirtual: e.target.checked, vDoubleStage: 'A', vStageBCompletedReps: 0 })} />
@@ -3008,7 +3008,7 @@ export default function LaxPrimePage() {
                                   <span className="lp-vp-sub-lbl">trades</span>
                                 </>
                               )}
-                              <span className="lp-vp-sub-lbl">â†’ Real Reps:</span>
+                              <span className="lp-vp-sub-lbl">→ Real Reps:</span>
                               <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.vStageBReps ?? ''}
                                 onChange={e => setVirtualSettings({ vStageBReps: e.target.value === '' ? ('' as any) : (+e.target.value || 1) })} title="Real trades to run in Stage B before recycling back to Stage A" />
                             </div>
@@ -3028,7 +3028,7 @@ export default function LaxPrimePage() {
                   <div className="lp-vp-card" style={{ border: '1px solid rgba(99, 102, 241, 0.25)', background: 'rgba(99, 102, 241, 0.04)' }}>
                     <div className="lp-vp-card-hdr">
                       <div>
-                        <span className="lp-vp-card-lbl" style={{ color: '#818cf8' }}>ðŸ§  Smart Analysis Switch</span>
+                        <span className="lp-vp-card-lbl" style={{ color: '#818cf8' }}>🧠 Smart Analysis Switch</span>
                         <p style={{ fontSize: '9px', color: '#9ca3af', margin: 0 }}>Switch to Real on strict result patterns</p>
                       </div>
                       <label className="lp-vp-sw">
@@ -3138,7 +3138,7 @@ export default function LaxPrimePage() {
                           }}>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                               <span style={{ fontSize: '9px', fontWeight: 'bold', color: '#c4b5fd' }}>
-                                âš¡ STAGE B (Gate 2 & Execution Cycle for Smart Pattern):
+                                ⚡ STAGE B (Gate 2 & Execution Cycle for Smart Pattern):
                               </span>
                               <span style={{ fontSize: '9px', fontWeight: 'bold', color: virtualSettings.vDoubleStage === 'B' ? '#4ade80' : '#9ca3af' }}>
                                 {virtualSettings.vDoubleStage === 'B' ? `ACTIVE [Rep ${(virtualSettings.vStageBCompletedReps || 0) + 1}/${virtualSettings.vStageBReps || 1}]` : 'WAITING FOR STAGE A (Smart Pattern)'}
@@ -3159,7 +3159,7 @@ export default function LaxPrimePage() {
                               <span className="lp-vp-sub-lbl">Target:</span>
                               <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.vThresholdB ?? ''}
                                 onChange={e => setVirtualSettings({ vThresholdB: e.target.value === '' ? ('' as any) : (+e.target.value || 1) })} title="Virtual Target in Stage B" />
-                              <span className="lp-vp-sub-lbl">â†’ Real Reps:</span>
+                              <span className="lp-vp-sub-lbl">→ Real Reps:</span>
                               <input className="lp-num lp-sm" type="number" min={1} value={virtualSettings.vStageBReps ?? ''}
                                 onChange={e => setVirtualSettings({ vStageBReps: e.target.value === '' ? ('' as any) : (+e.target.value || 1) })} title="Real trades to run in Stage B before recycling back to Stage A" />
                             </div>
@@ -3171,7 +3171,7 @@ export default function LaxPrimePage() {
 
                   <div className="lp-vp-card">
                     <div className="lp-vp-card-hdr">
-                      <span className="lp-vp-card-lbl">Start Real â†’ Switch to Virtual</span>
+                      <span className="lp-vp-card-lbl">Start Real → Switch to Virtual</span>
                       <label className="lp-vp-sw">
                         <input type="checkbox" checked={virtualSettings.startRealToVirtual}
                           onChange={e => setVirtualSettings({ startRealToVirtual: e.target.checked })} />
@@ -3211,7 +3211,7 @@ export default function LaxPrimePage() {
               <div className="lp-sw-panel">
                 <div className="lp-sw-hdr" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span className="lp-sw-title" style={{ fontSize: '15px', fontWeight: 'bold' }}>âš¡ SWITCHER (Adaptive Contracts)</span>
+                    <span className="lp-sw-title" style={{ fontSize: '15px', fontWeight: 'bold' }}>⚡ SWITCHER (Adaptive Contracts)</span>
                     <label className="lp-vp-sw">
                       <input type="checkbox" checked={adaptiveSwitch.enabled}
                         onChange={e => setAdaptiveSwitch({ ...adaptiveSwitch, enabled: e.target.checked })} />
@@ -3237,7 +3237,7 @@ export default function LaxPrimePage() {
                     : 'Adaptive Switch mode overrides strategy trade types using a step-by-step cycle. On win, it advances reps or moves to next step.'}
                 </div>
 
-                {/* â”€â”€â”€ VIRTUAL TRADE SWITCHER â”€â”€â”€ */}
+                {/* ─── VIRTUAL TRADE SWITCHER ─── */}
                 {(() => {
                   const vs = adaptiveSwitch.virtualSwitcher || {
                     enabled: false,
@@ -3313,7 +3313,7 @@ export default function LaxPrimePage() {
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: vs.enabled ? '12px' : 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                           <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#fbbf24', letterSpacing: '0.5px' }}>
-                            ðŸŽ¯ VIRTUAL TRADE SWITCHER
+                            🎯 VIRTUAL TRADE SWITCHER
                           </span>
                           {vs.enabled && (
                             <span style={{
@@ -3322,7 +3322,7 @@ export default function LaxPrimePage() {
                               color: vs._phase === 'real' ? '#4ade80' : vs._phase === 'gate_b' ? '#fb923c' : '#c084fc',
                               border: `1px solid ${vs._phase === 'real' ? 'rgba(74,222,128,0.3)' : vs._phase === 'gate_b' ? 'rgba(251,146,60,0.3)' : 'rgba(168,85,247,0.3)'}`,
                             }}>
-                              {vs._phase === 'real' ? `â— REAL TRADING (${activeContractLbl || 'ACTIVE'})` : vs._phase === 'gate_b' ? `ðŸ”· GATE B (${activeContractLbl || 'LOCKED'})` : 'â— VIRTUAL TESTING ACTIVE'}
+                              {vs._phase === 'real' ? `● REAL TRADING (${activeContractLbl || 'ACTIVE'})` : vs._phase === 'gate_b' ? `🔷 GATE B (${activeContractLbl || 'LOCKED'})` : '● VIRTUAL TESTING ACTIVE'}
                             </span>
                           )}
                         </div>
@@ -3343,20 +3343,20 @@ export default function LaxPrimePage() {
                           }}>
                             <div style={{ display: 'flex', gap: '12px' }}>
                               <span style={{ color: '#4ade80', fontWeight: 'bold' }}>
-                                âœ“ V-Wins: {vs._totalWins || 0} (streak: {vs._consecWins || 0})
+                                ✓ V-Wins: {vs._totalWins || 0} (streak: {vs._consecWins || 0})
                               </span>
                               <span style={{ color: '#f87171', fontWeight: 'bold' }}>
-                                âœ— V-Losses: {vs._totalLosses || 0} (streak: {vs._consecLosses || 0})
+                                ✕ V-Losses: {vs._totalLosses || 0} (streak: {vs._consecLosses || 0})
                               </span>
                             </div>
                             {vs._phase === 'real' && (
                               <span style={{ color: '#22d3ee', fontWeight: 'bold' }}>
-                                âš¡ Real Count: {vs.returnToVirtual?.triggerType === 'wins' ? vs._rConsecWins || 0 : vs.returnToVirtual?.triggerType === 'losses' ? vs._rConsecLosses || 0 : vs._rTotalTrades || 0}/{vs.returnToVirtual?.threshold || 1} {vs.returnToVirtual?.triggerType}
+                                ⚡ Real Count: {vs.returnToVirtual?.triggerType === 'wins' ? vs._rConsecWins || 0 : vs.returnToVirtual?.triggerType === 'losses' ? vs._rConsecLosses || 0 : vs._rTotalTrades || 0}/{vs.returnToVirtual?.threshold || 1} {vs.returnToVirtual?.triggerType}
                               </span>
                             )}
                             {vs._phase === 'gate_b' && (
                               <span style={{ color: '#fb923c', fontWeight: 'bold' }}>
-                                ðŸ”· Gate B: {vs.gateB?.triggerType === 'wins' ? (vs.gateB?.mode === 'consec' ? vs._gateBConsecWins || 0 : vs._gateBTotalWins || 0) : vs.gateB?.triggerType === 'losses' ? (vs.gateB?.mode === 'consec' ? vs._gateBConsecLosses || 0 : vs._gateBTotalLosses || 0) : vs._gateBTotalTrades || 0}/{vs.gateB?.threshold || 2} {vs.gateB?.triggerType}
+                                🔷 Gate B: {vs.gateB?.triggerType === 'wins' ? (vs.gateB?.mode === 'consec' ? vs._gateBConsecWins || 0 : vs._gateBTotalWins || 0) : vs.gateB?.triggerType === 'losses' ? (vs.gateB?.mode === 'consec' ? vs._gateBConsecLosses || 0 : vs._gateBTotalLosses || 0) : vs._gateBTotalTrades || 0}/{vs.gateB?.threshold || 2} {vs.gateB?.triggerType}
                               </span>
                             )}
                           </div>
@@ -3368,7 +3368,7 @@ export default function LaxPrimePage() {
                           }}>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                               <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#c084fc' }}>
-                                ðŸ§ª VIRTUAL TEST CONTRACT
+                                🧪 VIRTUAL TEST CONTRACT
                               </span>
                               <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)' }}>
                                 Simulated in Virtual Phase
@@ -3409,7 +3409,7 @@ export default function LaxPrimePage() {
                           }}>
                             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' }}>
                               <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#4ade80' }}>
-                                ðŸ† ON VIRTUAL WINS â†’
+                                🏆 ON VIRTUAL WINS →
                               </span>
                               <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)' }}>After</span>
                               <input className="lp-num" type="number" min={1} max={99}
@@ -3432,7 +3432,7 @@ export default function LaxPrimePage() {
 
                             {/* Target Real Contract */}
                             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' }}>
-                              <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)' }}>â†’ Trade Real:</span>
+                              <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)' }}>→ Trade Real:</span>
                               <select className="lp-sel" style={{ height: '24px', fontSize: '10px', flex: 1, minWidth: '110px' }}
                                 value={vs.onVirtualWins?.contractType || 'DIGITUNDER'}
                                 onChange={e => updateWinRule({ contractType: e.target.value })}>
@@ -3464,7 +3464,7 @@ export default function LaxPrimePage() {
                               <select className="lp-sel" style={{ height: '22px', fontSize: '10px', flex: 1 }}
                                 value={vs.onVirtualWins?.market || ''}
                                 onChange={e => updateWinRule({ market: e.target.value || undefined })}>
-                                <option value="">â€” Same active market â€”</option>
+                                <option value="">— Same active market —</option>
                                 {ALL_MARKETS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                               </select>
                             </div>
@@ -3477,7 +3477,7 @@ export default function LaxPrimePage() {
                           }}>
                             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' }}>
                               <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#f87171' }}>
-                                ðŸ›‘ ON VIRTUAL LOSSES â†’
+                                🛑 ON VIRTUAL LOSSES →
                               </span>
                               <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)' }}>After</span>
                               <input className="lp-num" type="number" min={1} max={99}
@@ -3500,7 +3500,7 @@ export default function LaxPrimePage() {
 
                             {/* Target Real Contract */}
                             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' }}>
-                              <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)' }}>â†’ Trade Real:</span>
+                              <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)' }}>→ Trade Real:</span>
                               <select className="lp-sel" style={{ height: '24px', fontSize: '10px', flex: 1, minWidth: '110px' }}
                                 value={vs.onVirtualLosses?.contractType || 'DIGITOVER'}
                                 onChange={e => updateLossRule({ contractType: e.target.value })}>
@@ -3532,13 +3532,13 @@ export default function LaxPrimePage() {
                               <select className="lp-sel" style={{ height: '22px', fontSize: '10px', flex: 1 }}
                                 value={vs.onVirtualLosses?.market || ''}
                                 onChange={e => updateLossRule({ market: e.target.value || undefined })}>
-                                <option value="">â€” Same active market â€”</option>
+                                <option value="">— Same active market —</option>
                                 {ALL_MARKETS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                               </select>
                             </div>
                           </div>
 
-                          {/* Section 3.5: Gate B â€” Additional virtual confirmation gate after Gate A */}
+                          {/* Section 3.5: Gate B — Additional virtual confirmation gate after Gate A */}
                           <div style={{
                             background: 'rgba(251,146,60,0.05)', border: '1px solid rgba(251,146,60,0.25)',
                             borderRadius: '6px', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: '6px',
@@ -3546,7 +3546,7 @@ export default function LaxPrimePage() {
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#fb923c' }}>
-                                  ðŸ”· GATE B
+                                  🔷 GATE B
                                 </span>
                                 <span style={{ fontSize: '8px', color: 'rgba(255,255,255,0.4)', fontStyle: 'italic' }}>
                                   (additional virtual confirmation after Gate A)
@@ -3561,7 +3561,7 @@ export default function LaxPrimePage() {
                             {vs.gateB?.enabled && (
                               <>
                                 <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)', lineHeight: '1.4' }}>
-                                  After Gate A fires and locks a contract, Gate B keeps trading it <strong style={{ color: '#fb923c' }}>virtually</strong> until its own condition is met â€” then switches to REAL. The contract never changes during Gate B.
+                                  After Gate A fires and locks a contract, Gate B keeps trading it <strong style={{ color: '#fb923c' }}>virtually</strong> until its own condition is met — then switches to REAL. The contract never changes during Gate B.
                                 </div>
                                 <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' }}>
                                   <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)' }}>Go REAL after</span>
@@ -3591,7 +3591,7 @@ export default function LaxPrimePage() {
                                 </div>
                                 {vs._phase === 'gate_b' && (
                                   <div style={{ fontSize: '9px', color: '#fb923c', fontWeight: 'bold', padding: '3px 6px', background: 'rgba(251,146,60,0.1)', borderRadius: '4px' }}>
-                                    ðŸ”· ACTIVE: {vs._gateBConsecWins || 0}W streak / {vs._gateBConsecLosses || 0}L streak (total {vs._gateBTotalWins || 0}W / {vs._gateBTotalLosses || 0}L)
+                                    🔷 ACTIVE: {vs._gateBConsecWins || 0}W streak / {vs._gateBConsecLosses || 0}L streak (total {vs._gateBTotalWins || 0}W / {vs._gateBTotalLosses || 0}L)
                                   </div>
                                 )}
                               </>
@@ -3605,7 +3605,7 @@ export default function LaxPrimePage() {
                           }}>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                               <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#a5b4fc' }}>
-                                ðŸ”„ RETURN TO VIRTUAL (REAL EXIT)
+                                🔄 RETURN TO VIRTUAL (REAL EXIT)
                               </span>
                               <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)' }}>
                                 Reverts to virtual cycle
@@ -3647,7 +3647,7 @@ export default function LaxPrimePage() {
                     padding: '10px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.02)',
                     border: '1px solid rgba(255,255,255,0.06)', fontSize: '10px', color: 'rgba(255,255,255,0.5)', marginBottom: '12px',
                   }}>
-                    <span style={{ color: '#fbbf24', fontWeight: 'bold' }}>ðŸ”’ Standard Switcher Modes Paused: </span>
+                    <span style={{ color: '#fbbf24', fontWeight: 'bold' }}>🔒 Standard Switcher Modes Paused: </span>
                     Adaptive Contracts and Sequence Steps are inactive while Virtual Trade Switcher is running.
                   </div>
                 ) : (
@@ -3705,7 +3705,7 @@ export default function LaxPrimePage() {
                   marginBottom: '12px'
                 }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                    <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#c4b5fd', letterSpacing: '0.5px' }}>âš¡ DUAL CONTRACTS SYSTEM</span>
+                    <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#c4b5fd', letterSpacing: '0.5px' }}>⚡ DUAL CONTRACTS SYSTEM</span>
                     <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.45)' }}>Fires exactly 2 contracts on the same tick. Martingale only acts on both-loss.</span>
                   </div>
                   <label className="lp-vp-sw" style={{ marginLeft: 'auto' }}>
@@ -3748,13 +3748,13 @@ export default function LaxPrimePage() {
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                           <span style={{ fontSize: '9px', fontWeight: 'bold', color: '#4ade80', background: 'rgba(74,222,128,0.12)', padding: '2px 6px', borderRadius: '4px', border: '1px solid rgba(74,222,128,0.3)' }}>
-                            â— ACTIVE: CONTRACT {activeSide}
+                            ● ACTIVE: CONTRACT {activeSide}
                           </span>
                           <button
                             onClick={() => updateAC({ activeSide: activeSide === 'A' ? 'B' : 'A' })}
                             style={{ fontSize: '9px', fontWeight: 'bold', background: 'rgba(255,255,255,0.08)', color: '#22d3ee', border: '1px solid rgba(34,211,238,0.3)', padding: '2px 6px', borderRadius: '4px', cursor: 'pointer' }}
                           >
-                            â‡Œ Switch Now
+                            ⇌ Switch Now
                           </button>
                         </div>
                       </div>
@@ -4156,7 +4156,7 @@ export default function LaxPrimePage() {
                                 opacity: adaptiveSwitch.steps.length <= 1 ? 0.4 : 1
                               }}
                             >
-                              âœ• Remove Step
+                              ✕ Remove Step
                             </button>
                           </div>
                         </div>
@@ -4183,7 +4183,7 @@ export default function LaxPrimePage() {
                             )}
                             {stepHasOnlyUD && (
                               <div style={{ fontSize: '10px', color: '#a78bfa', fontWeight: 600, paddingLeft: 2 }}>
-                                âš¡ Only Ups/Downs: customize contract tick durations below (2â€“5 ticks)
+                                ⚡ Only Ups/Downs: customize contract tick durations below (2–5 ticks)
                               </div>
                             )}
                             <div style={{ display: 'flex', gap: '10px', width: '100%' }}>
@@ -4417,7 +4417,7 @@ export default function LaxPrimePage() {
                                       }}
                                       title="Delete trade"
                                     >
-                                      âœ•
+                                      ✕
                                     </button>
                                   )}
                                 </div>
@@ -4468,7 +4468,7 @@ export default function LaxPrimePage() {
                         <span className={`lp-sw-preview-chip ${activeSide === 'A' ? 'active' : ''}`} style={{ background: activeSide === 'A' ? '#6366f1' : undefined, color: activeSide === 'A' ? '#fff' : undefined }}>
                           A: {lblA}
                         </span>
-                        <span className="lp-sw-arrow">â‡Œ</span>
+                        <span className="lp-sw-arrow">⇌</span>
                         <span className={`lp-sw-preview-chip ${activeSide === 'B' ? 'active' : ''}`} style={{ background: activeSide === 'B' ? '#6366f1' : undefined, color: activeSide === 'B' ? '#fff' : undefined }}>
                           B: {lblB}
                         </span>
@@ -4488,8 +4488,8 @@ export default function LaxPrimePage() {
 
                       return (
                         <span key={si} className="lp-sw-preview-chip">
-                          {label} Ã—{step.reps}
-                          {si < adaptiveSwitch.steps.length - 1 && <span className="lp-sw-arrow">â†’</span>}
+                          {label} ×{step.reps}
+                          {si < adaptiveSwitch.steps.length - 1 && <span className="lp-sw-arrow">→</span>}
                         </span>
                       );
                     })
@@ -4572,14 +4572,14 @@ export default function LaxPrimePage() {
                     color: virtualSettings.vDoubleStage === 'B' ? '#4ade80' : '#818cf8',
                     border: `1px solid ${virtualSettings.vDoubleStage === 'B' ? '#4ade8055' : '#818cf855'}`,
                   }}>
-                    {virtualSettings.vDoubleStage === 'B' ? 'âš¡ GATE B EXEC' : 'ðŸ”µ GATE A VIRT'}
+                    {virtualSettings.vDoubleStage === 'B' ? '⚡ GATE B EXEC' : '🔵 GATE A VIRT'}
                   </span>
                 )}
               </div>
             </div>
             <div className="lp-status-box lp-signal-box">
               <div className="lp-status-label">LAST SIGNAL</div>
-              <div className="lp-status-text lp-signal-text">{lastSignal || 'â€”'}</div>
+              <div className="lp-status-text lp-signal-text">{lastSignal || '—'}</div>
             </div>
           </div>
 
@@ -4596,7 +4596,7 @@ export default function LaxPrimePage() {
 
         </div>
 
-        {/* â•â• RIGHT PANEL â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+        {/* ══ RIGHT PANEL ══════════════════════════════════════════════════ */}
         <div className="lp-right">
 
           {/* Run button + status */}
@@ -4608,15 +4608,15 @@ export default function LaxPrimePage() {
                 : <Play size={13} style={{ fill: 'currentColor' }} />}
               {isRunning ? 'Stop' : 'Run'}
             </button>
-            {/* Quick Virtual/Real toggle â€” survives bot restarts */}
+            {/* Quick Virtual/Real toggle — survives bot restarts */}
             <button
               className={`lp-virt-quick-btn ${virtualSettings.isVirtualMode ? 'virtual' : 'real'}`}
               onClick={() => setVirtualSettings({ isVirtualMode: !virtualSettings.isVirtualMode })}
               title={virtualSettings.isVirtualMode
-                ? 'VIRTUAL MODE â€” click to switch to REAL trading'
-                : 'REAL MODE â€” click to switch to VIRTUAL tracking'}
+                ? 'VIRTUAL MODE — click to switch to REAL trading'
+                : 'REAL MODE — click to switch to VIRTUAL tracking'}
             >
-              {virtualSettings.isVirtualMode ? 'âš— VIRT' : 'ðŸ’° REAL'}
+              {virtualSettings.isVirtualMode ? '🧪 VIRT' : '💵 REAL'}
             </button>
             <span className="lp-run-status">
               {isRunning
@@ -4692,7 +4692,7 @@ export default function LaxPrimePage() {
 
 
 
-          {/* Quick stats row â€” always visible */}
+          {/* Quick stats row — always visible */}
           <div className="lp-quick-stats">
             <div className="lp-qs"><span className="lp-qs-l">W</span><span className="lp-qs-v green">{globalStats?.won ?? 0}</span></div>
             <div className="lp-qs"><span className="lp-qs-l">L</span><span className="lp-qs-v red">{globalStats?.lost ?? 0}</span></div>
@@ -4726,14 +4726,14 @@ export default function LaxPrimePage() {
   );
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 // STYLES
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ───────────────────────────────────────────────────────────────────────────
 
 const STYLES = `
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap');
 
-/* â”€â”€ Parent Layout Override (Full Screen Support) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Parent Layout Override (Full Screen Support) ─────────── */
 main:has(.lp-root) {
   max-width: 100% !important;
   width: 100% !important;
@@ -4742,7 +4742,7 @@ main:has(.lp-root) {
   overflow-x: hidden !important;
 }
 
-/* â”€â”€ Liquid Glass Core Design System â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Liquid Glass Core Design System ──────────────────────── */
 .lp-root {
   display: flex !important;
   gap: 16px !important;
@@ -4816,7 +4816,7 @@ main:has(.lp-root) {
   background: rgba(255, 255, 255, 0.08);
 }
 
-/* â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Header ─────────────────────────────────────────────── */
 .lp-header-card {
   background: var(--glass-bg) !important;
   backdrop-filter: blur(16px) saturate(180%);
@@ -4880,7 +4880,7 @@ main:has(.lp-root) {
   text-shadow: 0 0 8px rgba(6, 182, 212, 0.2);
 }
 
-/* â”€â”€ Auth Warning â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Auth Warning ───────────────────────────────────────── */
 .lp-auth-warn {
   display: flex;
   align-items: center;
@@ -4900,7 +4900,7 @@ main:has(.lp-root) {
   border: 1px solid rgba(239, 68, 68, 0.2) !important;
 }
 
-/* â”€â”€ Settings Row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Settings Row ───────────────────────────────────────── */
 .lp-settings-row {
   display: flex;
   gap: 12px;
@@ -4997,7 +4997,7 @@ main:has(.lp-root) {
   font-size: 11px;
 }
 
-/* â”€â”€ Strategy Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Strategy Section ───────────────────────────────────── */
 .lp-strategy-section {
   background: var(--glass-bg) !important;
   backdrop-filter: blur(16px) saturate(180%);
@@ -5159,7 +5159,7 @@ main:has(.lp-root) {
   letter-spacing: 0.5px;
 }
 
-/* â”€â”€ Condition Row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Condition Row ──────────────────────────────────────── */
 .lp-cond-row {
   display: flex;
   align-items: center;
@@ -5291,7 +5291,7 @@ main:has(.lp-root) {
   opacity: 0.9;
 }
 
-/* â”€â”€ Advanced Pattern Builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Advanced Pattern Builder ─────────────────────────────────────────── */
 .lp-apb {
   display: flex;
   flex-direction: column;
@@ -5541,7 +5541,7 @@ main:has(.lp-root) {
   border-radius: 4px !important;
 }
 
-/* â”€â”€ Markets Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Markets Section ────────────────────────────────────── */
 .lp-markets-section {
   background: var(--glass-bg) !important;
   backdrop-filter: blur(16px) saturate(180%);
@@ -5595,7 +5595,7 @@ main:has(.lp-root) {
   box-shadow: var(--btn-glow-cyan);
 }
 
-/* â”€â”€ Execute Button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Execute Button ─────────────────────────────────────── */
 .lp-exec-btn {
   width: 100%;
   background: linear-gradient(135deg, #00f0ff, #0072ff) !important;
@@ -5630,7 +5630,7 @@ main:has(.lp-root) {
   cursor: not-allowed;
 }
 
-/* â”€â”€ Status Row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Status Row ─────────────────────────────────────────── */
 .lp-status-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -5686,7 +5686,7 @@ main:has(.lp-root) {
   50% { opacity: 0.6; transform: scale(1.35); }
 }
 
-/* â”€â”€ Market Cards Grid â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Market Cards Grid ──────────────────────────────────── */
 .lp-mc-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
@@ -5802,7 +5802,7 @@ main:has(.lp-root) {
 .lp-bubble.d8 { background: rgba(99, 102, 241, 0.1) !important; color: #6366f1 !important; border-color: rgba(99, 102, 241, 0.2) !important; }
 .lp-bubble.d9 { background: rgba(217, 70, 239, 0.1) !important; color: #d946ef !important; border-color: rgba(217, 70, 239, 0.2) !important; }
 
-/* â”€â”€ Right Panel (Trade Log & Execution Controls) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Right Panel (Trade Log & Execution Controls) ────────────────────── */
 .lp-right {
   width: 290px;
   flex-shrink: 0;
@@ -5872,7 +5872,7 @@ main:has(.lp-root) {
   margin-left: auto;
 }
 
-/* â”€â”€ Virtual Quick-Toggle Button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Virtual Quick-Toggle Button ────────────────────────────── */
 .lp-virt-quick-btn {
   display: flex;
   align-items: center;
@@ -5908,7 +5908,7 @@ main:has(.lp-root) {
   transform: translateY(-1px);
 }
 
-/* â”€â”€ Market card signal flash â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Market card signal flash ──────────────────────────────── */
 @keyframes lp-flash-pulse {
   0%   { box-shadow:0 0 0 0 rgba(0, 229, 255, 0); border-color: rgba(0, 229, 255, 0.2); }
   30%  { box-shadow:0 0 16px 6px rgba(0, 229, 255, 0.7); border-color: #00e5ff; }
@@ -5963,7 +5963,7 @@ main:has(.lp-root) {
 .lp-qs-v.green { color: #10b981; text-shadow: 0 0 8px rgba(16, 185, 129, 0.3); }
 .lp-qs-v.red { color: #ef4444; text-shadow: 0 0 8px rgba(239, 68, 68, 0.3); }
 
-/* â”€â”€ Transaction Panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Transaction Panel ──────────────────────────────────── */
 .lp-tx-panel {
   display: flex;
   flex-direction: column;
@@ -6149,7 +6149,7 @@ main:has(.lp-root) {
   border-color: rgba(239, 68, 68, 0.4) !important;
 }
 
-/* â”€â”€ Right Footer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Right Footer ───────────────────────────────────────── */
 .lp-right-footer {
   display: flex;
   align-items: center;
@@ -6176,7 +6176,7 @@ main:has(.lp-root) {
   font-family: monospace;
 }
 
-/* â”€â”€ Risk Disclaimer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Risk Disclaimer ────────────────────────────────────── */
 .lp-risk-disc {
   position: fixed;
   bottom: 16px;
@@ -6192,7 +6192,7 @@ main:has(.lp-root) {
   border: 1px solid rgba(255,255,255,0.1);
 }
 
-/* â”€â”€ Virtual System Panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Virtual System Panel ──────────────────────────────── */
 .lp-virt-toggle-btn {
   position: relative;
   display: flex;
@@ -6416,7 +6416,7 @@ main:has(.lp-root) {
 .lp-dpb-prv-r  { background:#14532d; color:#86efac; border:1px solid #22c55e; }
 .lp-dpb-prv-f  { background:#7f1d1d; color:#fca5a5; border:1px solid #ef4444; }
 
-/* â”€â”€ Trade Pattern Builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Trade Pattern Builder ───────────────────────────── */
 .lp-tpb-row { display:flex; align-items:center; gap:6px; margin:5px 0 4px; flex-wrap:wrap; }
 .lp-tpb-lbl-check { display:flex; align-items:center; gap:3px; cursor:pointer; }
 .lp-tpb-lbl-check input { accent-color:#6366f1; cursor:pointer; }
@@ -6442,7 +6442,7 @@ main:has(.lp-root) {
 .lp-tpb-leg-t { font-size:10px; font-weight:800; color:#4ade80; }
 .lp-tpb-leg-s { font-size:10px; font-weight:800; color:#fca5a5; }
 
-/* â”€â”€ Martingale Active Dot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Martingale Active Dot ──────────────────────────────── */
 .lp-mg-dot {
   display: inline-block;
   width: 8px;
@@ -6459,7 +6459,7 @@ main:has(.lp-root) {
   100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); opacity: 1; }
 }
 
-/* â”€â”€ Responsive: Tablet (< 900px) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Responsive: Tablet (< 900px) ───────────────────────── */
 @media (max-width: 900px) {
   .lp-root {
     flex-direction: column;
@@ -6485,7 +6485,7 @@ main:has(.lp-root) {
   .lp-title { font-size: 20px !important; }
 }
 
-/* â”€â”€ Responsive: Mobile (< 600px) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Responsive: Mobile (< 600px) ───────────────────────── */
 @media (max-width: 600px) {
   .lp-root { padding: 16px; }
   .lp-main { gap: 6px; }
@@ -6539,7 +6539,7 @@ main:has(.lp-root) {
   .lp-tx-list { max-height: 200px !important; }
 }
 
-/* â”€â”€ Responsive: Small phones (< 400px) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Responsive: Small phones (< 400px) ─────────────────── */
 @media (max-width: 400px) {
   .lp-title { font-size: 15px !important; }
   .lp-bubble { width: 16px !important; height: 16px !important; font-size: 8px !important; }
