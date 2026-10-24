@@ -135,6 +135,7 @@ export interface SwitcherTradeConfig {
 
 export interface AdaptiveSwitchStep {
   contractType?: string; // legacy fallback
+  barrier?: number;      // prediction / barrier for digit contracts
   reps: number;         // how many trades to execute at this step
   ticks?: number;       // custom tick duration fallback for step
   trades?: SwitcherTradeConfig[]; // new config for bulk / different contract types
@@ -1780,7 +1781,7 @@ export const useBotStore = create<BotStoreState>()(
 
         // Reset Virtual Switcher runtime counters
         const curASw = get().adaptiveSwitch;
-        const isVSActive = Boolean(curASw?.virtualSwitcher?.enabled);
+        const isVSActive = Boolean(curASw?.enabled && curASw?.virtualSwitcher?.enabled);
         if (curASw?.virtualSwitcher) {
           const vsRaw = curASw.virtualSwitcher;
           const safeReturnRule = {
@@ -2347,7 +2348,7 @@ export const useBotStore = create<BotStoreState>()(
               }
             }
           }
-          const isVsActiveSettlement = Boolean(get().adaptiveSwitch?.virtualSwitcher?.enabled);
+          const isVsActiveSettlement = Boolean(get().adaptiveSwitch?.enabled && get().adaptiveSwitch?.virtualSwitcher?.enabled);
           useDerivStore.getState().setVirtualSettings({
             isVirtualMode: isVsActiveSettlement ? useDerivStore.getState().virtualSettings.isVirtualMode : newVirtMode,
             startVirtualToReal: isVsActiveSettlement ? false : vsV.startVirtualToReal,
@@ -2372,7 +2373,7 @@ export const useBotStore = create<BotStoreState>()(
             let { vConsecWins, vConsecLosses, virtualWins, virtualLosses } = vsV;
             if (rt.isWin) { vConsecWins++; vConsecLosses = 0; virtualWins++; }
             else          { vConsecWins = 0; vConsecLosses++; virtualLosses++; }
-            const isVsSingle = Boolean(get().adaptiveSwitch?.virtualSwitcher?.enabled);
+            const isVsSingle = Boolean(get().adaptiveSwitch?.enabled && get().adaptiveSwitch?.virtualSwitcher?.enabled);
             let newVirtMode = isVsSingle ? useDerivStore.getState().virtualSettings.isVirtualMode : vsV.isVirtualMode;
             if (vsV.startVirtualToReal && !isVsSingle) {
               const streak = vsV.vTriggerType === 'losses' ? vConsecLosses : vConsecWins;
@@ -2439,6 +2440,7 @@ export const useBotStore = create<BotStoreState>()(
           // we bypass ALL entry condition guards (noContradiction, patternRetrigger,
           // THEN/THENALL, and evalStrategy) — initial trigger is already met.
           const isLockNoRecheck = Boolean(cLock?.enabled && eng.lockState.locked && cLock.mode === 'no_recheck');
+          const isLockContinuousCheck = Boolean(cLock?.enabled && eng.lockState.locked && cLock.mode === 'continuous_check');
 
           // ── No Contradiction (Wait for Opposite) guard ─────────────────────
           if (!isLockNoRecheck) {
@@ -2497,7 +2499,7 @@ export const useBotStore = create<BotStoreState>()(
           // Digit pattern retrigger guard (bypassed when locked in no_recheck mode, and ONLY applies to normal OR mode)
           const dpCond = s.conditions.find(c => c.type === 'DIGIT_PATTERN');
           const dpBoxMode = dpCond?.patternBoxMode ?? 'OR';
-          if (!isLockNoRecheck && dpCond && dpBoxMode === 'OR' && dpCond.patternRetrigger !== 'any') {
+          if (!isLockNoRecheck && !isLockContinuousCheck && dpCond && dpBoxMode === 'OR' && dpCond.patternRetrigger !== 'any') {
             const rtKey = `${stratId}_${symbol}`;
             if (!eng.retrigger[rtKey]) {
               eng.retrigger[rtKey] = { lastWasTrue: false, waitingForOpposite: false };
@@ -2534,7 +2536,7 @@ export const useBotStore = create<BotStoreState>()(
           const dpCondForMode = s.conditions.find(c => c.type === 'DIGIT_PATTERN');
           const boxMode = dpCondForMode?.patternBoxMode ?? 'OR';
 
-          if (!isLockNoRecheck && dpCondForMode && (boxMode === 'THEN' || boxMode === 'THENALL')) {
+          if (!isLockNoRecheck && !isLockContinuousCheck && dpCondForMode && (boxMode === 'THEN' || boxMode === 'THENALL')) {
             const numBoxes = Math.min(4, Math.max(1, (dpCondForMode.patternBoxes || []).length));
             const maxTrades = Math.max(1, dpCondForMode.thenMaxTrades ?? 3);
 
@@ -2879,7 +2881,7 @@ export const useBotStore = create<BotStoreState>()(
           const aSwitch = state.adaptiveSwitch;
           let tradesToPlace: { contractType: string; barrier?: number; count: number; ticks?: number }[] = [];
 
-          const isVSActive = Boolean(aSwitch.virtualSwitcher?.enabled);
+          const isVSActive = Boolean(aSwitch?.enabled && aSwitch?.virtualSwitcher?.enabled);
           if (isVSActive) {
             const vs = aSwitch.virtualSwitcher!;
             const isLockMode1 = Boolean(cLock?.enabled && cLock?.mode === 'no_recheck');
@@ -3487,7 +3489,7 @@ export const useBotStore = create<BotStoreState>()(
           if (roundIsWin) { rConsecWins++; rConsecLosses = 0; realWins++; }
           else            { rConsecWins = 0; rConsecLosses++; realLosses++; }
 
-          const isVsActive = Boolean(get().adaptiveSwitch?.virtualSwitcher?.enabled);
+          const isVsActive = Boolean(get().adaptiveSwitch?.enabled && get().adaptiveSwitch?.virtualSwitcher?.enabled);
           if (isVsActive && !roundJustSettled) {
             processVirtualSwitcherRealResult(roundIsWin, get, set);
           }

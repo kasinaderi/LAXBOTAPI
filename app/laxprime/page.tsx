@@ -2004,9 +2004,9 @@ function TradeLogPanel({ logs: rawLogs, stats, journalLogs = [], onReset, onClea
                       {log.step > 1 && <span style={{ fontSize: 8, color: '#f59e0b', fontWeight: 'bold' }}>Step {log.step}</span>}
                     </div>
 
-                    <span style={{ fontWeight: '500', color: '#4b5563' }}>USD {(log.stake ?? 0).toFixed(2)}</span>
+                    <span style={{ fontWeight: '500', color: '#94a3b8' }}>USD {(log.stake ?? 0).toFixed(2)}</span>
 
-                    <span style={{ fontFamily: 'monospace', fontWeight: '700', color: '#1f2937' }}>
+                    <span style={{ fontFamily: 'monospace', fontWeight: '700', color: '#f3f4f6' }}>
                       {getExitDisplay(log)}
                     </span>
 
@@ -3642,7 +3642,7 @@ export default function LaxPrimePage() {
                   );
                 })()}
 
-                {adaptiveSwitch.virtualSwitcher?.enabled ? (
+                {(adaptiveSwitch.enabled && adaptiveSwitch.virtualSwitcher?.enabled) ? (
                   <div style={{
                     padding: '10px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.02)',
                     border: '1px solid rgba(255,255,255,0.06)', fontSize: '10px', color: 'rgba(255,255,255,0.5)', marginBottom: '12px',
@@ -4101,11 +4101,17 @@ export default function LaxPrimePage() {
                   {adaptiveSwitch.steps.map((step, si) => {
                     const stepTrades = step.trades && step.trades.length > 0
                       ? step.trades
-                      : [{ contractType: step.contractType || 'DIGITEVEN', barrier: 4, count: 1 }];
+                      : [{ contractType: step.contractType || 'DIGITEVEN', barrier: step.barrier ?? 4, count: 1, ticks: step.ticks ?? 1 }];
 
                     const updateStepTrades = (newTrades: typeof stepTrades) => {
                       const next = [...adaptiveSwitch.steps];
-                      next[si] = { ...next[si], trades: newTrades };
+                      next[si] = {
+                        ...next[si],
+                        trades: newTrades,
+                        contractType: newTrades[0]?.contractType || next[si].contractType,
+                        barrier: newTrades[0]?.barrier ?? next[si].barrier,
+                        ticks: newTrades[0]?.ticks ?? next[si].ticks,
+                      };
                       setAdaptiveSwitch({ ...adaptiveSwitch, steps: next });
                     };
 
@@ -4383,7 +4389,7 @@ export default function LaxPrimePage() {
                                       type="number"
                                       min={(t.contractType === 'RUNHIGH' || t.contractType === 'RUNLOW') ? 2 : 1}
                                       max={(t.contractType === 'RUNHIGH' || t.contractType === 'RUNLOW') ? 5 : 100}
-                                      value={t.ticks ?? 5}
+                                      value={(t as any).ticks ?? 5}
                                       style={{ width: '32px', height: '24px', fontSize: '11px', padding: 0, textAlign: 'center' }}
                                       onChange={e => {
                                         const nextT = [...stepTrades];
@@ -4479,11 +4485,16 @@ export default function LaxPrimePage() {
                     adaptiveSwitch.steps.map((step, si) => {
                       const stepTrades = step.trades && step.trades.length > 0
                         ? step.trades
-                        : [{ contractType: step.contractType || 'DIGITEVEN', count: 1 }];
+                        : [{ contractType: step.contractType || 'DIGITEVEN', barrier: step.barrier ?? 4, count: 1, ticks: step.ticks ?? 1 }];
 
                       const label = stepTrades.map(t => {
                         const lbl = TRADE_OPTIONS.find(o => o.value === t.contractType)?.label || t.contractType;
-                        return t.count > 1 ? `${lbl} (x${t.count})` : lbl;
+                        const bar = needsBarrier(t.contractType) && ((t as any).barrier !== undefined || step.barrier !== undefined)
+                          ? ` [${(t as any).barrier ?? step.barrier ?? 4}]`
+                          : '';
+                        const tks = ((t as any).ticks || step.ticks) ? ` (${(t as any).ticks || step.ticks}t)` : '';
+                        const formatted = `${lbl}${bar}${tks}`;
+                        return t.count > 1 ? `${formatted} (x${t.count})` : formatted;
                       }).join(' + ');
 
                       return (
@@ -4517,7 +4528,7 @@ export default function LaxPrimePage() {
                   index={i}
                   onChange={updated => setStrategies(p => p.map(x => x.id === updated.id ? updated : x))}
                   onRemove={() => setStrategies(p => p.filter(x => x.id !== s.id))}
-                  adaptiveSwitchEnabled={adaptiveSwitch.enabled || !!adaptiveSwitch.virtualSwitcher?.enabled}
+                  adaptiveSwitchEnabled={adaptiveSwitch.enabled}
                 />
               ))}
             </div>

@@ -968,7 +968,7 @@ export function MiniLaxPrimeModal({
   };
 
   const handleSave = () => {
-    const isVS = Boolean(adaptiveSwitch.virtualSwitcher?.enabled);
+    const isVS = Boolean(adaptiveSwitch.enabled && adaptiveSwitch.virtualSwitcher?.enabled);
     const configToSave: LaxPrimeStepConfig = {
       selectedMarkets: selectedMarkets.length > 0 ? selectedMarkets : ['1HZ10V', '1HZ100V'],
       strategies: strategies.length > 0 ? strategies : [createStrategy(0)],
@@ -1640,7 +1640,7 @@ export function MiniLaxPrimeModal({
 
             {showVirtualPanel && (
               <div className="space-y-3 mt-3 pt-3 border-t border-white/10">
-                {Boolean(adaptiveSwitch.virtualSwitcher?.enabled) && (
+                {Boolean(adaptiveSwitch.enabled && adaptiveSwitch.virtualSwitcher?.enabled) && (
                   <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300">
                     <span className="text-base">🔒</span>
                     <div>
@@ -1649,7 +1649,7 @@ export function MiniLaxPrimeModal({
                     </div>
                   </div>
                 )}
-                <div className={`space-y-3 ${Boolean(adaptiveSwitch.virtualSwitcher?.enabled) ? 'opacity-35 pointer-events-none' : ''}`}>
+                <div className={`space-y-3 ${Boolean(adaptiveSwitch.enabled && adaptiveSwitch.virtualSwitcher?.enabled) ? 'opacity-35 pointer-events-none' : ''}`}>
                 {/* === Virtual → Real Card === */}
                 <div className="bg-black/40 border border-white/10 rounded-xl p-3 space-y-2">
                   <div className="flex items-center justify-between">
@@ -2261,7 +2261,7 @@ export function MiniLaxPrimeModal({
                 })()}
 
                 {/* Standard Switcher Modes (Paused when Virtual Switcher is active) */}
-                {adaptiveSwitch.virtualSwitcher?.enabled ? (
+                {(adaptiveSwitch.enabled && adaptiveSwitch.virtualSwitcher?.enabled) ? (
                   <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-[10px] text-gray-400">
                     <span className="text-amber-400 font-bold">🔒 Standard Switcher Modes Paused: </span>
                     Adaptive Contracts and Sequence Steps are inactive while Virtual Trade Switcher is running.
@@ -2571,49 +2571,208 @@ export function MiniLaxPrimeModal({
                     {/* SEQUENCE STEPS Panel */}
                     {(adaptiveSwitch.mode || 'sequence') === 'sequence' && (
                       <div className="space-y-2">
-                        {adaptiveSwitch.steps.map((step, idx) => (
-                          <div key={idx} className="flex items-center gap-3 bg-black/40 p-2.5 rounded-xl border border-white/5 text-xs">
-                            <span className="font-bold text-gray-400 w-14 shrink-0">Step {idx + 1}:</span>
-                            <select
-                              value={step.contractType || 'DIGITEVEN'}
-                              onChange={e => {
-                                const newType = e.target.value;
-                                setAdaptiveSwitch(prev => ({
-                                  ...prev,
-                                  steps: prev.steps.map((s, i) => i === idx ? { ...s, contractType: newType } : s),
-                                }));
-                              }}
-                              className="flex-1 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-white text-xs" style={{ background: '#0f172a', color: '#fff' }}
-                            >
-                              {TRADE_OPTIONS.map(opt => (
-                                <option key={opt.value} value={opt.value} style={{ background: '#0f172a' }}>{opt.label}</option>
-                              ))}
-                            </select>
-                            <div className="flex items-center gap-1.5 ml-auto">
-                              <span className="text-gray-500 text-[10px]">Reps:</span>
-                              <input
-                                type="number"
-                                min="1"
-                                max="20"
-                                value={step.reps}
+                        {adaptiveSwitch.steps.map((step, idx) => {
+                          const isDual = !!adaptiveSwitch.dualMode;
+                          const stepTrades = step.trades && step.trades.length > 0
+                            ? step.trades
+                            : [
+                                { contractType: step.contractType || 'DIGITEVEN', barrier: step.barrier ?? 4, count: 1, ticks: step.ticks ?? 1 },
+                                { contractType: 'DIGITODD', barrier: 4, count: 1, ticks: 1 },
+                              ];
+
+                          const updateDualTrade = (sideIdx: 0 | 1, patch: any) => {
+                            const newTrades = [...stepTrades];
+                            newTrades[sideIdx] = { ...newTrades[sideIdx], ...patch };
+                            setAdaptiveSwitch(prev => ({
+                              ...prev,
+                              steps: prev.steps.map((s, i) => i === idx ? {
+                                ...s,
+                                trades: newTrades,
+                                contractType: newTrades[0]?.contractType,
+                                barrier: newTrades[0]?.barrier,
+                                ticks: newTrades[0]?.ticks,
+                              } : s),
+                            }));
+                          };
+
+                          if (isDual) {
+                            return (
+                              <div key={idx} className="bg-black/40 p-2.5 rounded-xl border border-purple-500/20 text-xs space-y-2">
+                                <div className="flex items-center justify-between border-b border-white/5 pb-1.5">
+                                  <span className="font-bold text-purple-300">Step {idx + 1} (Dual Contracts):</span>
+                                  <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-gray-500 text-[10px]">Reps:</span>
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        max="50"
+                                        value={step.reps}
+                                        onChange={e => {
+                                          const reps = Math.max(1, +e.target.value || 1);
+                                          setAdaptiveSwitch(prev => ({
+                                            ...prev,
+                                            steps: prev.steps.map((s, i) => i === idx ? { ...s, reps } : s),
+                                          }));
+                                        }}
+                                        className="w-12 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-center text-white text-xs" style={{ background: '#0f172a', color: '#fff' }}
+                                      />
+                                    </div>
+                                    {adaptiveSwitch.steps.length > 1 && (
+                                      <button type="button" onClick={() => setAdaptiveSwitch(prev => ({ ...prev, steps: prev.steps.filter((_, i) => i !== idx) }))}
+                                        className="text-rose-400 hover:text-rose-300 text-xs font-bold">✕</button>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2">
+                                  {/* Contract A */}
+                                  <div className="flex flex-col gap-1.5 p-2 rounded-lg bg-white/2 border border-white/5">
+                                    <span className="text-[9px] font-bold text-indigo-300">CONTRACT A</span>
+                                    <select
+                                      value={stepTrades[0]?.contractType || 'DIGITEVEN'}
+                                      onChange={e => updateDualTrade(0, { contractType: e.target.value })}
+                                      className="w-full bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }}
+                                    >
+                                      {TRADE_OPTIONS.map(opt => <option key={opt.value} value={opt.value} style={{ background: '#0f172a' }}>{opt.label}</option>)}
+                                    </select>
+                                    <div className="flex items-center gap-2">
+                                      {needsBarrier(stepTrades[0]?.contractType || 'DIGITEVEN') && (
+                                        <div className="flex items-center gap-1">
+                                          <span className="text-[9px] text-gray-400">Bar:</span>
+                                          <input type="number" min={0} max={9} value={stepTrades[0]?.barrier ?? 4} onChange={e => updateDualTrade(0, { barrier: Math.min(9, Math.max(0, +e.target.value || 0)) })}
+                                            className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
+                                        </div>
+                                      )}
+                                      <div className="flex items-center gap-1 ml-auto">
+                                        <span className="text-[9px] text-purple-400 font-bold">Ticks:</span>
+                                        <input type="number" min={1} max={100} value={stepTrades[0]?.ticks ?? 1} onChange={e => updateDualTrade(0, { ticks: Math.max(1, +e.target.value || 1) })}
+                                          className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Contract B */}
+                                  <div className="flex flex-col gap-1.5 p-2 rounded-lg bg-white/2 border border-white/5">
+                                    <span className="text-[9px] font-bold text-indigo-300">CONTRACT B</span>
+                                    <select
+                                      value={stepTrades[1]?.contractType || 'DIGITODD'}
+                                      onChange={e => updateDualTrade(1, { contractType: e.target.value })}
+                                      className="w-full bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }}
+                                    >
+                                      {TRADE_OPTIONS.map(opt => <option key={opt.value} value={opt.value} style={{ background: '#0f172a' }}>{opt.label}</option>)}
+                                    </select>
+                                    <div className="flex items-center gap-2">
+                                      {needsBarrier(stepTrades[1]?.contractType || 'DIGITODD') && (
+                                        <div className="flex items-center gap-1">
+                                          <span className="text-[9px] text-gray-400">Bar:</span>
+                                          <input type="number" min={0} max={9} value={stepTrades[1]?.barrier ?? 4} onChange={e => updateDualTrade(1, { barrier: Math.min(9, Math.max(0, +e.target.value || 0)) })}
+                                            className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
+                                        </div>
+                                      )}
+                                      <div className="flex items-center gap-1 ml-auto">
+                                        <span className="text-[9px] text-purple-400 font-bold">Ticks:</span>
+                                        <input type="number" min={1} max={100} value={stepTrades[1]?.ticks ?? 1} onChange={e => updateDualTrade(1, { ticks: Math.max(1, +e.target.value || 1) })}
+                                          className="w-9 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[10px]" style={{ background: '#0f172a', color: '#fff' }} />
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          // Single Contract per step
+                          const cType = step.contractType || 'DIGITEVEN';
+                          const hasBar = needsBarrier(cType);
+                          const isOU = cType === 'RUNHIGH' || cType === 'RUNLOW';
+                          return (
+                            <div key={idx} className="flex items-center gap-2 bg-black/40 p-2.5 rounded-xl border border-white/5 text-xs flex-wrap">
+                              <span className="font-bold text-gray-400 w-12 shrink-0">Step {idx + 1}:</span>
+                              <select
+                                value={cType}
                                 onChange={e => {
-                                  const reps = Math.max(1, +e.target.value || 1);
+                                  const newType = e.target.value;
+                                  let curTicks = step.ticks ?? 1;
+                                  if (newType === 'RUNHIGH' || newType === 'RUNLOW') curTicks = Math.max(2, Math.min(5, curTicks));
                                   setAdaptiveSwitch(prev => ({
                                     ...prev,
-                                    steps: prev.steps.map((s, i) => i === idx ? { ...s, reps } : s),
+                                    steps: prev.steps.map((s, i) => i === idx ? { ...s, contractType: newType, ticks: curTicks, trades: [{ contractType: newType, barrier: s.barrier ?? 4, count: 1, ticks: curTicks }] } : s),
                                   }));
                                 }}
-                                className="w-12 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-center text-white text-xs" style={{ background: '#0f172a', color: '#fff' }}
-                              />
+                                className="flex-1 min-w-[100px] bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-white text-xs" style={{ background: '#0f172a', color: '#fff' }}
+                              >
+                                {TRADE_OPTIONS.map(opt => (
+                                  <option key={opt.value} value={opt.value} style={{ background: '#0f172a' }}>{opt.label}</option>
+                                ))}
+                              </select>
+
+                              {hasBar && (
+                                <div className="flex items-center gap-1">
+                                  <span className="text-gray-400 text-[10px]">Bar:</span>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="9"
+                                    value={step.barrier ?? 4}
+                                    onChange={e => {
+                                      const bar = Math.min(9, Math.max(0, +e.target.value || 0));
+                                      setAdaptiveSwitch(prev => ({
+                                        ...prev,
+                                        steps: prev.steps.map((s, i) => i === idx ? { ...s, barrier: bar, trades: [{ contractType: s.contractType || 'DIGITEVEN', barrier: bar, count: 1, ticks: s.ticks ?? 1 }] } : s),
+                                      }));
+                                    }}
+                                    className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-xs" style={{ background: '#0f172a', color: '#fff' }}
+                                  />
+                                </div>
+                              )}
+
+                              <div className="flex items-center gap-1">
+                                <span className="text-purple-400 font-bold text-[10px]">Ticks:</span>
+                                <input
+                                  type="number"
+                                  min={isOU ? 2 : 1}
+                                  max={isOU ? 5 : 100}
+                                  value={step.ticks ?? 1}
+                                  onChange={e => {
+                                    let val = Math.max(1, Math.min(100, +e.target.value || 1));
+                                    if (isOU) val = Math.max(2, Math.min(5, val));
+                                    setAdaptiveSwitch(prev => ({
+                                      ...prev,
+                                      steps: prev.steps.map((s, i) => i === idx ? { ...s, ticks: val, trades: [{ contractType: s.contractType || 'DIGITEVEN', barrier: s.barrier ?? 4, count: 1, ticks: val }] } : s),
+                                    }));
+                                  }}
+                                  className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-xs" style={{ background: '#0f172a', color: '#fff' }}
+                                />
+                              </div>
+
+                              <div className="flex items-center gap-1 ml-auto">
+                                <span className="text-gray-500 text-[10px]">Reps:</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="50"
+                                  value={step.reps}
+                                  onChange={e => {
+                                    const reps = Math.max(1, +e.target.value || 1);
+                                    setAdaptiveSwitch(prev => ({
+                                      ...prev,
+                                      steps: prev.steps.map((s, i) => i === idx ? { ...s, reps } : s),
+                                    }));
+                                  }}
+                                  className="w-11 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-xs" style={{ background: '#0f172a', color: '#fff' }}
+                                />
+                              </div>
+
+                              {adaptiveSwitch.steps.length > 1 && (
+                                <button type="button" onClick={() => setAdaptiveSwitch(prev => ({ ...prev, steps: prev.steps.filter((_, i) => i !== idx) }))}
+                                  className="text-rose-400 hover:text-rose-300 text-xs font-bold px-1">✕</button>
+                              )}
                             </div>
-                            {adaptiveSwitch.steps.length > 1 && (
-                              <button type="button" onClick={() => setAdaptiveSwitch(prev => ({ ...prev, steps: prev.steps.filter((_, i) => i !== idx) }))}
-                                className="text-rose-400 hover:text-rose-300 text-xs font-bold">✕</button>
-                            )}
-                          </div>
-                        ))}
+                          );
+                        })}
                         <button type="button"
-                          onClick={() => setAdaptiveSwitch(prev => ({ ...prev, steps: [...prev.steps, { contractType: 'DIGITEVEN', reps: 2 }] }))}
+                          onClick={() => setAdaptiveSwitch(prev => ({ ...prev, steps: [...prev.steps, { contractType: 'DIGITEVEN', barrier: 4, ticks: 1, reps: 2 }] }))}
                           className="w-full py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-[10px] font-bold border border-white/10">
                           + Add Step
                         </button>

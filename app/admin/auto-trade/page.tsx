@@ -88,6 +88,7 @@ interface AutoLXTradeRecord {
     contractType: string;
     entrySpot: string;
     exitDigit: number | null;
+    exitSpot?: string;
     stake: number;
     profit: number;
     result: 'WIN' | 'LOSS' | 'PENDING';
@@ -194,7 +195,7 @@ const getStepTradeType = (step: PlaylistTradeStep): string => {
     if (!step) return '—';
     if (step.source === 'laxprime') {
         if (step.laxprimeConfig?.adaptiveSwitch?.enabled) {
-            if (step.laxprimeConfig.adaptiveSwitch.virtualSwitcher?.enabled) {
+            if (step.laxprimeConfig.adaptiveSwitch.enabled && step.laxprimeConfig.adaptiveSwitch.virtualSwitcher?.enabled) {
                 return 'V-Switcher';
             }
             return step.laxprimeConfig.adaptiveSwitch.mode === 'adaptive' ? 'Adaptive' : step.laxprimeConfig.adaptiveSwitch.mode === 'manual' ? 'Manual' : 'Switcher';
@@ -1135,7 +1136,7 @@ export default function AutoTradePage() {
                     },
                 };
 
-                const isVSActive = Boolean(stepConfig?.adaptiveSwitch?.virtualSwitcher?.enabled);
+                const isVSActive = Boolean(stepConfig?.adaptiveSwitch?.enabled && stepConfig?.adaptiveSwitch?.virtualSwitcher?.enabled);
                 if (stepConfig && stepConfig.virtualSettings) {
                     const vs = stepConfig.virtualSettings;
                     const isVirtActive = isVSActive || vs.startVirtualToReal || vs.isDoubleVirtual || vs.smartSettings?.enabled || vs.isVirtualMode;
@@ -1983,6 +1984,7 @@ export default function AutoTradePage() {
                 contractType: normalizeContractType(log.contract || (log as any).contractType || (isVirt ? 'DIGITEVEN' : '—')),
                 entrySpot:    log.entrySpot || '—',
                 exitDigit:    log.exitSpot && log.exitSpot !== '-' ? Number(String(log.exitSpot).slice(-1)) : null,
+                exitSpot:     log.exitSpot && log.exitSpot !== '-' ? String(log.exitSpot) : undefined,
                 stake:        stakeVal,
                 profit,
                 result:       isWon ? 'WIN' : 'LOSS',
@@ -4943,7 +4945,7 @@ export default function AutoTradePage() {
                                                                     trade.result === 'LOSS' ? 'bg-rose-500/20 text-rose-400' :
                                                                     'bg-white/5 text-gray-400'
                                                                 }`}>
-                                                                    {trade.exitDigit ?? '?'}
+                                                                    {trade.exitDigit ?? (trade.exitSpot && trade.exitSpot !== '-' ? trade.exitSpot : '?')}
                                                                 </span>
                                                             </td>
                                                             <td className="px-3 py-2.5 text-right">
