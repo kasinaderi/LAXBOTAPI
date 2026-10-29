@@ -1,4 +1,4 @@
-﻿import { create } from 'zustand';
+import { create } from 'zustand';
 import { SmartScanner, ScannerSignal, ScannerTick } from '../lib/scanner/SmartScanner';
 import { ticksToDecimals } from '../lib/deriv/constants';
 import { derivWS } from '../lib/deriv/websocket';
@@ -64,8 +64,7 @@ interface ScannerStoreState {
         historySize: number;
         historyReady: boolean;
         lastEpoch?: number;
-        digits?: number[];
-        quotes?: number[];
+        // digits/quotes are no longer stored in Zustand — use getScannerInstance(symbol).getDigits() instead
         details?: {
             dominantSide: string;
             oddPct: number;
@@ -129,10 +128,9 @@ export const useScannerStore = create<ScannerStoreState>((set, get) => ({
         // Feed the tick into the scanner engine
         scanner.update(scannerTick);
 
-        // Always call getStatus() so the digits array in Zustand is refreshed
-        // on every tick — not just when update() fires a signal.
-        // (update() returns early when buffer < 1000 but getStatus() still
-        // exposes the growing buffer so the UI can rank markets correctly.)
+        // Always call getStatus() so market regime metadata in Zustand is refreshed.
+        // NOTE: digits/quotes are no longer stored in Zustand to prevent OOM.
+        // Use getScannerInstance(symbol).getDigits() to read the buffers directly.
         const status = scanner.getStatus();
         const signal = scanner.currentSignal;
 
@@ -146,8 +144,7 @@ export const useScannerStore = create<ScannerStoreState>((set, get) => ({
                     historySize: status.historySize,
                     historyReady: status.historyReady,
                     lastEpoch: status.lastEpoch,
-                    digits: status.digits || [],
-                    quotes: (status as any).quotes || [],
+                    // digits/quotes omitted — access via getScannerInstance(symbol) to avoid Zustand OOM
                     details: status.details || undefined,
                 },
             },
@@ -238,8 +235,7 @@ export const useScannerStore = create<ScannerStoreState>((set, get) => ({
                                     historySize: status.historySize,
                                     historyReady: status.historyReady,
                                     lastEpoch: status.lastEpoch,
-                                    digits: status.digits || [],
-                                    quotes: (status as any).quotes || [],
+                                    // digits/quotes omitted — access via getScannerInstance(symbol) to avoid Zustand OOM
                                     details: status.details || undefined,
                                 },
                             },
@@ -336,3 +332,10 @@ export const useScannerStore = create<ScannerStoreState>((set, get) => ({
         };
     },
 }));
+
+// ── Direct scanner accessor (bypasses Zustand for performance) ────────────────
+// Use this to read digit/quote buffers without going through React state.
+// This avoids storing 1000-element arrays in Zustand on every tick (OOM fix).
+export function getScannerInstance(symbol: string): SmartScanner | undefined {
+    return scanners.get(symbol);
+}

@@ -4,7 +4,7 @@ import './scanner.css';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useDerivStore } from '@/store/useDerivStore';
 import { usePageSettings } from '@/store/usePageSettings';
-import { useScannerStore } from '@/store/useScannerStore';
+import { useScannerStore, getScannerInstance } from '@/store/useScannerStore';
 import { derivWS } from '@/lib/deriv/websocket';
 import { Play, Square, ChevronDown, AlertTriangle, Loader2, Layers, ShieldAlert } from 'lucide-react';
 import {
@@ -1730,8 +1730,8 @@ function MarketCardInner({ symbol, label, isFlashing }: {
 }) {
   const { marketRegimes } = useScannerStore();
   const regime = marketRegimes[symbol];
-  const digits = regime?.digits ?? [];
-  const quotes = regime?.quotes ?? [];
+  const digits = getScannerInstance(symbol)?.getDigits() ?? [];
+  const quotes = getScannerInstance(symbol)?.getQuotes() ?? [];
   const historyReady = regime?.historyReady ?? false;
 
   const last5       = digits.slice(-5);

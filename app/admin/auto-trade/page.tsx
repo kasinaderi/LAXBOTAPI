@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useDerivStore } from '@/store/useDerivStore';
 import { usePageSettings } from '@/store/usePageSettings';
-import { useScannerStore } from '@/store/useScannerStore';
+import { useScannerStore, getScannerInstance } from '@/store/useScannerStore';
 import { useBotStore, normalizeContractType } from '@/store/useBotStore';
 import { ticksToDecimals } from '@/lib/deriv/constants';
 import { tradeEngine } from '@/lib/deriv/trade-engine';
@@ -591,9 +591,9 @@ export default function AutoTradePage() {
                         const ranked = TARGET_MARKETS.map(m => {
                             const r = liveRegimes[m.value];
                             if (!r?.historyReady) return { symbol: m.value, label: m.label, score: -1 };
-                            if (preset === 'differ_1') { const { count } = getTopAlternatingPairAndCount((r.digits || []).slice(-100)); return { symbol: m.value, label: m.label, score: count }; }
+                            if (preset === 'differ_1') { const { count } = getTopAlternatingPairAndCount((getScannerInstance(m.value)?.getDigits() || []).slice(-100)); return { symbol: m.value, label: m.label, score: count }; }
                             if (preset === 'differ_2') {
-                                const digits = r.digits || [];
+                                const digits = getScannerInstance(m.value)?.getDigits() || [];
                                 const last100 = digits.slice(-100);
                                 if (last100.length === 0) return { symbol: m.value, label: m.label, score: -1 };
                                 let consecEvens = 0;
@@ -621,7 +621,7 @@ export default function AutoTradePage() {
                         setSelectedMarket(best.symbol); setMarket(best.symbol); subscribeToMarket(best.symbol);
                         if (preset === 'differ_1') {
                             const r = useScannerStore.getState().marketRegimes[best.symbol];
-                            const last100 = (r?.digits || []).slice(-100);
+                            const last100 = (getScannerInstance(best.symbol)?.getDigits() || []).slice(-100);
                             const { pair, count } = getTopAlternatingPairAndCount(last100);
                             setEntryDigits(pair);
                             setPipelineSteps([{ id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[0], reps: 1 }, { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[1], reps: 1 }]);
@@ -635,7 +635,7 @@ export default function AutoTradePage() {
                             addAuditLog(`🔄 Warmup done → ${best.label} | Pair: [${pair.join(', ')}] (${count} patterns)`, 'success');
                         } else if (preset === 'differ_2') {
                             const r = useScannerStore.getState().marketRegimes[best.symbol];
-                            const last100 = (r?.digits || []).slice(-100);
+                            const last100 = (getScannerInstance(best.symbol)?.getDigits() || []).slice(-100);
                             const { pair, count } = getTopOddPair(last100);
                             setEntryDigits(pair);
                             setPipelineSteps([{ id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[0], reps: 1 }, { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[1], reps: 1 }]);
@@ -854,7 +854,10 @@ export default function AutoTradePage() {
     // ── Audit helper ─────────────────────────────────────────────────────
     const addAuditLog = useCallback((message: string, type: AuditLog['type'] = 'info') => {
         const time = new Date().toLocaleTimeString([], { hour12: false });
-        setAuditLogs(prev => [{ time, message, type }, ...prev].slice(0, 200));
+        setAuditLogs(prev => {
+            if (prev.length > 0 && prev[0].message === message && prev[0].type === type) return prev;
+            return [{ time, message, type }, ...prev].slice(0, 300);
+        });
     }, []);
 
     // ── Export Trade Logs to CSV ──────────────────────────────────────────
@@ -1783,11 +1786,11 @@ export default function AutoTradePage() {
                             const r = liveRegimes[m.value];
                             if (!r?.historyReady) return { symbol: m.value, label: m.label, score: -1 };
                             if (preset === 'differ_1') {
-                                const { count } = getTopAlternatingPairAndCount((r.digits || []).slice(-100));
+                                const { count } = getTopAlternatingPairAndCount((getScannerInstance(m.value)?.getDigits() || []).slice(-100));
                                 return { symbol: m.value, label: m.label, score: count };
                             }
                             if (preset === 'differ_2') {
-                                const digits = r.digits || [];
+                                const digits = getScannerInstance(m.value)?.getDigits() || [];
                                 const last100 = digits.slice(-100);
                                 if (last100.length === 0) return { symbol: m.value, label: m.label, score: -1 };
                                 let consecEvens = 0;
@@ -1820,7 +1823,7 @@ export default function AutoTradePage() {
                         if (preset === 'differ_1') {
                             const freshRegimes = useScannerStore.getState().marketRegimes;
                             const r = freshRegimes[best.symbol];
-                            const last100 = (r?.digits || []).slice(-100);
+                            const last100 = (getScannerInstance(best.symbol)?.getDigits() || []).slice(-100);
                             const { pair, count } = getTopAlternatingPairAndCount(last100);
                             // ── React state (UI sync) ────────────────────────────
                             setEntryDigits(pair);
@@ -1855,7 +1858,7 @@ export default function AutoTradePage() {
                         } else if (preset === 'differ_2') {
                             const freshRegimes = useScannerStore.getState().marketRegimes;
                             const r = freshRegimes[best.symbol];
-                            const last100 = (r?.digits || []).slice(-100);
+                            const last100 = (getScannerInstance(best.symbol)?.getDigits() || []).slice(-100);
                             const { pair, count } = getTopOddPair(last100);
                             // ── React state (UI sync) ────────────────────────────
                             setEntryDigits(pair);
@@ -2123,14 +2126,14 @@ export default function AutoTradePage() {
             
             if (r?.historyReady) {
                 if (selectedPreset === 'differ_1') {
-                    const digits = r.digits || [];
+                    const digits = getScannerInstance(m.value)?.getDigits() || [];
                     const last100 = digits.slice(-100);
                     const { pair, count } = getTopAlternatingPairAndCount(last100);
                     score = count;
                     rating = count >= 12 ? 'EXCELLENT' : count >= 8 ? 'GOOD' : count >= 5 ? 'NEUTRAL' : 'AVOID';
                     rationale = `Top Pair: {${pair.join(', ')}} (Alternation Count: ${count})`;
                 } else if (selectedPreset === 'differ_2') {
-                    const digits = r.digits || [];
+                    const digits = getScannerInstance(m.value)?.getDigits() || [];
                     const last100 = digits.slice(-100);
                     if (last100.length > 0) {
                         let consecEvens = 0;
@@ -2228,6 +2231,44 @@ export default function AutoTradePage() {
                     startBot();
                 }
             }
+
+            // ── Playlist step engine health check ────────────────────────────
+            // If a LaxPrime playlist step is executing but the bot engine stopped
+            // unexpectedly (e.g. due to a JS pause under memory pressure), restart it.
+            if (
+                selectedPresetRef.current === 'trade_playlist' &&
+                playlistStatusRef.current === 'executing' &&
+                activeStepSourceRef.current === 'laxprime' &&
+                !isEngineRunning &&
+                isRunningRef.current &&
+                tradingStatus === 'connected'
+            ) {
+                const elapsed = Date.now() - stepLaunchTimeRef.current;
+                // Only auto-restart if step has been running for at least 10s (avoid false triggers at launch)
+                if (elapsed > 10000) {
+                    addAuditLog(`[Step ${playlistCurrentStepIdxRef.current + 1}] Engine heartbeat: bot engine was stopped unexpectedly — restarting scanner...`, 'warn');
+                    // Re-ensure all step markets are scanned
+                    const activeStepMkts = useBotStore.getState().selectedMarkets;
+                    activeStepMkts.forEach((m: string) => useScannerStore.getState().ensureScanner(m));
+                    useScannerStore.getState().startScanning();
+                    useBotStore.getState().startBot();
+                    stepLaunchTimeRef.current = Date.now();
+                }
+            }
+
+            // ── Long-run scanner keepalive (every ~5 min) ───────────────────
+            // Re-subscribe scanner markets every 5 minutes to prevent silent disconnection
+            // under long-running sessions (browser may silently drop WS subscriptions).
+            const _now = Date.now();
+            if (!(window as any).__lastScannerKeepalive__ || _now - (window as any).__lastScannerKeepalive__ > 300000) {
+                (window as any).__lastScannerKeepalive__ = _now;
+                if (isRunningRef.current) {
+                    const botMkts = useBotStore.getState().selectedMarkets;
+                    if (botMkts && botMkts.length > 0) {
+                        botMkts.forEach((m: string) => useScannerStore.getState().ensureScanner(m));
+                    }
+                }
+            }
         }, 8000);
 
         if (cycleInterval !== 'continuous' && selectedPreset !== 'trade_playlist' && selectedPresetRef.current !== 'trade_playlist') {
@@ -2287,11 +2328,11 @@ export default function AutoTradePage() {
                             const r = liveRegimes[m.value];
                             if (!r?.historyReady) return { symbol: m.value, label: m.label, score: -1 };
                             if (preset === 'differ_1') {
-                                const { count } = getTopAlternatingPairAndCount((r.digits || []).slice(-100));
+                                const { count } = getTopAlternatingPairAndCount((getScannerInstance(m.value)?.getDigits() || []).slice(-100));
                                 return { symbol: m.value, label: m.label, score: count };
                             }
                             if (preset === 'differ_2') {
-                                const digits = r.digits || [];
+                                const digits = getScannerInstance(m.value)?.getDigits() || [];
                                 const last100 = digits.slice(-100);
                                 if (last100.length === 0) return { symbol: m.value, label: m.label, score: -1 };
                                 let consecEvens = 0;
@@ -2320,7 +2361,7 @@ export default function AutoTradePage() {
                             if (preset === 'differ_1') {
                                 const freshRegimes = useScannerStore.getState().marketRegimes;
                                 const r = freshRegimes[best.symbol];
-                                const last100 = (r?.digits || []).slice(-100);
+                                const last100 = (getScannerInstance(best.symbol)?.getDigits() || []).slice(-100);
                                 const { pair, count } = getTopAlternatingPairAndCount(last100);
                                 // ── React state (UI sync) ────────────────────────────
                                 setEntryDigits(pair);
@@ -2356,7 +2397,7 @@ export default function AutoTradePage() {
                             } else if (preset === 'differ_2') {
                                 const freshRegimes = useScannerStore.getState().marketRegimes;
                                 const r = freshRegimes[best.symbol];
-                                const last100 = (r?.digits || []).slice(-100);
+                                const last100 = (getScannerInstance(best.symbol)?.getDigits() || []).slice(-100);
                                 const { pair, count } = getTopOddPair(last100);
                                 // ── React state (UI sync) ────────────────────────────
                                 setEntryDigits(pair);
@@ -2496,8 +2537,7 @@ export default function AutoTradePage() {
             
             // differ_1: dynamic pair setup on session manual launch
             if (selectedPreset === 'differ_1') {
-                const r = marketRegimes[best.symbol];
-                const last100 = (r?.digits || []).slice(-100);
+                const last100 = (getScannerInstance(best.symbol)?.getDigits() || []).slice(-100);
                 const { pair, count } = getTopAlternatingPairAndCount(last100);
                 const newSteps = [
                     { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[0], reps: 1 },
@@ -2520,8 +2560,7 @@ export default function AutoTradePage() {
                 applyStep(0, pair[0], 'DIGITDIFF');
             } else if (selectedPreset === 'differ_2') {
                 // differ_2: pick highest-odd-% market, extract top 2 odd digits
-                const r = marketRegimes[best.symbol];
-                const last100 = (r?.digits || []).slice(-100);
+                const last100 = (getScannerInstance(best.symbol)?.getDigits() || []).slice(-100);
                 const { pair, count } = getTopOddPair(last100);
                 const newSteps = [
                     { id: uid(), contractType: 'DIGITDIFF' as ContractTypeKey, prediction: pair[0], reps: 1 },
@@ -2571,7 +2610,7 @@ export default function AutoTradePage() {
         addAuditLog(`Market: ${best?.label || selectedMarket} | Stake: $${s} | Mode: ${pipelineMode}`, 'info');
         if (entryDigitEnabled) {
             const displayDigits = selectedPreset === 'differ_1' && best ? (
-                getTopAlternatingPairAndCount((marketRegimes[best.symbol]?.digits || []).slice(-100)).pair
+                getTopAlternatingPairAndCount((getScannerInstance(best.symbol)?.getDigits() || []).slice(-100)).pair
             ) : entryDigits;
             addAuditLog(`Entry Digits: [${displayDigits.join(', ')}]${instantTrigger ? ' · Instant' : ''}`, 'info');
         }
@@ -2684,7 +2723,7 @@ export default function AutoTradePage() {
             let bestScore = -1;
             for (const [sym, r] of Object.entries(allMarketData)) {
                 if (!r.historyReady) continue;
-                const last100 = (r.digits || []).slice(-100);
+                const last100 = (getScannerInstance(sym)?.getDigits() || []).slice(-100);
                 const { pair, count } = getTopAlternatingPairAndCount(last100);
                 if (count > bestScore) { bestScore = count; initialPair = pair; }
             }
@@ -2743,7 +2782,7 @@ export default function AutoTradePage() {
             // First try matching markets with >= 5 evens
             for (const [sym, r] of Object.entries(allMarketData)) {
                 if (!r.historyReady) continue;
-                const last100 = (r.digits || []).slice(-100);
+                const last100 = (getScannerInstance(sym)?.getDigits() || []).slice(-100);
                 if (last100.length === 0) continue;
                 
                 let consecEvens = 0;
@@ -2768,7 +2807,7 @@ export default function AutoTradePage() {
             if (bestOddPct === -1) {
                 for (const [sym, r] of Object.entries(allMarketData)) {
                     if (!r.historyReady) continue;
-                    const last100 = (r.digits || []).slice(-100);
+                    const last100 = (getScannerInstance(sym)?.getDigits() || []).slice(-100);
                     if (last100.length === 0) continue;
                     const oddCount = last100.filter(d => d % 2 !== 0).length;
                     const pct = (oddCount / last100.length) * 100;

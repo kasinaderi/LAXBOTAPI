@@ -53,6 +53,21 @@ export class SmartScanner {
         console.log(`[SmartScanner] ${this.symbol} History Loaded: ${this.ticksBuffer.length} ticks`);
     }
 
+    /** Direct access to buffered digits (avoids Zustand copy for performance) */
+    public getDigits(): number[] {
+        return this.ticksBuffer.map(t => t.digit);
+    }
+
+    /** Direct access to buffered quotes (avoids Zustand copy for performance) */
+    public getQuotes(): number[] {
+        return this.ticksBuffer.map(t => t.quote);
+    }
+
+    /** Current last epoch */
+    public getLastEpoch(): number {
+        return this.lastEpoch;
+    }
+
     public update(tick: ScannerTick): ScannerSignal | null {
         if (!this.historyReady) return null;
 

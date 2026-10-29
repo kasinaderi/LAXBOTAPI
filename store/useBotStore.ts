@@ -12,7 +12,7 @@
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { useScannerStore } from './useScannerStore';
+import { useScannerStore, getScannerInstance } from './useScannerStore';
 import { useDerivStore } from './useDerivStore';
 import { getActivePageId } from './usePageSettings';
 import { tradeWS } from '../lib/deriv/trade-ws';
@@ -471,11 +471,7 @@ export function match1000FreqToken(token: string, d: number, digits: number[], i
         leDigit = e;
       }
     }
-    const matched = (d === leDigit);
-    if (matched) {
-      console.log(`[1000FreqToken LE] Market: ${symbol || "unknown"} | Digit: ${d} | LE: ${leDigit} (${minFreq}/${windowDigits.length}t) | Evens: {0:${freq[0]}, 2:${freq[2]}, 4:${freq[4]}, 6:${freq[6]}, 8:${freq[8]}}`);
-    }
-    return matched;
+    return (d === leDigit);
   }
 
   if (token === 'HE') {
@@ -487,11 +483,7 @@ export function match1000FreqToken(token: string, d: number, digits: number[], i
         heDigit = e;
       }
     }
-    const matched = (maxFreq > 0 && d === heDigit);
-    if (matched) {
-      console.log(`[1000FreqToken HE] Market: ${symbol || "unknown"} | Digit: ${d} | HE: ${heDigit} (${maxFreq}/${windowDigits.length}t) | Evens: {0:${freq[0]}, 2:${freq[2]}, 4:${freq[4]}, 6:${freq[6]}, 8:${freq[8]}}`);
-    }
-    return matched;
+    return (maxFreq > 0 && d === heDigit);
   }
 
   if (token === 'LO') {
@@ -503,11 +495,7 @@ export function match1000FreqToken(token: string, d: number, digits: number[], i
         loDigit = o;
       }
     }
-    const matched = (d === loDigit);
-    if (matched) {
-      console.log(`[1000FreqToken LO] Market: ${symbol || "unknown"} | Digit: ${d} | LO: ${loDigit} (${minFreq}/${windowDigits.length}t) | Odds: {1:${freq[1]}, 3:${freq[3]}, 5:${freq[5]}, 7:${freq[7]}, 9:${freq[9]}}`);
-    }
-    return matched;
+    return (d === loDigit);
   }
 
   if (token === 'HO') {
@@ -519,11 +507,7 @@ export function match1000FreqToken(token: string, d: number, digits: number[], i
         hoDigit = o;
       }
     }
-    const matched = (maxFreq > 0 && d === hoDigit);
-    if (matched) {
-      console.log(`[1000FreqToken HO] Market: ${symbol || "unknown"} | Digit: ${d} | HO: ${hoDigit} (${maxFreq}/${windowDigits.length}t) | Odds: {1:${freq[1]}, 3:${freq[3]}, 5:${freq[5]}, 7:${freq[7]}, 9:${freq[9]}}`);
-    }
-    return matched;
+    return (maxFreq > 0 && d === hoDigit);
   }
 
   return false;
@@ -2008,8 +1992,9 @@ export const useBotStore = create<BotStoreState>()(
           vt.ticksCount++;
           vt.lastEpoch = lastEpoch;
 
-          const rDigits  = (regime.digits  || []) as number[];
-          const rQuotes  = (regime.quotes  || []) as number[];
+          const _vScanInst = getScannerInstance(symbol);
+          const rDigits  = (_vScanInst?.getDigits()  || []) as number[];
+          const rQuotes  = (_vScanInst?.getQuotes()  || []) as number[];
           const exitDigit = rDigits[rDigits.length - 1] ?? 0;
           const exitPrice = rQuotes[rQuotes.length - 1] ?? 0;
           const prevPrice = rQuotes[rQuotes.length - 2] ?? vt.entryPrice;
@@ -2396,8 +2381,10 @@ export const useBotStore = create<BotStoreState>()(
         const regime = useScannerStore.getState().marketRegimes[symbol];
         if (!regime || !regime.historyReady) return;
 
-        const digits = (regime.digits || []) as number[];
-        const quotes = (regime.quotes || []) as number[];
+        const _scannerInst = getScannerInstance(symbol);
+        if (!_scannerInst || !_scannerInst.historyReady) return;
+        const digits = _scannerInst.getDigits() as number[];
+        const quotes = _scannerInst.getQuotes() as number[];
         // Each condition handles its own minimum (e.g. LAST_DIGITS needs lastN, EVEN_PCT needs period).
         // Only require 5 digits so that fast conditions (LAST_DIGITS n=4) fire immediately.
         if (digits.length < 5) return;

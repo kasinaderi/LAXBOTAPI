@@ -5,7 +5,7 @@ import { Card, CardHeader, CardContent } from './ui';
 import { Activity, Trash2, RotateCcw } from 'lucide-react';
 import { useDerivStore } from '@/store/useDerivStore';
 import { useRelayStore } from '@/store/useRelayStore';
-import { useScannerStore } from '@/store/useScannerStore';
+import { useScannerStore, getScannerInstance } from '@/store/useScannerStore';
 import { Button, Badge } from './ui';
 
 const EMPTY_ARRAY: number[] = [];
@@ -36,7 +36,7 @@ export function LiveDigits() {
     const regime = marketRegimes[market];
 
     // Scanner History Source
-    const historyStoredTicks = regime?.digits || EMPTY_ARRAY;
+    const historyStoredTicks: number[] = getScannerInstance(market)?.getDigits() || EMPTY_ARRAY;
     const historyReady = regime?.historyReady || false;
     const historySize = regime?.historySize || 0;
 
@@ -44,7 +44,7 @@ export function LiveDigits() {
     const isUsingRelay = relayStatus === 'connected' && relayTicks.length > 0;
 
     // For STATS: Use full available history (preferably 1000 strict)
-    const ticks = historyReady ? historyStoredTicks : (isUsingRelay ? relayTicks : storeTicks);
+    const ticks: number[] = historyReady ? historyStoredTicks : (isUsingRelay ? relayTicks : storeTicks);
 
     // For DISPLAY: Show last 50
     const displayTicks = ticks.slice(-50);
