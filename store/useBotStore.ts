@@ -551,7 +551,7 @@ function matchTrigger(
   const pd = idx > 0 ? digits[idx - 1] : d;
   const q  = quotes[idx];
   const pq = idx > 0 ? quotes[idx - 1] : q;
-  const b  = trig.barrier ?? 4;
+  const b  = Number(trig.barrier ?? 4);
 
   switch (trig.token) {
     case 'E':  return d % 2 === 0;
@@ -2047,7 +2047,15 @@ export const useBotStore = create<BotStoreState>()(
         eng.waitingForOpposite = {};
         eng.lastTradeTime = 0;
         botTradeIds.clear();
+        const vsCurrent = useDerivStore.getState().virtualSettings;
+        const isVirtActive = Boolean(
+          vsCurrent.startVirtualToReal ||
+          vsCurrent.isDoubleVirtual ||
+          vsCurrent.smartSettings?.enabled ||
+          vsCurrent.patternSwitcher?.enabled
+        );
         useDerivStore.getState().setVirtualSettings({
+          isVirtualMode: isVirtActive ? true : vsCurrent.isVirtualMode,
           vDoubleStage: 'A',
           vStageBCompletedReps: 0,
           vConsecWinsB: 0,
@@ -2056,6 +2064,34 @@ export const useBotStore = create<BotStoreState>()(
           vVirtualLossesB: 0,
           vSmartStage: 1,
           vSmartCount: 0,
+          virtualWins: 0,
+          virtualLosses: 0,
+          vConsecWins: 0,
+          vConsecLosses: 0,
+          realWins: 0,
+          realLosses: 0,
+          rConsecWins: 0,
+          rConsecLosses: 0,
+          vResultHistory: [],
+          vResultHistoryB: [],
+        });
+        eng.virtualPatternState = {
+          phase: 'scanning_box1',
+          currentBoxIndex: 0,
+          lockedSymbol: null,
+          ticksWaited: 0,
+          lastTickEpoch: 0,
+        };
+        const cLock = get().continuousLock;
+        const isCLockActive = Boolean(cLock?.enabled);
+        set({
+          virtualPatternStatus: (vsCurrent.patternSwitcher?.enabled && isCLockActive) ? {
+            phase: 'waiting_for_lock',
+            currentBoxIndex: 0,
+            lockedSymbol: null,
+            ticksWaited: 0,
+            timeout: 0,
+          } : undefined
         });
         eng.lastTradeTime = 0;
         botTradeIds.clear();
@@ -2505,11 +2541,36 @@ export const useBotStore = create<BotStoreState>()(
         // ── Virtual System: Digit Pattern Switcher (Virtual -> Real) ─────────
         // Only evaluates when the bot is running and in Virtual Mode
         const vsCurrentScan = derivState.virtualSettings;
-        if (isVirtual && vsCurrentScan.isVirtualMode && vsCurrentScan.patternSwitcher?.enabled) {
-          const vpConfig = vsCurrentScan.patternSwitcher;
-          const vpBoxes = (vpConfig.patternBoxes || []).filter(b => b.triggers && b.triggers.length > 0);
+        const cLock = state.continuousLock;
 
-          if (vpBoxes.length > 0) {
+        // Strict Continuous Lock rules:
+        // Rule 1: NEVER look for conditions before market is locked!
+        // Rule 2: ALWAYS look in that locked market strictly (all other markets bypassed)!
+        const isContinuousLockActive = Boolean(cLock?.enabled);
+        const isContinuousLockLocked = Boolean(isContinuousLockActive && eng.lockState.locked && eng.lockState.symbol);
+
+        if (isVirtual && vsCurrentScan.isVirtualMode && vsCurrentScan.patternSwitcher?.enabled) {
+          if (isContinuousLockActive && !isContinuousLockLocked) {
+            // Market is NOT locked yet — strictly do NOT check pattern switcher conditions
+            if (state.virtualPatternStatus?.phase !== 'waiting_for_lock') {
+              set({
+                virtualPatternStatus: {
+                  phase: 'waiting_for_lock',
+                  currentBoxIndex: 0,
+                  lockedSymbol: null,
+                  ticksWaited: 0,
+                  timeout: 0,
+                }
+              });
+            }
+          } else if (!isContinuousLockActive || (isContinuousLockLocked && eng.lockState.symbol === symbol)) {
+            // Evaluates ONLY when:
+            // - Continuous Lock is OFF (all active markets)
+            // - OR Continuous Lock is ON and THIS IS THE LOCKED MARKET!
+            const vpConfig = vsCurrentScan.patternSwitcher;
+            const vpBoxes = (vpConfig.patternBoxes || []).filter(b => b.triggers && b.triggers.length > 0);
+
+            if (vpBoxes.length > 0) {
             const vps = eng.virtualPatternState;
             const mode = vpConfig.patternBoxMode || 'OR';
             const numBoxes = Math.min(4, vpBoxes.length);
@@ -2519,8 +2580,11 @@ export const useBotStore = create<BotStoreState>()(
               if (evaluatePatternBoxes(vpBoxes, digits, quotes, symbol)) {
                 didSwitchToReal = true;
                 derivState.setVirtualSettings({ isVirtualMode: false });
+                const recentDigits = digits.slice(-Math.min(5, digits.length)).join('-');
+                const matchMsg = `⚡ Virtual Pattern Matched on ${symbol} (recent: [${recentDigits}])! Switched to REAL mode.`;
+                get().addJournal('info', 'Virtual → Real Switched', matchMsg);
                 set({
-                  botStatusMsg: `⚡ Virtual Pattern Matched on ${symbol}! Switched to REAL mode.`,
+                  botStatusMsg: matchMsg,
                   virtualPatternStatus: {
                     phase: 'scanning_box1',
                     currentBoxIndex: 0,
@@ -2747,7 +2811,12 @@ export const useBotStore = create<BotStoreState>()(
 
             if (didSwitchToReal) {
               isVirtual = false;
+              const recentDigits = digits.slice(-Math.min(5, digits.length)).join('-');
+              const matchMsg = `⚡ Virtual Pattern Matched on ${symbol} (recent: [${recentDigits}])! Switched to REAL mode.`;
+              get().addJournal('info', 'Virtual → Real Switched', matchMsg);
+              set({ botStatusMsg: matchMsg });
             }
+          }
           }
         }
 
@@ -3179,7 +3248,27 @@ export const useBotStore = create<BotStoreState>()(
             if (eng.thenState[stratId]) {
               eng.thenState[stratId].repeatStep = 0;
               eng.thenState[stratId].ticksWaited = 0;
+            // Continuous Lock has locked onto this market!
+            // Start Pattern Switcher fresh on this locked market from Box 1.
+            if (vsCurrentScan.patternSwitcher?.enabled && isVirtual) {
+              eng.virtualPatternState = {
+                phase: 'scanning_box1',
+                currentBoxIndex: 0,
+                lockedSymbol: symbol,
+                ticksWaited: 0,
+                lastTickEpoch: 0,
+              };
+              set({
+                virtualPatternStatus: {
+                  phase: 'scanning_box1',
+                  currentBoxIndex: 0,
+                  lockedSymbol: symbol,
+                  ticksWaited: 0,
+                  timeout: 0,
+                }
+              });
             }
+          }
           }
 
           // ── TRADE PATTERN EXECUTION ────────────────────────────────────────
@@ -3742,6 +3831,26 @@ export const useBotStore = create<BotStoreState>()(
             eng.lockState.lockProfit = 0;
             eng.thenState = {};
             eng.waitingForOpposite = {};
+            // If Pattern Switcher is active, reset to waiting for next Continuous Lock market
+            const curVS = useDerivStore.getState().virtualSettings;
+            if (curVS.patternSwitcher?.enabled) {
+              eng.virtualPatternState = {
+                phase: 'scanning_box1',
+                currentBoxIndex: 0,
+                lockedSymbol: null,
+                ticksWaited: 0,
+                lastTickEpoch: 0,
+              };
+              set({
+                virtualPatternStatus: {
+                  phase: 'waiting_for_lock',
+                  currentBoxIndex: 0,
+                  lockedSymbol: null,
+                  ticksWaited: 0,
+                  timeout: 0,
+                }
+              });
+            }
             set({ botStatusMsg: `🔓 UNLOCKED from ${lockedMktLabel} — ${unlockReason}. Rescanning all markets...` });
           }
         }
