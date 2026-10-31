@@ -48,7 +48,7 @@ export default function LaxSniperXV() {
                         <ShieldCheck className="w-4 h-4 text-indigo-400" />
                         <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400">Verified Logic</span>
                     </div>
-                    <Badge variant="info">v2.1-XV</Badge>
+                    <Badge variant="info">2.5</Badge>
                 </div>
             </div>
 

@@ -9,7 +9,7 @@ import { motion } from 'framer-motion';
 const TOOLS = [
     {
         name: 'LAXSNIPER XV',
-        version: 'v2.1-XV',
+        version: '2.5',
         desc: 'Advanced digit trading bot with multi-trigger pattern engine and martingale management.',
         path: '/laxsniper-xv',
         status: 'Operational',
