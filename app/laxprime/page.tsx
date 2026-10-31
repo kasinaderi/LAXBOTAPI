@@ -645,6 +645,339 @@ function AdvancedPatternBuilder({ cond, onChange }: {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// VIRTUAL PATTERN BUILDER (Multi-Entry Sequence for Virtual -> Real Switcher)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function VirtualPatternBuilder({
+  config,
+  onChange,
+}: {
+  config: {
+    patternBoxes: PatternBox[];
+    patternBoxMode: 'OR' | 'THEN' | 'THENALL';
+    thenTimeout?: number;
+    thenTimeouts?: number[];
+    thenMaxTrades?: number;
+  };
+  onChange: (updated: {
+    patternBoxes: PatternBox[];
+    patternBoxMode: 'OR' | 'THEN' | 'THENALL';
+    thenTimeout?: number;
+    thenTimeouts?: number[];
+    thenMaxTrades?: number;
+  }) => void;
+}) {
+  const boxes: PatternBox[] = (config.patternBoxes && config.patternBoxes.length > 0)
+    ? config.patternBoxes
+    : [{ triggers: [{ token: 'E' }, { token: 'E' }] }];
+
+  const setBoxes = (next: PatternBox[]) => onChange({ ...config, patternBoxes: next });
+
+  const addBox = () => {
+    if (boxes.length >= 4) return;
+    const nextBoxes = [...boxes, { triggers: [{ token: 'E' }, { token: 'E' }] }];
+    const nextTimeouts = [...(config.thenTimeouts || [20, 20, 20, 20])];
+    while (nextTimeouts.length <= boxes.length) {
+      nextTimeouts.push(config.thenTimeout ?? 20);
+    }
+    onChange({ ...config, patternBoxes: nextBoxes, thenTimeouts: nextTimeouts });
+  };
+
+  const removeBox = (bi: number) => {
+    const nextBoxes = boxes.filter((_, i) => i !== bi);
+    const nextTimeouts = config.thenTimeouts ? config.thenTimeouts.filter((_, i) => i !== bi) : undefined;
+    onChange({ ...config, patternBoxes: nextBoxes, thenTimeouts: nextTimeouts });
+  };
+
+  const addTrigger = (bi: number) =>
+    setBoxes(boxes.map((b, i) => i !== bi ? b : { triggers: [...b.triggers, { token: 'E' }] }));
+
+  const removeTrigger = (bi: number, ti: number) =>
+    setBoxes(boxes.map((b, i) => i !== bi ? b : { triggers: b.triggers.filter((_, j) => j !== ti) }));
+
+  const updateTrigger = (bi: number, ti: number, patch: Partial<PatternTrigger>) =>
+    setBoxes(boxes.map((b, i) => i !== bi ? b : {
+      triggers: b.triggers.map((t, j) => j !== ti ? t : { ...t, ...patch }),
+    }));
+
+  return (
+    <div className="lp-apb" style={{ marginTop: '8px' }}>
+      {/* Header */}
+      <div className="lp-apb-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span className="lp-apb-title">Multi-Entry Sequence (V → Real)</span>
+        </div>
+        {/* Show +Add Box when < 4 boxes */}
+        {(config.patternBoxMode ?? 'OR') === 'OR' && boxes.length < 4 && (
+          <button className="lp-apb-add-btn" onClick={addBox} type="button">+ Add Box</button>
+        )}
+        {(config.patternBoxMode === 'THEN' || config.patternBoxMode === 'THENALL') && boxes.length < 4 && (
+          <button className="lp-apb-add-btn" onClick={addBox} type="button">+ Add Box {boxes.length + 1}</button>
+        )}
+      </div>
+
+      {/* Dynamic orientation hint based on mode */}
+      {(() => {
+        const mode = config.patternBoxMode ?? 'OR';
+        const numB = boxes.length;
+        const hintMap: Record<string, string> = {
+          OR:      'When ANY box matches on active markets → Immediately switches to REAL mode',
+          THEN:    numB > 2
+            ? `Box 1 matches → locks market → sequential boxes (Box 2 to Box ${numB}) must match within timeout → switches to REAL`
+            : 'Box 1 matches → locks market → Box 2 must fire within timeout ticks → switches to REAL',
+          THENALL: numB > 2
+            ? `Box 1 matches → scans all markets for sequential boxes (up to Box ${numB}) → switches to REAL`
+            : 'Box 1 matches on any market → ALL markets scanned for Box 2 → switches to REAL',
+        };
+        return (
+          <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', marginBottom: 4, paddingLeft: 2 }}>
+            {hintMap[mode]}
+          </div>
+        );
+      })()}
+
+      {/* Boxes Grid */}
+      <div className="lp-apb-grid">
+        {boxes.map((box, bi) => {
+          const mode = config.patternBoxMode ?? 'OR';
+          if ((mode === 'THEN' || mode === 'THENALL') && bi >= 4) return null;
+
+          return (
+            <React.Fragment key={bi}>
+              {/* Separator between boxes */}
+              {bi > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '0 4px', gap: '6px' }}>
+                  {bi === 1 && (() => {
+                    const curMode = config.patternBoxMode ?? 'OR';
+                    const nextMode = curMode === 'OR' ? 'THEN' : curMode === 'THEN' ? 'THENALL' : 'OR';
+                    const modeStyles: Record<string, { bg: string; color: string; glow: string }> = {
+                      OR:      { bg: 'rgba(245,158,11,0.12)', color: '#f59e0b', glow: '0 0 6px rgba(245,158,11,0.3)' },
+                      THEN:    { bg: 'rgba(20,184,166,0.15)', color: '#2dd4bf', glow: '0 0 6px rgba(20,184,166,0.35)' },
+                      THENALL: { bg: 'rgba(139,92,246,0.15)', color: '#a78bfa', glow: '0 0 6px rgba(139,92,246,0.4)' },
+                    };
+                    const st = modeStyles[curMode];
+                    const box2Timeout = config.thenTimeouts?.[1] ?? config.thenTimeout ?? 20;
+
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                        <button
+                          type="button"
+                          onClick={() => onChange({ ...config, patternBoxMode: nextMode as 'OR' | 'THEN' | 'THENALL' })}
+                          title={`Mode: ${curMode} — click to switch to ${nextMode}`}
+                          style={{
+                            fontSize: 8, fontWeight: 900, letterSpacing: 1,
+                            background: st.bg, color: st.color,
+                            border: `1px solid ${st.color}40`,
+                            borderRadius: 4, padding: '3px 7px',
+                            cursor: 'pointer', boxShadow: st.glow,
+                            transition: 'all 0.2s',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {curMode} ▾
+                        </button>
+
+                        {(curMode === 'THEN' || curMode === 'THENALL') && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', alignItems: 'center', minWidth: '72px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                              <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap' }}>⏱ TIMEOUT</span>
+                              <input
+                                type="number" min={1} max={500}
+                                value={box2Timeout}
+                                onChange={e => {
+                                  const val = Math.max(1, +e.target.value || 20);
+                                  const nextTimeouts = [...(config.thenTimeouts || [20, val, 20, 20])];
+                                  while (nextTimeouts.length <= 1) nextTimeouts.push(20);
+                                  nextTimeouts[1] = val;
+                                  onChange({ ...config, thenTimeout: val, thenTimeouts: nextTimeouts });
+                                }}
+                                style={{
+                                  width: '34px', textAlign: 'center', fontSize: 9,
+                                  background: 'rgba(0,0,0,0.4)', color: '#fff',
+                                  border: `1px solid ${st.color}40`, borderRadius: 3,
+                                  padding: '1px 2px', outline: 'none',
+                                }}
+                                title="Max ticks to wait for Box 2 before resetting"
+                              />
+                              <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.3)' }}>t</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {bi > 1 && (() => {
+                    const curMode = config.patternBoxMode ?? 'OR';
+                    if (curMode === 'OR') {
+                      return (
+                        <span style={{ fontSize: 9, fontWeight: 900, color: '#f59e0b', letterSpacing: 1, background: 'rgba(245,158,11,0.1)', borderRadius: 4, padding: '2px 4px' }}>OR</span>
+                      );
+                    }
+                    const modeStyles: Record<string, { bg: string; color: string; glow: string }> = {
+                      THEN:    { bg: 'rgba(20,184,166,0.15)', color: '#2dd4bf', glow: '0 0 6px rgba(20,184,166,0.35)' },
+                      THENALL: { bg: 'rgba(139,92,246,0.15)', color: '#a78bfa', glow: '0 0 6px rgba(139,92,246,0.4)' },
+                    };
+                    const st = modeStyles[curMode] || modeStyles.THEN;
+                    const boxTimeout = config.thenTimeouts?.[bi] ?? config.thenTimeout ?? 20;
+
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                        <span
+                          style={{
+                            fontSize: 8, fontWeight: 900, letterSpacing: 1,
+                            background: st.bg, color: st.color,
+                            border: `1px solid ${st.color}40`,
+                            borderRadius: 4, padding: '3px 7px',
+                            boxShadow: st.glow,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {curMode}
+                        </span>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                          <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap' }}>⏱ TIMEOUT</span>
+                          <input
+                            type="number" min={1} max={500}
+                            value={boxTimeout}
+                            onChange={e => {
+                              const val = Math.max(1, +e.target.value || 20);
+                              const nextTimeouts = [...(config.thenTimeouts || [20, 20, 20, 20])];
+                              while (nextTimeouts.length <= bi) nextTimeouts.push(20);
+                              nextTimeouts[bi] = val;
+                              onChange({ ...config, thenTimeouts: nextTimeouts });
+                            }}
+                            style={{
+                              width: '34px', textAlign: 'center', fontSize: 9,
+                              background: 'rgba(0,0,0,0.4)', color: '#fff',
+                              border: `1px solid ${st.color}40`, borderRadius: 3,
+                              padding: '1px 2px', outline: 'none',
+                            }}
+                            title={`Max ticks to wait for Box ${bi + 1} before resetting`}
+                          />
+                          <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.3)' }}>t</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
+              <div className={`lp-apb-card ${bi === 0 ? 'active-step' : ''}`}>
+                <div className="lp-apb-card-hdr">
+                  <span className="lp-apb-card-title">Box {bi + 1}</span>
+                  <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.3)', marginLeft: 4 }}>oldest→latest</span>
+                  {boxes.length > 1 && (
+                    <button className="lp-apb-card-remove" type="button" onClick={() => removeBox(bi)}>✕</button>
+                  )}
+                </div>
+
+                <div className="lp-apb-triggers">
+                  {box.triggers.map((trig, ti) => {
+                    const bNeedsBarrier = tokenNeedsBarrier(trig.token);
+                    return (
+                      <div key={ti} className="lp-badge-trigger">
+                        <select
+                          value={trig.token}
+                          onChange={e => {
+                            const token = e.target.value;
+                            const barrier = tokenNeedsBarrier(token) ? (trig.barrier ?? 4) : undefined;
+                            updateTrigger(bi, ti, { token, barrier });
+                          }}
+                          style={{
+                            background: getTokenBgColor(trig.token),
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: bNeedsBarrier ? '4px 0 0 4px' : '4px',
+                            padding: '0 6px',
+                            height: '100%',
+                            fontSize: '10px',
+                            fontWeight: '900',
+                            cursor: 'pointer',
+                            outline: 'none',
+                            appearance: 'none',
+                            textAlign: 'center',
+                            minWidth: '22px'
+                          }}
+                        >
+                          <option value="E">E</option>
+                          <option value="O">O</option>
+                          <option value="U">U</option>
+                          <option value="V">V</option>
+                          <option value="M">M</option>
+                          <option value="D">D</option>
+                          <option value="SE">SE</option>
+                          <option value="SO">SO</option>
+                          <option value="R">R</option>
+                          <option value="F">F</option>
+                          <option value="HE" title="Highest Even in 1000 ticks">HE</option>
+                          <option value="LE" title="Least Even in 1000 ticks">LE</option>
+                          <option value="HO" title="Highest Odd in 1000 ticks">HO</option>
+                          <option value="LO" title="Least Odd in 1000 ticks">LO</option>
+                        </select>
+
+                        {bNeedsBarrier && (
+                          <select
+                            value={trig.barrier ?? 4}
+                            onChange={e => updateTrigger(bi, ti, { barrier: +e.target.value })}
+                            style={{
+                              background: 'rgba(0, 0, 0, 0.45)',
+                              color: '#fff',
+                              border: 'none',
+                              padding: '0 6px',
+                              height: '100%',
+                              fontSize: '10px',
+                              fontWeight: '700',
+                              cursor: 'pointer',
+                              outline: 'none',
+                              appearance: 'none',
+                              textAlign: 'center',
+                              minWidth: '20px'
+                            }}
+                          >
+                            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(d => (
+                              <option key={d} value={d}>{d}</option>
+                            ))}
+                          </select>
+                        )}
+
+                        {box.triggers.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeTrigger(bi, ti)}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'rgba(255, 255, 255, 0.4)',
+                              padding: '0 6px',
+                              fontSize: '9px',
+                              cursor: 'pointer',
+                              height: '100%',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  <button className="lp-apb-add-trig-dashed" type="button" onClick={() => addTrigger(bi)}>+</button>
+                </div>
+              </div>
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 const MA_TYPES = ['SMA', 'EMA', 'WMA', 'HMA', 'KAMA', 'VWMA', 'ALMA', 'TEMA', 'ZLEMA', 'LSMA'];
 
 function RsiSignalBuilder({ cond, onChange }: { cond: Condition; onChange: (c: Condition) => void }) {
@@ -2140,6 +2473,7 @@ export default function LaxPrimePage() {
     adaptiveSwitch, setAdaptiveSwitch,
     adaptiveLiveStatus,
     continuousLock, setContinuousLock,
+    virtualPatternStatus,
   } = useBotStore();
 
   const [showContinuousLockPanel, setShowContinuousLockPanel] = useState(false);
@@ -2880,9 +3214,82 @@ export default function LaxPrimePage() {
                 )}
 
                 <div className="lp-vp-grid" style={adaptiveSwitch.enabled && adaptiveSwitch.virtualSwitcher?.enabled ? { opacity: 0.35, pointerEvents: 'none' } : undefined}>
-                  <div className="lp-vp-card">
+                  {/* ── Digit Pattern Switcher (Virtual -> Real) Card ── */}
+                  <div className="lp-vp-card" style={{ border: '1px solid rgba(139, 92, 246, 0.4)', background: 'rgba(139, 92, 246, 0.05)', gridColumn: '1 / -1' }}>
                     <div className="lp-vp-card-hdr">
-                      <span className="lp-vp-card-lbl">Start Virtual → Switch to Real</span>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span className="lp-vp-card-lbl" style={{ color: '#c4b5fd' }}>⚡ Digit Pattern Switcher (Virtual → Real)</span>
+                          <span style={{ fontSize: '9px', fontWeight: 800, padding: '1px 6px', borderRadius: '4px', background: 'rgba(139, 92, 246, 0.2)', color: '#ddd6fe' }}>
+                            OR / THEN / THENALL
+                          </span>
+                        </div>
+                        <p style={{ fontSize: '9px', color: '#9ca3af', margin: '2px 0 0 0' }}>
+                          Bot always starts in Virtual. Once the digit pattern matches, switches to Real. Pauses while in Real until Start Real → Switch to Virtual triggers.
+                        </p>
+                      </div>
+                      <label className="lp-vp-sw">
+                        <input
+                          type="checkbox"
+                          checked={virtualSettings.patternSwitcher?.enabled || false}
+                          onChange={e => {
+                            const enabled = e.target.checked;
+                            const currentPS = virtualSettings.patternSwitcher || {
+                              enabled: false,
+                              patternBoxes: [{ triggers: [{ token: 'E' }, { token: 'E' }] }],
+                              patternBoxMode: 'OR' as const,
+                              thenTimeout: 20,
+                              thenTimeouts: [20, 20, 20, 20],
+                              thenMaxTrades: 3,
+                            };
+                            setVirtualSettings({
+                              patternSwitcher: { ...currentPS, enabled }
+                            });
+                          }}
+                        />
+                        <span className="lp-vp-sw-track" style={{ background: virtualSettings.patternSwitcher?.enabled ? '#8b5cf6' : '' }} />
+                      </label>
+                    </div>
+
+                    {virtualSettings.patternSwitcher?.enabled && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%', marginTop: '6px' }}>
+                        {/* Live Status Pill */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 10px', borderRadius: '6px', background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(139,92,246,0.25)', fontSize: '10px' }}>
+                          <span style={{ fontSize: '11px' }}>🎯</span>
+                          <span style={{ fontWeight: 700, color: '#e2e8f0' }}>Status:</span>
+                          {!isRunning ? (
+                            <span style={{ color: '#94a3b8' }}>Bot Stopped — Switcher Idle (will start in Virtual)</span>
+                          ) : !virtualSettings.isVirtualMode ? (
+                            <span style={{ color: '#38bdf8', fontWeight: 700 }}>⚡ Real Mode Active — Pattern Switcher Paused (Awaiting Real → Virtual)</span>
+                          ) : (
+                            <span style={{ color: '#4ade80', fontWeight: 700 }}>
+                              {virtualPatternStatus?.phase === 'locked_box2' || virtualPatternStatus?.phase === 'waiting_next_box'
+                                ? `⏳ Box ${virtualPatternStatus.currentBoxIndex} Matched! Waiting for Box ${virtualPatternStatus.currentBoxIndex + 1} on ${virtualPatternStatus.lockedSymbol || 'markets'} (${(virtualPatternStatus.timeout || 20) - (virtualPatternStatus.ticksWaited || 0)}t remaining)`
+                                : `🟢 Virtual Tracking Active — Scanning for ${virtualSettings.patternSwitcher?.patternBoxMode === 'OR' ? 'Pattern (OR)' : 'Box 1'} across active markets`
+                              }
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Multi-Entry Sequence Editor */}
+                        <VirtualPatternBuilder
+                          config={virtualSettings.patternSwitcher}
+                          onChange={updated => setVirtualSettings({ patternSwitcher: { ...virtualSettings.patternSwitcher, ...updated, enabled: true } })}
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <div className="lp-vp-card" style={virtualSettings.patternSwitcher?.enabled ? { border: '1px solid rgba(245, 158, 11, 0.25)', background: 'rgba(245, 158, 11, 0.03)' } : undefined}>
+                    <div className="lp-vp-card-hdr">
+                      <div>
+                        <span className="lp-vp-card-lbl">Start Virtual → Switch to Real</span>
+                        {virtualSettings.patternSwitcher?.enabled && (
+                          <div style={{ fontSize: '9px', color: '#fbbf24', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
+                            <span>🔒</span>
+                            <span>Standard V → R triggers locked (Digit Pattern Switcher active)</span>
+                          </div>
+                        )}
+                      </div>
                       <label className="lp-vp-sw">
                         <input type="checkbox" checked={virtualSettings.startVirtualToReal}
                           onChange={e => setVirtualSettings({ startVirtualToReal: e.target.checked })} />
@@ -3025,7 +3432,13 @@ export default function LaxPrimePage() {
                   </div>
 
                   {/* Smart Analysis Switch Card */}
-                  <div className="lp-vp-card" style={{ border: '1px solid rgba(99, 102, 241, 0.25)', background: 'rgba(99, 102, 241, 0.04)' }}>
+                  <div className="lp-vp-card" style={{ border: '1px solid rgba(99, 102, 241, 0.25)', background: 'rgba(99, 102, 241, 0.04)', ...(virtualSettings.patternSwitcher?.enabled ? { opacity: 0.4, pointerEvents: 'none' } : {}) }}>
+                    {virtualSettings.patternSwitcher?.enabled && (
+                      <div style={{ background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.25)', borderRadius: '6px', padding: '4px 8px', fontSize: '9px', color: '#fbbf24', display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '6px' }}>
+                        <span>🔒</span>
+                        <span>Locked by Digit Pattern Switcher</span>
+                      </div>
+                    )}
                     <div className="lp-vp-card-hdr">
                       <div>
                         <span className="lp-vp-card-lbl" style={{ color: '#818cf8' }}>🧠 Smart Analysis Switch</span>

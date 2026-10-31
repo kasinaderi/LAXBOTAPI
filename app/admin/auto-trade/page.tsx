@@ -1137,12 +1137,20 @@ export default function AutoTradePage() {
                         vSmartCount: 0,
                         resultHistory: [] as ('W' | 'L')[],
                     },
+                    patternSwitcher: {
+                        enabled: false,
+                        patternBoxes: [{ triggers: [{ token: 'E' }, { token: 'E' }] }],
+                        patternBoxMode: 'OR' as const,
+                        thenTimeout: 20,
+                        thenTimeouts: [20, 20, 20, 20],
+                        thenMaxTrades: 3,
+                    },
                 };
 
                 const isVSActive = Boolean(stepConfig?.adaptiveSwitch?.enabled && stepConfig?.adaptiveSwitch?.virtualSwitcher?.enabled);
                 if (stepConfig && stepConfig.virtualSettings) {
                     const vs = stepConfig.virtualSettings;
-                    const isVirtActive = isVSActive || vs.startVirtualToReal || vs.isDoubleVirtual || vs.smartSettings?.enabled || vs.isVirtualMode;
+                    const isVirtActive = isVSActive || vs.patternSwitcher?.enabled || vs.startVirtualToReal || vs.isDoubleVirtual || vs.smartSettings?.enabled || vs.isVirtualMode;
                     useDerivStore.getState().setVirtualSettings({
                         // Start from a clean baseline (no old state leaks through)
                         ...defaultVirtualSettings,

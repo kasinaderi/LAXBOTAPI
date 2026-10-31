@@ -254,6 +254,16 @@ interface DerivState {
         vResultHistory: ('W' | 'L')[];
         vSmartStage: 1 | 2;
         vSmartCount: number;
+
+        // Pattern-based Virtual -> Real Switcher
+        patternSwitcher?: {
+            enabled: boolean;
+            patternBoxes: { triggers: { token: string; barrier?: number }[] }[];
+            patternBoxMode: 'OR' | 'THEN' | 'THENALL';
+            thenTimeout?: number;
+            thenTimeouts?: number[];
+            thenMaxTrades?: number;
+        };
     };
     setVirtualSettings: (settings: Partial<DerivState['virtualSettings']>) => void;
     recoverySettings: {
@@ -478,6 +488,16 @@ export const useDerivStore = create<DerivState>()(
                 vResultHistory: [],
                 vSmartStage: 1,
                 vSmartCount: 0,
+                patternSwitcher: {
+                    enabled: false,
+                    patternBoxes: [
+                        { triggers: [{ token: 'E' }, { token: 'E' }] }
+                    ],
+                    patternBoxMode: 'OR',
+                    thenTimeout: 20,
+                    thenTimeouts: [20, 20, 20, 20],
+                    thenMaxTrades: 3,
+                },
             },
             recoverySettings: {
                 enabled: false,

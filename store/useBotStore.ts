@@ -572,6 +572,80 @@ function matchTrigger(
   }
 }
 
+export function evaluatePatternBoxes(boxes: PatternBox[] | undefined, digits: number[], quotes: number[], symbol?: string): boolean {
+  if (!boxes || boxes.length === 0) return false;
+  for (const box of boxes) {
+    const triggers = box.triggers;
+    if (!triggers || triggers.length === 0) continue;
+    const N = triggers.length;
+    if (digits.length < N + 1) continue;
+
+    let boxMatches = true;
+    let capturedSE: number | null = null;
+    let capturedSO: number | null = null;
+    for (let ti = 0; ti < N; ti++) {
+      const trig = triggers[ti];
+      const digitIdx = digits.length - N + ti;
+      if (digitIdx < 0 || digitIdx >= digits.length) { boxMatches = false; break; }
+      const d = digits[digitIdx];
+
+      if (trig.token === 'SE') {
+        if (d % 2 !== 0) { boxMatches = false; break; }
+        if (capturedSE === null) { capturedSE = d; }
+        else if (d !== capturedSE) { boxMatches = false; break; }
+        continue;
+      }
+      if (trig.token === 'SO') {
+        if (d % 2 === 0) { boxMatches = false; break; }
+        if (capturedSO === null) { capturedSO = d; }
+        else if (d !== capturedSO) { boxMatches = false; break; }
+        continue;
+      }
+
+      if (!matchTrigger(trig, digits, quotes, digitIdx, symbol)) {
+        boxMatches = false;
+        break;
+      }
+    }
+    if (boxMatches) return true;
+  }
+  return false;
+}
+
+export function evaluateOnePatternBox(boxes: PatternBox[] | undefined, boxIndex: number, digits: number[], quotes: number[], symbol?: string): boolean {
+  if (!boxes || boxIndex >= boxes.length) return false;
+  const box = boxes[boxIndex];
+  if (!box || !box.triggers || box.triggers.length === 0) return false;
+
+  const N = box.triggers.length;
+  if (digits.length < N + 1) return false;
+
+  let capturedSE: number | null = null;
+  let capturedSO: number | null = null;
+
+  for (let ti = 0; ti < N; ti++) {
+    const trig = box.triggers[ti];
+    const digitIdx = digits.length - N + ti;
+    if (digitIdx < 0 || digitIdx >= digits.length) return false;
+    const d = digits[digitIdx];
+
+    if (trig.token === 'SE') {
+      if (d % 2 !== 0) return false;
+      if (capturedSE === null) { capturedSE = d; }
+      else if (d !== capturedSE) return false;
+      continue;
+    }
+    if (trig.token === 'SO') {
+      if (d % 2 === 0) return false;
+      if (capturedSO === null) { capturedSO = d; }
+      else if (d !== capturedSO) return false;
+      continue;
+    }
+    if (!matchTrigger(trig, digits, quotes, digitIdx, symbol)) return false;
+  }
+  return true;
+}
+
 function evaluateDigitPattern(cond: Condition, digits: number[], quotes: number[], symbol?: string): boolean {
   const boxes = cond.patternBoxes;
 
@@ -991,6 +1065,14 @@ const eng = {
     lockWins: 0,
     lockLosses: 0,
     lockProfit: 0,
+  },
+  // Pattern Switcher state for Virtual -> Real transition
+  virtualPatternState: {
+    phase: 'scanning_box1' as 'scanning_box1' | 'locked_box2' | 'waiting_next_box',
+    currentBoxIndex: 0,
+    lockedSymbol: null as string | null,
+    ticksWaited: 0,
+    lastTickEpoch: 0,
   },
   // Eligible-Window expiry timestamps: key = `${condId}:${symbol}`, value = Date.now() ms expiry
   // Set when a PCT condition is met (with window enabled), cleared on expiry.
@@ -1595,7 +1677,14 @@ interface BotStoreState {
   tradeLogs:    TradeLog[];
   journalLogs:  JournalLog[];
   globalStats:  { won: number; lost: number; totalProfit: number; totalTrades: number };
-  signalFlash:  Record<string, number>;   // symbol → timestamp of last signal
+  signalFlash:  Record<string, number>;
+  virtualPatternStatus?: {
+    phase: 'scanning_box1' | 'locked_box2' | 'waiting_next_box';
+    currentBoxIndex: number;
+    lockedSymbol: string | null;
+    ticksWaited: number;
+    timeout: number;
+  };   // symbol → timestamp of last signal
 
   // ── Settings setters ───────────────────────────────────────────────────────
   setStake:           (v: string) => void;
@@ -1754,6 +1843,14 @@ export const useBotStore = create<BotStoreState>()(
         eng.activeVirtual = [];
         eng.patternPos    = {};
         eng.retrigger     = {};
+        eng.virtualPatternState = {
+          phase: 'scanning_box1',
+          currentBoxIndex: 0,
+          lockedSymbol: null,
+          ticksWaited: 0,
+          lastTickEpoch: 0,
+        };
+        set({ virtualPatternStatus: undefined });
         eng.waitingForOpposite = {};
         eng.adaptivePos   = { stepIndex: 0, repCount: 0 };
         eng.thenState     = {};
@@ -1805,7 +1902,23 @@ export const useBotStore = create<BotStoreState>()(
 
         // Reset Double Virtual stage to A on bot start and initialize virtual mode if any virtual feature is active
         const vsCurrent = useDerivStore.getState().virtualSettings;
-        const isVirtActive = isVSActive || vsCurrent.startVirtualToReal || vsCurrent.isDoubleVirtual || vsCurrent.smartSettings?.enabled;
+        const isVirtActive = isVSActive || vsCurrent.startVirtualToReal || vsCurrent.isDoubleVirtual || vsCurrent.smartSettings?.enabled || vsCurrent.patternSwitcher?.enabled;
+        eng.virtualPatternState = {
+          phase: 'scanning_box1',
+          currentBoxIndex: 0,
+          lockedSymbol: null,
+          ticksWaited: 0,
+          lastTickEpoch: 0,
+        };
+        set({
+          virtualPatternStatus: {
+            phase: 'scanning_box1',
+            currentBoxIndex: 0,
+            lockedSymbol: null,
+            ticksWaited: 0,
+            timeout: 0,
+          }
+        });
         useDerivStore.getState().setVirtualSettings({
           isVirtualMode: isVirtActive ? true : vsCurrent.isVirtualMode,
           startVirtualToReal: isVSActive ? false : vsCurrent.startVirtualToReal,
@@ -1968,7 +2081,7 @@ export const useBotStore = create<BotStoreState>()(
         if (!state.selectedMarkets.includes(symbol)) return;
 
         const derivState = useDerivStore.getState();
-        const isVirtual  = derivState.virtualSettings.isVirtualMode;
+        let isVirtual    = derivState.virtualSettings.isVirtualMode;
         // For real mode: we allow scanning even if not yet authorized — trades queue up
         // and retry until the socket is ready. Only block if we have no token at all.
         if (!isVirtual && !derivState.account?.token && !derivState.token) return;
@@ -2205,7 +2318,7 @@ export const useBotStore = create<BotStoreState>()(
           let vDoubleStage = vsV.vDoubleStage || 'A';
           let vStageBCompletedReps = vsV.vStageBCompletedReps || 0;
 
-          const isVirtSystemActive = (vsV.startVirtualToReal || vsV.isDoubleVirtual || vsV.smartSettings?.enabled) && !(get().adaptiveSwitch?.enabled && get().adaptiveSwitch?.virtualSwitcher?.enabled);
+          const isVirtSystemActive = (vsV.startVirtualToReal || vsV.isDoubleVirtual || vsV.smartSettings?.enabled) && !(get().adaptiveSwitch?.enabled && get().adaptiveSwitch?.virtualSwitcher?.enabled) && !vsV.patternSwitcher?.enabled;
           if (isVirtSystemActive) {
             if (!vsV.isDoubleVirtual) {
               let thresholdPassed = false;
@@ -2360,7 +2473,7 @@ export const useBotStore = create<BotStoreState>()(
             else          { vConsecWins = 0; vConsecLosses++; virtualLosses++; }
             const isVsSingle = Boolean(get().adaptiveSwitch?.enabled && get().adaptiveSwitch?.virtualSwitcher?.enabled);
             let newVirtMode = isVsSingle ? useDerivStore.getState().virtualSettings.isVirtualMode : vsV.isVirtualMode;
-            if (vsV.startVirtualToReal && !isVsSingle) {
+            if (vsV.startVirtualToReal && !isVsSingle && !vsV.patternSwitcher?.enabled) {
               const streak = vsV.vTriggerType === 'losses' ? vConsecLosses : vConsecWins;
               if (streak >= vsV.vThreshold) {
                 newVirtMode = false;
@@ -2388,6 +2501,255 @@ export const useBotStore = create<BotStoreState>()(
         // Each condition handles its own minimum (e.g. LAST_DIGITS needs lastN, EVEN_PCT needs period).
         // Only require 5 digits so that fast conditions (LAST_DIGITS n=4) fire immediately.
         if (digits.length < 5) return;
+
+        // ── Virtual System: Digit Pattern Switcher (Virtual -> Real) ─────────
+        // Only evaluates when the bot is running and in Virtual Mode
+        const vsCurrentScan = derivState.virtualSettings;
+        if (isVirtual && vsCurrentScan.isVirtualMode && vsCurrentScan.patternSwitcher?.enabled) {
+          const vpConfig = vsCurrentScan.patternSwitcher;
+          const vpBoxes = (vpConfig.patternBoxes || []).filter(b => b.triggers && b.triggers.length > 0);
+
+          if (vpBoxes.length > 0) {
+            const vps = eng.virtualPatternState;
+            const mode = vpConfig.patternBoxMode || 'OR';
+            const numBoxes = Math.min(4, vpBoxes.length);
+            let didSwitchToReal = false;
+
+            if (mode === 'OR') {
+              if (evaluatePatternBoxes(vpBoxes, digits, quotes, symbol)) {
+                didSwitchToReal = true;
+                derivState.setVirtualSettings({ isVirtualMode: false });
+                set({
+                  botStatusMsg: `⚡ Virtual Pattern Matched on ${symbol}! Switched to REAL mode.`,
+                  virtualPatternStatus: {
+                    phase: 'scanning_box1',
+                    currentBoxIndex: 0,
+                    lockedSymbol: null,
+                    ticksWaited: 0,
+                    timeout: 0,
+                  }
+                });
+              }
+            } else if (mode === 'THEN') {
+              if (numBoxes === 1) {
+                if (evaluateOnePatternBox(vpBoxes, 0, digits, quotes, symbol)) {
+                  didSwitchToReal = true;
+                  derivState.setVirtualSettings({ isVirtualMode: false });
+                  set({
+                    botStatusMsg: `⚡ Virtual Pattern Matched on ${symbol}! Switched to REAL mode.`,
+                    virtualPatternStatus: {
+                      phase: 'scanning_box1',
+                      currentBoxIndex: 0,
+                      lockedSymbol: null,
+                      ticksWaited: 0,
+                      timeout: 0,
+                    }
+                  });
+                }
+              } else if (vps.currentBoxIndex === 0) {
+                if (evaluateOnePatternBox(vpBoxes, 0, digits, quotes, symbol)) {
+                  vps.currentBoxIndex = 1;
+                  vps.phase = 'locked_box2';
+                  vps.lockedSymbol = symbol;
+                  vps.ticksWaited = 0;
+                  const box2Timeout = Math.max(1, vpConfig.thenTimeouts?.[1] ?? vpConfig.thenTimeout ?? 20);
+                  set({
+                    botStatusMsg: `⏳ Virtual Switcher: Box 1 matched on ${symbol} — waiting for Box 2 (${box2Timeout}t timeout)`,
+                    virtualPatternStatus: {
+                      phase: 'locked_box2',
+                      currentBoxIndex: 1,
+                      lockedSymbol: symbol,
+                      ticksWaited: 0,
+                      timeout: box2Timeout,
+                    }
+                  });
+                }
+              } else {
+                const targetBox = vps.currentBoxIndex;
+                const thisTimeout = Math.max(1, vpConfig.thenTimeouts?.[targetBox] ?? vpConfig.thenTimeout ?? 20);
+
+                if (symbol === vps.lockedSymbol) {
+                  vps.ticksWaited++;
+                  if (vps.ticksWaited >= thisTimeout) {
+                    vps.currentBoxIndex = 0;
+                    vps.phase = 'scanning_box1';
+                    vps.lockedSymbol = null;
+                    vps.ticksWaited = 0;
+                    set({
+                      botStatusMsg: `⌛ Virtual Switcher timeout after ${thisTimeout}t waiting for Box ${targetBox + 1} on ${symbol} — rescanning Box 1`,
+                      virtualPatternStatus: {
+                        phase: 'scanning_box1',
+                        currentBoxIndex: 0,
+                        lockedSymbol: null,
+                        ticksWaited: 0,
+                        timeout: thisTimeout,
+                      }
+                    });
+                  } else {
+                    const boxPass = evaluateOnePatternBox(vpBoxes, targetBox, digits, quotes, symbol);
+                    if (boxPass) {
+                      if (targetBox >= numBoxes - 1) {
+                        vps.currentBoxIndex = 0;
+                        vps.phase = 'scanning_box1';
+                        vps.lockedSymbol = null;
+                        vps.ticksWaited = 0;
+                        didSwitchToReal = true;
+                        derivState.setVirtualSettings({ isVirtualMode: false });
+                        set({
+                          botStatusMsg: `⚡ Virtual Switcher: Final Box ${targetBox + 1} matched on ${symbol}! Switched to REAL mode.`,
+                          virtualPatternStatus: {
+                            phase: 'scanning_box1',
+                            currentBoxIndex: 0,
+                            lockedSymbol: null,
+                            ticksWaited: 0,
+                            timeout: 0,
+                          }
+                        });
+                      } else {
+                        const nextBox = targetBox + 1;
+                        vps.currentBoxIndex = nextBox;
+                        vps.ticksWaited = 0;
+                        const nextTimeout = Math.max(1, vpConfig.thenTimeouts?.[nextBox] ?? vpConfig.thenTimeout ?? 20);
+                        set({
+                          botStatusMsg: `⏳ Virtual Switcher: Box ${targetBox + 1} matched on ${symbol} — waiting for Box ${nextBox + 1} (${nextTimeout}t timeout)`,
+                          virtualPatternStatus: {
+                            phase: 'waiting_next_box',
+                            currentBoxIndex: nextBox,
+                            lockedSymbol: symbol,
+                            ticksWaited: 0,
+                            timeout: nextTimeout,
+                          }
+                        });
+                      }
+                    } else {
+                      set({
+                        virtualPatternStatus: {
+                          phase: 'locked_box2',
+                          currentBoxIndex: targetBox,
+                          lockedSymbol: symbol,
+                          ticksWaited: vps.ticksWaited,
+                          timeout: thisTimeout,
+                        }
+                      });
+                    }
+                  }
+                }
+              }
+            } else if (mode === 'THENALL') {
+              if (numBoxes === 1) {
+                if (evaluateOnePatternBox(vpBoxes, 0, digits, quotes, symbol)) {
+                  didSwitchToReal = true;
+                  derivState.setVirtualSettings({ isVirtualMode: false });
+                  set({
+                    botStatusMsg: `⚡ Virtual Pattern Matched on ${symbol}! Switched to REAL mode.`,
+                    virtualPatternStatus: {
+                      phase: 'scanning_box1',
+                      currentBoxIndex: 0,
+                      lockedSymbol: null,
+                      ticksWaited: 0,
+                      timeout: 0,
+                    }
+                  });
+                }
+              } else if (vps.currentBoxIndex === 0) {
+                if (evaluateOnePatternBox(vpBoxes, 0, digits, quotes, symbol)) {
+                  vps.currentBoxIndex = 1;
+                  vps.phase = 'locked_box2';
+                  vps.lockedSymbol = symbol;
+                  vps.ticksWaited = 0;
+                  vps.lastTickEpoch = 0;
+                  const box2Timeout = Math.max(1, vpConfig.thenTimeouts?.[1] ?? vpConfig.thenTimeout ?? 20);
+                  set({
+                    botStatusMsg: `⏳ Virtual Switcher (THENALL): Box 1 matched on ${symbol} — watching ALL markets for Box 2 (${box2Timeout}t timeout)`,
+                    virtualPatternStatus: {
+                      phase: 'locked_box2',
+                      currentBoxIndex: 1,
+                      lockedSymbol: symbol,
+                      ticksWaited: 0,
+                      timeout: box2Timeout,
+                    }
+                  });
+                }
+              } else {
+                const targetBox = vps.currentBoxIndex;
+                const thisTimeout = Math.max(1, vpConfig.thenTimeouts?.[targetBox] ?? vpConfig.thenTimeout ?? 20);
+                const thisEpoch = regime?.lastEpoch ?? now;
+                if (symbol === vps.lockedSymbol || thisEpoch !== vps.lastTickEpoch) {
+                  vps.ticksWaited++;
+                  vps.lastTickEpoch = thisEpoch;
+                }
+
+                if (vps.ticksWaited >= thisTimeout) {
+                  vps.currentBoxIndex = 0;
+                  vps.phase = 'scanning_box1';
+                  vps.lockedSymbol = null;
+                  vps.ticksWaited = 0;
+                  set({
+                    botStatusMsg: `⌛ Virtual Switcher (THENALL) timeout — rescanning Box 1 across all markets`,
+                    virtualPatternStatus: {
+                      phase: 'scanning_box1',
+                      currentBoxIndex: 0,
+                      lockedSymbol: null,
+                      ticksWaited: 0,
+                      timeout: thisTimeout,
+                    }
+                  });
+                } else {
+                  const boxPass = evaluateOnePatternBox(vpBoxes, targetBox, digits, quotes, symbol);
+                  if (boxPass) {
+                    if (targetBox >= numBoxes - 1) {
+                      vps.currentBoxIndex = 0;
+                      vps.phase = 'scanning_box1';
+                      vps.lockedSymbol = null;
+                      vps.ticksWaited = 0;
+                      didSwitchToReal = true;
+                      derivState.setVirtualSettings({ isVirtualMode: false });
+                      set({
+                        botStatusMsg: `⚡ Virtual Switcher (THENALL): Final Box ${targetBox + 1} matched on ${symbol}! Switched to REAL mode.`,
+                        virtualPatternStatus: {
+                          phase: 'scanning_box1',
+                          currentBoxIndex: 0,
+                          lockedSymbol: null,
+                          ticksWaited: 0,
+                          timeout: 0,
+                        }
+                      });
+                    } else {
+                      const nextBox = targetBox + 1;
+                      vps.currentBoxIndex = nextBox;
+                      vps.ticksWaited = 0;
+                      const nextTimeout = Math.max(1, vpConfig.thenTimeouts?.[nextBox] ?? vpConfig.thenTimeout ?? 20);
+                      set({
+                        botStatusMsg: `⏳ Virtual Switcher (THENALL): Box ${targetBox + 1} matched on ${symbol} — waiting for Box ${nextBox + 1}`,
+                        virtualPatternStatus: {
+                          phase: 'waiting_next_box',
+                          currentBoxIndex: nextBox,
+                          lockedSymbol: symbol,
+                          ticksWaited: 0,
+                          timeout: nextTimeout,
+                        }
+                      });
+                    }
+                  } else {
+                    set({
+                      virtualPatternStatus: {
+                        phase: 'locked_box2',
+                        currentBoxIndex: targetBox,
+                        lockedSymbol: vps.lockedSymbol,
+                        ticksWaited: vps.ticksWaited,
+                        timeout: thisTimeout,
+                      }
+                    });
+                  }
+                }
+              }
+            }
+
+            if (didSwitchToReal) {
+              isVirtual = false;
+            }
+          }
+        }
 
         for (let si = 0; si < strategies.length; si++) {
           const s = strategies[si];
@@ -3484,9 +3846,29 @@ export const useBotStore = create<BotStoreState>()(
           let newIsVirtual = isVsActive ? useDerivStore.getState().virtualSettings.isVirtualMode : vsState.isVirtualMode;
           if (!isVsActive && vsState.startRealToVirtual) {
             const streak = vsState.rTriggerType === 'losses' ? rConsecLosses : rConsecWins;
-            if (streak >= vsState.rThreshold) {
+            const threshold = Math.max(1, Number(vsState.rThreshold) || 1);
+            const val = vsState.rTriggerMode === 'total' 
+              ? (vsState.rTriggerType === 'losses' ? realLosses : realWins) 
+              : streak;
+            if (val >= threshold) {
               newIsVirtual = true;
-              set({ botStatusMsg: `Real threshold [${vsState.rThreshold}] hit! Switching to VIRTUAL.` });
+              set({ botStatusMsg: `Real threshold [${threshold}] hit! Switching to VIRTUAL.` });
+              eng.virtualPatternState = {
+                phase: 'scanning_box1',
+                currentBoxIndex: 0,
+                lockedSymbol: null,
+                ticksWaited: 0,
+                lastTickEpoch: 0,
+              };
+              set({
+                virtualPatternStatus: {
+                  phase: 'scanning_box1',
+                  currentBoxIndex: 0,
+                  lockedSymbol: null,
+                  ticksWaited: 0,
+                  timeout: 0,
+                }
+              });
             }
           }
           derivState.setVirtualSettings({
