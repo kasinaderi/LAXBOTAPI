@@ -2004,7 +2004,7 @@ export function MiniLaxPrimeModal({
                     </label>
                   </div>
                   <p className="text-[10px] text-gray-400">
-                    Bot always starts in Virtual. Once the digit pattern matches across markets, it automatically switches to Real mode and pauses until Start Real → Switch to Virtual returns to Virtual.
+                    Bot starts in Virtual. When Continuous Lock is ON, pattern checking begins only after a market is locked, checking solely in that locked market. Once matched, it switches to Real execution until Start Real → Switch to Virtual returns to Virtual.
                   </p>
                   {virtualMode.patternSwitcher?.enabled && (
                     <MiniVirtualPatternBuilder

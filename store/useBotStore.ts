@@ -1018,7 +1018,7 @@ function evalStrategy(s: Strategy, digits: number[], quotes: number[], symbol?: 
 
 // Per-strategy THEN/THENALL state (lives outside React so it persists across ticks)
 interface ThenState {
-  phase: 'scanning_box1' | 'locked_box2' | 'waiting_next_box';
+  phase: 'scanning_box1' | 'locked_box2' | 'waiting_next_box' | 'waiting_for_lock';
   currentBoxIndex: number;     // 0 = scanning Box 1, 1 = waiting Box 2, 2 = waiting Box 3, 3 = waiting Box 4
   lockedSymbol: string | null; // THEN: market where Box1 was found (and locked onto)
   ticksWaited: number;         // ticks elapsed while waiting for current target box
@@ -1679,7 +1679,7 @@ interface BotStoreState {
   globalStats:  { won: number; lost: number; totalProfit: number; totalTrades: number };
   signalFlash:  Record<string, number>;
   virtualPatternStatus?: {
-    phase: 'scanning_box1' | 'locked_box2' | 'waiting_next_box';
+    phase: 'scanning_box1' | 'locked_box2' | 'waiting_next_box' | 'waiting_for_lock';
     currentBoxIndex: number;
     lockedSymbol: string | null;
     ticksWaited: number;

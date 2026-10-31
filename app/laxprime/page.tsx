@@ -3225,7 +3225,7 @@ export default function LaxPrimePage() {
                           </span>
                         </div>
                         <p style={{ fontSize: '9px', color: '#9ca3af', margin: '2px 0 0 0' }}>
-                          Bot always starts in Virtual. Once the digit pattern matches, switches to Real. Pauses while in Real until Start Real → Switch to Virtual triggers.
+                          Bot starts in Virtual. When Continuous Lock is ON, pattern checking begins only after a market is locked, checking strictly in that locked market. Once matched, switches to Real.
                         </p>
                       </div>
                       <label className="lp-vp-sw">
