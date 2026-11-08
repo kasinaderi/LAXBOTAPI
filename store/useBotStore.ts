@@ -1910,14 +1910,22 @@ export const useBotStore = create<BotStoreState>()(
           ticksWaited: 0,
           lastTickEpoch: 0,
         };
+        const cLock = get().continuousLock;
+        const isCLockActive = Boolean(cLock?.enabled);
         set({
-          virtualPatternStatus: {
+          virtualPatternStatus: (vsCurrent.patternSwitcher?.enabled && isCLockActive) ? {
+            phase: 'waiting_for_lock',
+            currentBoxIndex: 0,
+            lockedSymbol: null,
+            ticksWaited: 0,
+            timeout: 0,
+          } : (vsCurrent.patternSwitcher?.enabled ? {
             phase: 'scanning_box1',
             currentBoxIndex: 0,
             lockedSymbol: null,
             ticksWaited: 0,
             timeout: 0,
-          }
+          } : undefined)
         });
         useDerivStore.getState().setVirtualSettings({
           isVirtualMode: isVirtActive ? true : vsCurrent.isVirtualMode,
@@ -1932,6 +1940,16 @@ export const useBotStore = create<BotStoreState>()(
           vVirtualLossesB: 0,
           vSmartStage: 1,
           vSmartCount: 0,
+          virtualWins: 0,
+          virtualLosses: 0,
+          vConsecWins: 0,
+          vConsecLosses: 0,
+          realWins: 0,
+          realLosses: 0,
+          rConsecWins: 0,
+          rConsecLosses: 0,
+          vResultHistory: [],
+          vResultHistoryB: [],
         });
 
         // Proactively connect/ensure the trade socket is open
@@ -2861,7 +2879,7 @@ export const useBotStore = create<BotStoreState>()(
           const isLockContinuousCheck = Boolean(cLock?.enabled && eng.lockState.locked && cLock.mode === 'continuous_check');
 
           // ── No Contradiction (Wait for Opposite) guard ─────────────────────
-          if (!isLockNoRecheck) {
+          if (!isLockNoRecheck && !cLock?.enabled) {
             const lock = eng.waitingForOpposite[ck];
             if (s.noContradiction && lock) {
               const currentDigit = digits[digits.length - 1] ?? 0;
@@ -2954,7 +2972,7 @@ export const useBotStore = create<BotStoreState>()(
           const dpCondForMode = s.conditions.find(c => c.type === 'DIGIT_PATTERN');
           const boxMode = dpCondForMode?.patternBoxMode ?? 'OR';
 
-          if (!isLockNoRecheck && !isLockContinuousCheck && dpCondForMode && (boxMode === 'THEN' || boxMode === 'THENALL')) {
+          if (!isLockNoRecheck && dpCondForMode && (boxMode === 'THEN' || boxMode === 'THENALL')) {
             const numBoxes = Math.min(4, Math.max(1, (dpCondForMode.patternBoxes || []).length));
             const maxTrades = Math.max(1, dpCondForMode.thenMaxTrades ?? 3);
 
@@ -3511,7 +3529,7 @@ export const useBotStore = create<BotStoreState>()(
             ];
           }
 
-          if (s.noContradiction) {
+          if (s.noContradiction && !cLock?.enabled) {
             const firstT = tradesToPlace[0] || { contractType: s.tradeType, barrier: s.prediction };
             eng.waitingForOpposite[ck] = { contractType: firstT.contractType, prediction: firstT.barrier ?? 0 };
           }
@@ -3961,11 +3979,17 @@ export const useBotStore = create<BotStoreState>()(
               : streak;
             if (val >= threshold) {
               newIsVirtual = true;
+              rConsecWins = 0;
+              rConsecLosses = 0;
+              realWins = 0;
+              realLosses = 0;
               set({ botStatusMsg: `Real threshold [${threshold}] hit! Switching to VIRTUAL.` });
+              const cLockCur = get().continuousLock;
+              const isLockedOn = Boolean(cLockCur?.enabled && eng.lockState.locked && eng.lockState.symbol);
               eng.virtualPatternState = {
                 phase: 'scanning_box1',
                 currentBoxIndex: 0,
-                lockedSymbol: null,
+                lockedSymbol: isLockedOn ? eng.lockState.symbol : null,
                 ticksWaited: 0,
                 lastTickEpoch: 0,
               };
@@ -3973,7 +3997,7 @@ export const useBotStore = create<BotStoreState>()(
                 virtualPatternStatus: {
                   phase: 'scanning_box1',
                   currentBoxIndex: 0,
-                  lockedSymbol: null,
+                  lockedSymbol: isLockedOn ? eng.lockState.symbol : null,
                   ticksWaited: 0,
                   timeout: 0,
                 }
