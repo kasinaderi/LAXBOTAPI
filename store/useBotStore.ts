@@ -3482,7 +3482,7 @@ export const useBotStore = create<BotStoreState>()(
               } else {
                 tradesToPlace = [{
                   contractType: curStep.contractType || 'DIGITEVEN',
-                  barrier: needsBarrier(curStep.contractType || 'DIGITEVEN') ? (s.prediction ?? 4) : undefined,
+                  barrier: needsBarrier(curStep.contractType || 'DIGITEVEN') ? (curStep.barrier ?? s.prediction ?? 4) : undefined,
                   count: 1,
                   ticks: curStep.ticks || s.ticks,
                 }];
@@ -3905,7 +3905,8 @@ export const useBotStore = create<BotStoreState>()(
               }
             }
             const nextStep  = aSwState.steps[pos.stepIndex] ?? aSwState.steps[0];
-            const nextLabel = TRADE_OPTIONS.find(t => t.value === nextStep.contractType)?.label || nextStep.contractType;
+            const nextDisplayType = nextStep.trades?.[0]?.contractType || nextStep.contractType || 'DIGITEVEN';
+            const nextLabel = TRADE_OPTIONS.find(t => t.value === nextDisplayType)?.label || nextDisplayType;
             set({ adaptiveLiveStatus: `${nextLabel} [Step ${pos.stepIndex + 1}, ${pos.repCount + 1}/${nextStep.reps}]` });
           }
 
