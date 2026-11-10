@@ -64,6 +64,15 @@ class TradeWS {
         entrySpot?: string;   // Full entry price for Rise/Fall display
     }>();
 
+    // Recovery pool: trades moved here when connection drops unexpectedly.
+    // After reconnect we re-subscribe by contractId so settlement is never lost.
+    private recoveryPool = new Map<string, any>();
+    private isIntentionalDisconnect = false;
+
+
+
+
+
     // Reconnection State
     private reconnectAttempts = 0;
     private heartbeatTimer: NodeJS.Timeout | null = null;
@@ -78,6 +87,7 @@ class TradeWS {
 
     public disconnect() {
         this.shouldReconnect = false; // Prevent auto-reconnect on intentional disconnect
+        this.isIntentionalDisconnect = true;
         this.stopHeartbeat();
         if (this.socket) {
             this.socket.onclose = null; // Prevent reconnect loop
@@ -99,6 +109,7 @@ class TradeWS {
             this.emitEvent('TRADE_ERROR', { requestId: id, error: 'Disconnected manually' });
         });
 
+        this.isIntentionalDisconnect = false;
         if (store) {
             store.setTradeWsStatus('disconnected');
             store.setTradeAuthorized(false);
@@ -194,16 +205,30 @@ class TradeWS {
                 this.isAuthorized = false;
                 this.isAuthorizing = false;
 
-                // Mark pending trades as ERROR before clearing
+                // Mark pending trades as ERROR before clearing (intentional) or move to recovery pool (unexpected drop)
                 const store = this.getState ? this.getState() : null;
                 const poolCopy = new Map(this.tradePool);
                 this.tradePool.clear(); // Clear BEFORE emitting to prevent recursive loops!
+                const expiry = Date.now() + 5 * 60 * 1000; // 5-minute recovery window
                 poolCopy.forEach((trade, id) => {
-                    if (store) {
-                        store.updateTradeLog(id, { result: 'ERROR', error: 'Connection Lost' });
+                    if (this.isIntentionalDisconnect) {
+                        // Intentional disconnect: emit errors, clear everything
+                        if (store) store.updateTradeLog(id, { result: 'ERROR', error: 'Disconnected manually' });
+                        this.emitEvent('TRADE_ERROR', { requestId: id, error: 'Disconnected manually' });
+                    } else if (trade.contractId) {
+                        // Unexpected drop AND we have a contractId: move to recovery pool
+                        // We'll re-subscribe after reconnect so settlement still arrives
+                        this.recoveryPool.set(id, { ...trade, _expiry: expiry });
+                        if (store) store.updateTradeLog(id, { result: 'RUNNING...' });
+                        // Emit a "soft" TRADE_ERROR so activeTrades keeps the entry alive (handled specially in useBotStore)
+                        this.emitEvent('TRADE_ERROR', { requestId: id, error: 'Connection Lost', isRecoverable: true });
+                    } else {
+                        // Unexpected drop but no contractId (buy response not received yet) — cannot recover
+                        if (store) store.updateTradeLog(id, { result: 'ERROR', error: 'Connection Lost' });
+                        this.emitEvent('TRADE_ERROR', { requestId: id, error: 'Connection Lost' });
                     }
-                    this.emitEvent('TRADE_ERROR', { requestId: id, error: 'Connection Lost' });
                 });
+                this.isIntentionalDisconnect = false;
                 this.stopHeartbeat();
 
                 // If a force reconnect or other connection has already been started by the event listener,
@@ -280,6 +305,29 @@ class TradeWS {
     public offEvent(callback: (type: string, data: any) => void) {
         this.eventListeners = this.eventListeners.filter(cb => cb !== callback);
     }
+
+    private resubscribeRecoveryPool() {
+        const now = Date.now();
+        // Prune expired entries (older than 5 minutes)
+        this.recoveryPool.forEach((trade, id) => {
+            if (now > (trade._expiry || 0)) this.recoveryPool.delete(id);
+        });
+        if (this.recoveryPool.size === 0) return;
+        console.log(`[TradeWS] Recovery: re-subscribing to ${this.recoveryPool.size} in-flight contracts after reconnect...`);
+        this.recoveryPool.forEach((trade) => {
+            if (trade.contractId && this.socket && this.socket.readyState === WebSocket.OPEN) {
+                this.socket.send(JSON.stringify({
+                    proposal_open_contract: 1,
+                    contract_id: trade.contractId,
+                    subscribe: 1,
+                }));
+            }
+        });
+    }
+
+
+
+
 
     private emitEvent(type: string, data: any) {
         this.eventListeners.forEach(cb => cb(type, data));
@@ -405,6 +453,8 @@ class TradeWS {
             this.isAuthorizing = false;
             this.isAuthorized = true;
             store.setTradeAuthorized(true);
+            // Re-subscribe to any in-flight contracts from before the disconnect
+            this.resubscribeRecoveryPool();
             return;
         }
 
@@ -469,12 +519,20 @@ class TradeWS {
         if (msg.msg_type === 'proposal_open_contract' && !requestId) {
             const poc = msg.proposal_open_contract;
 
-            // Find Trade in Pool by contract_id
+            // Find Trade in Pool by contract_id (also check recoveryPool for reconnect scenarios)
             let matchedTrade = null;
             for (const [id, trade] of this.tradePool.entries()) {
                 if (trade.contractId === poc.contract_id) {
                     matchedTrade = trade;
                     break;
+                }
+            }
+            if (!matchedTrade) {
+                for (const [id, trade] of this.recoveryPool.entries()) {
+                    if (trade.contractId === poc.contract_id) {
+                        matchedTrade = trade;
+                        break;
+                    }
                 }
             }
 
@@ -583,6 +641,7 @@ class TradeWS {
                 });
 
                 this.tradePool.delete(matchedTrade.requestId);
+                this.recoveryPool.delete(matchedTrade.requestId);
             } else {
                 // Mid-contract update for digit trades only
                 if (!isFullSpotType) {
@@ -742,6 +801,7 @@ class TradeWS {
                 });
 
                 this.tradePool.delete(pendingTrade.requestId);
+                this.recoveryPool.delete(pendingTrade.requestId);
             } else {
                 // Mid-contract update for digit trades only
                 if (!isFullSpotType) {

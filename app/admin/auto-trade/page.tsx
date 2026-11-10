@@ -1144,6 +1144,17 @@ export default function AutoTradePage() {
                         thenTimeout: 20,
                         thenTimeouts: [20, 20, 20, 20],
                         thenMaxTrades: 3,
+                        gateB: {
+                            enabled: false,
+                            threshold: 2,
+                            mode: 'consec' as const,
+                            triggerType: 'losses' as const,
+                            inEnabled: false,
+                            inTrades: 5,
+                            realReturnThreshold: 1,
+                            realReturnMode: 'consec' as const,
+                            realReturnTriggerType: 'wins' as const,
+                        },
                     },
                 };
 
@@ -2483,6 +2494,7 @@ export default function AutoTradePage() {
 
         setCurStep(0); setCurRep(0);
         setIsRunningAuto(true);
+        if (typeof window !== 'undefined') localStorage.setItem('laxprime_active_session', 'true');
         setUptimeStart(Date.now());
         setSessionProfit(0); setSessionWins(0); setSessionLosses(0); setSessionTrades(0);
         setMktTrades(0); setTriggersFired(0);
@@ -2628,6 +2640,7 @@ export default function AutoTradePage() {
 
     // ── Stop ───────────────────────────────────────────────────────────────
     const handleStop = (reason?: string) => {
+        if (typeof window !== 'undefined') localStorage.removeItem('laxprime_active_session');
         setIsRunningAuto(false);
         setUptimeStart(null);
         processedBotLogKeysRef.current.clear();
@@ -4799,6 +4812,11 @@ export default function AutoTradePage() {
                                     setTradeLog([]); setAuditLogs([]);
                                     setTradeLogStepFilter('all');
                                     lastIdRef.current = null;
+                                    // Reset BotStore so persisted logs & stats are completely cleared
+                                    if (typeof window !== 'undefined') {
+                                        localStorage.removeItem('laxprime_active_session');
+                                    }
+                                    useBotStore.getState().resetAll();
                                 }}
                                 title="Reset session — clears stats & logs, keeps all settings"
                                 className="shrink-0 mr-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 hover:border-rose-500/35 text-rose-400 text-[10px] font-black uppercase tracking-wider transition-all active:scale-95">

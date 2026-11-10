@@ -263,6 +263,17 @@ interface DerivState {
             thenTimeout?: number;
             thenTimeouts?: number[];
             thenMaxTrades?: number;
+            gateB?: {
+                enabled: boolean;
+                threshold: number;
+                mode: 'consec' | 'total';
+                triggerType: 'wins' | 'losses' | 'trades';
+                inEnabled?: boolean;
+                inTrades?: number;
+                realReturnThreshold?: number;
+                realReturnMode?: 'consec' | 'total';
+                realReturnTriggerType?: 'wins' | 'losses' | 'trades';
+            };
         };
     };
     setVirtualSettings: (settings: Partial<DerivState['virtualSettings']>) => void;
@@ -497,6 +508,17 @@ export const useDerivStore = create<DerivState>()(
                     thenTimeout: 20,
                     thenTimeouts: [20, 20, 20, 20],
                     thenMaxTrades: 3,
+                    gateB: {
+                        enabled: false,
+                        threshold: 2,
+                        mode: 'consec',
+                        triggerType: 'losses',
+                        inEnabled: false,
+                        inTrades: 5,
+                        realReturnThreshold: 1,
+                        realReturnMode: 'consec',
+                        realReturnTriggerType: 'wins',
+                    },
                 },
             },
             recoverySettings: {
@@ -1097,9 +1119,14 @@ export const useDerivStore = create<DerivState>()(
                         }
 
                         if (message.msg_type === 'balance' && message.balance) {
-                            set((state: DerivState) => ({
-                                account: state.account ? { ...state.account, balance: typeof message.balance.balance === 'number' ? message.balance.balance : parseFloat(message.balance.balance) || 0 } : null
-                            }));
+                            const rawBal = typeof message.balance.balance === 'number' ? message.balance.balance : parseFloat(message.balance.balance);
+                            // Guard: only update when Deriv sends a valid non-NaN balance.
+                            // Transient 0.00 (stake-deduction window) is allowed through — the bot guard now skips on balance===0.
+                            if (!isNaN(rawBal)) {
+                                set((state: DerivState) => ({
+                                    account: state.account ? { ...state.account, balance: rawBal } : null
+                                }));
+                            }
                             return;
                         }
                     });

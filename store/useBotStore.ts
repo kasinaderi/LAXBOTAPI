@@ -1068,11 +1068,23 @@ const eng = {
   },
   // Pattern Switcher state for Virtual -> Real transition
   virtualPatternState: {
-    phase: 'scanning_box1' as 'scanning_box1' | 'locked_box2' | 'waiting_next_box',
+    phase: 'scanning_box1' as 'scanning_box1' | 'locked_box2' | 'waiting_next_box' | 'waiting_for_lock' | 'gate_b' | 'gate_b_real',
     currentBoxIndex: 0,
     lockedSymbol: null as string | null,
     ticksWaited: 0,
     lastTickEpoch: 0,
+    inGateBCycle: false,
+    gateBConsecWins: 0,
+    gateBConsecLosses: 0,
+    gateBTotalWins: 0,
+    gateBTotalLosses: 0,
+    gateBTotalTrades: 0,
+    gateBHistory: [] as ('W' | 'L')[],
+    gateBRealConsecWins: 0,
+    gateBRealConsecLosses: 0,
+    gateBRealTotalWins: 0,
+    gateBRealTotalLosses: 0,
+    gateBRealTotalTrades: 0,
   },
   // Eligible-Window expiry timestamps: key = `${condId}:${symbol}`, value = Date.now() ms expiry
   // Set when a PCT condition is met (with window enabled), cleared on expiry.
@@ -1328,6 +1340,221 @@ function processGateBResult(isWin: boolean, get: () => any, set: (state: any) =>
   }
 }
 
+function processPatternGateBResult(isWin: boolean, get: () => any, set: (state: any) => void) {
+  const vs = useDerivStore.getState().virtualSettings;
+  if (!vs.patternSwitcher?.enabled) return;
+  const gb = vs.patternSwitcher.gateB;
+  if (!gb?.enabled) return;
+  const vps = eng.virtualPatternState;
+  if (vps.phase !== 'gate_b') return;
+
+  let gbConsecW = vps.gateBConsecWins || 0;
+  let gbConsecL = vps.gateBConsecLosses || 0;
+  let gbTotalW = vps.gateBTotalWins || 0;
+  let gbTotalL = vps.gateBTotalLosses || 0;
+  let gbTotalTrades = (vps.gateBTotalTrades || 0) + 1;
+
+  if (isWin) {
+    gbConsecW++; gbConsecL = 0; gbTotalW++;
+  } else {
+    gbConsecW = 0; gbConsecL++; gbTotalL++;
+  }
+
+  vps.gateBConsecWins = gbConsecW;
+  vps.gateBConsecLosses = gbConsecL;
+  vps.gateBTotalWins = gbTotalW;
+  vps.gateBTotalLosses = gbTotalL;
+  vps.gateBTotalTrades = gbTotalTrades;
+
+  const currentRes: 'W' | 'L' = isWin ? 'W' : 'L';
+  const gbHistory: ('W' | 'L')[] = [...(vps.gateBHistory || []), currentRes].slice(-50);
+  vps.gateBHistory = gbHistory;
+
+  const gbTriggerType = (gb.triggerType || 'losses') as 'wins' | 'losses' | 'trades';
+  const gbMode = (gb.mode || 'consec') as 'consec' | 'total';
+  const gbThreshold = Math.max(1, Number(gb.threshold) || 2);
+  const isWindow = Boolean(gb.inEnabled);
+
+  let gbPassed = false;
+  if (isWindow) {
+    const windowSize = Math.max(1, Number(gb.inTrades) || 5);
+    const winHist = gbHistory.slice(-windowSize);
+    if (gbMode === 'total') {
+      const matchCount = winHist.filter(r => (gbTriggerType === 'losses' ? r === 'L' : gbTriggerType === 'wins' ? r === 'W' : true)).length;
+      if (matchCount >= gbThreshold) gbPassed = true;
+    } else {
+      let maxConsec = 0; let curConsec = 0;
+      for (const res of winHist) {
+        if ((gbTriggerType === 'losses' && res === 'L') || (gbTriggerType === 'wins' && res === 'W')) {
+          curConsec++; if (curConsec > maxConsec) maxConsec = curConsec;
+        } else {
+          curConsec = 0;
+        }
+      }
+      if (maxConsec >= gbThreshold) gbPassed = true;
+    }
+  } else {
+    let count = 0;
+    if (gbTriggerType === 'wins') count = gbMode === 'consec' ? gbConsecW : gbTotalW;
+    else if (gbTriggerType === 'losses') count = gbMode === 'consec' ? gbConsecL : gbTotalL;
+    else count = gbTotalTrades;
+    if (count >= gbThreshold) gbPassed = true;
+  }
+
+  if (gbPassed) {
+    vps.phase = 'gate_b_real';
+    vps.inGateBCycle = true;
+    vps.gateBConsecWins = 0;
+    vps.gateBConsecLosses = 0;
+    vps.gateBTotalWins = 0;
+    vps.gateBTotalLosses = 0;
+    vps.gateBTotalTrades = 0;
+    vps.gateBHistory = [];
+    vps.gateBRealConsecWins = 0;
+    vps.gateBRealConsecLosses = 0;
+    vps.gateBRealTotalWins = 0;
+    vps.gateBRealTotalLosses = 0;
+    vps.gateBRealTotalTrades = 0;
+
+    useDerivStore.getState().setVirtualSettings({
+      isVirtualMode: false,
+    });
+
+    const successMsg = `⚡ Gate B Confirmed (${gbThreshold} ${gbMode === 'consec' ? 'consecutive ' : 'total '}${gbTriggerType})! Switched to REAL mode.`;
+    get().addJournal('switcher', 'Gate B Met → REAL', successMsg);
+    set({
+      botStatusMsg: successMsg,
+      virtualPatternStatus: {
+        phase: 'gate_b_real',
+        currentBoxIndex: 0,
+        lockedSymbol: vps.lockedSymbol || (eng.lockState.locked ? eng.lockState.symbol : null),
+        ticksWaited: 0,
+        timeout: 0,
+        inGateBCycle: true,
+        gateBConsecWins: 0,
+        gateBConsecLosses: 0,
+        gateBTotalWins: 0,
+        gateBTotalLosses: 0,
+        gateBTotalTrades: 0,
+        gateBRealConsecWins: 0,
+        gateBRealConsecLosses: 0,
+        gateBRealTotalWins: 0,
+        gateBRealTotalLosses: 0,
+        gateBRealTotalTrades: 0,
+      }
+    });
+  } else {
+    const curCount = gbTriggerType === 'wins'
+      ? (gbMode === 'consec' ? gbConsecW : gbTotalW)
+      : gbTriggerType === 'losses'
+      ? (gbMode === 'consec' ? gbConsecL : gbTotalL)
+      : gbTotalTrades;
+    const inTxt = isWindow ? ` in last ${gb.inTrades || 5} trades` : '';
+    const statusMsg = `🔷 Gate B Virtual: Waiting for ${gbThreshold} ${gbMode === 'consec' ? 'streak ' : 'total '}${gbTriggerType}${inTxt} (${curCount}/${gbThreshold}) before REAL`;
+    set({
+      botStatusMsg: statusMsg,
+      virtualPatternStatus: {
+        phase: 'gate_b',
+        currentBoxIndex: 0,
+        lockedSymbol: vps.lockedSymbol || (eng.lockState.locked ? eng.lockState.symbol : null),
+        ticksWaited: 0,
+        timeout: 0,
+        gateBConsecWins: gbConsecW,
+        gateBConsecLosses: gbConsecL,
+        gateBTotalWins: gbTotalW,
+        gateBTotalLosses: gbTotalL,
+        gateBTotalTrades: gbTotalTrades,
+      }
+    });
+  }
+}
+
+function triggerPatternMatched(
+  symbol: string,
+  digits: number[],
+  get: () => any,
+  set: (state: any) => void,
+  derivState: any,
+  eng: any,
+  vpConfig: any
+): boolean {
+  const vps = eng.virtualPatternState;
+  const isGateBEnabled = Boolean(vpConfig.gateB?.enabled);
+
+  if (isGateBEnabled) {
+    vps.phase = 'gate_b';
+    vps.inGateBCycle = true;
+    vps.currentBoxIndex = 0;
+    vps.ticksWaited = 0;
+    vps.gateBConsecWins = 0;
+    vps.gateBConsecLosses = 0;
+    vps.gateBTotalWins = 0;
+    vps.gateBTotalLosses = 0;
+    vps.gateBTotalTrades = 0;
+    vps.gateBHistory = [];
+    vps.gateBRealConsecWins = 0;
+    vps.gateBRealConsecLosses = 0;
+    vps.gateBRealTotalWins = 0;
+    vps.gateBRealTotalLosses = 0;
+    vps.gateBRealTotalTrades = 0;
+
+    const gb = vpConfig.gateB!;
+    const gbThresh = Math.max(1, Number(gb.threshold) || 2);
+    const gbMode = gb.mode || 'consec';
+    const gbType = gb.triggerType || 'losses';
+    const inTxt = gb.inEnabled ? ` in last ${gb.inTrades || 5} trades` : '';
+    const matchMsg = `⚡ Virtual Pattern Matched on ${symbol}! Gate B Active: Waiting for ${gbThresh} ${gbMode === 'consec' ? 'consecutive ' : 'total '}${gbType}${inTxt} in virtual before REAL.`;
+    get().addJournal('switcher', 'Pattern Matched → Gate B Active', matchMsg);
+    set({
+      botStatusMsg: matchMsg,
+      virtualPatternStatus: {
+        phase: 'gate_b',
+        currentBoxIndex: 0,
+        lockedSymbol: vps.lockedSymbol || (eng.lockState.locked ? eng.lockState.symbol : null),
+        ticksWaited: 0,
+        timeout: 0,
+        inGateBCycle: true,
+        gateBConsecWins: 0,
+        gateBConsecLosses: 0,
+        gateBTotalWins: 0,
+        gateBTotalLosses: 0,
+        gateBTotalTrades: 0,
+        gateBRealConsecWins: 0,
+        gateBRealConsecLosses: 0,
+        gateBRealTotalWins: 0,
+        gateBRealTotalLosses: 0,
+        gateBRealTotalTrades: 0,
+      }
+    });
+    return false;
+  } else {
+    vps.currentBoxIndex = 0;
+    vps.phase = 'scanning_box1';
+    vps.lockedSymbol = null;
+    vps.ticksWaited = 0;
+    derivState.setVirtualSettings({ isVirtualMode: false });
+    const recentDigits = digits.slice(-Math.min(5, digits.length)).join('-');
+    const matchMsg = `⚡ Virtual Pattern Matched on ${symbol} (recent: [${recentDigits}])! Switched to REAL mode.`;
+    get().addJournal('info', 'Virtual → Real Switched', matchMsg);
+    set({
+      botStatusMsg: matchMsg,
+      virtualPatternStatus: {
+        phase: 'scanning_box1',
+        currentBoxIndex: 0,
+        lockedSymbol: null,
+        ticksWaited: 0,
+        timeout: 0,
+        gateBConsecWins: 0,
+        gateBConsecLosses: 0,
+        gateBTotalWins: 0,
+        gateBTotalLosses: 0,
+        gateBTotalTrades: 0,
+      }
+    });
+    return true;
+  }
+}
+
 function processVirtualSwitcherRealResult(isWin: boolean, get: () => any, set: (state: any) => void) {
   const state = get();
   const aSw = state.adaptiveSwitch;
@@ -1495,7 +1722,8 @@ function resolveRound(roundId: string, stratId: string, get: () => any, set: (st
           // Check if balance is available to support the next martingale stake
           const account = useDerivStore.getState().account;
           const balance = account?.balance;
-          if (balance !== undefined && balance !== null && !isNaN(balance) && nextStake > balance) {
+          // NOTE: balance===0 is transient (reconnect/stake-deduction) — only halt on confirmed positive balance.
+          if (balance !== undefined && balance !== null && !isNaN(balance) && balance > 0 && nextStake > balance) {
             ss.currentStake = nextStake; // Preserve accurate stake, DO NOT reset to base!
             delete eng.roundState[roundId];
             get().stopBot(
@@ -1679,11 +1907,22 @@ interface BotStoreState {
   globalStats:  { won: number; lost: number; totalProfit: number; totalTrades: number };
   signalFlash:  Record<string, number>;
   virtualPatternStatus?: {
-    phase: 'scanning_box1' | 'locked_box2' | 'waiting_next_box' | 'waiting_for_lock';
+    phase: 'scanning_box1' | 'locked_box2' | 'waiting_next_box' | 'waiting_for_lock' | 'gate_b' | 'gate_b_real';
     currentBoxIndex: number;
     lockedSymbol: string | null;
     ticksWaited: number;
     timeout: number;
+    inGateBCycle?: boolean;
+    gateBConsecWins?: number;
+    gateBConsecLosses?: number;
+    gateBTotalWins?: number;
+    gateBTotalLosses?: number;
+    gateBTotalTrades?: number;
+    gateBRealConsecWins?: number;
+    gateBRealConsecLosses?: number;
+    gateBRealTotalWins?: number;
+    gateBRealTotalLosses?: number;
+    gateBRealTotalTrades?: number;
   };   // symbol → timestamp of last signal
 
   // ── Settings setters ───────────────────────────────────────────────────────
@@ -1711,6 +1950,7 @@ interface BotStoreState {
   // ── Log helpers ────────────────────────────────────────────────────────────
   addLog:       (log: TradeLog) => void;
   updateLog:    (id: string, patch: Partial<TradeLog>) => void;
+  updateTradeLog: (id: string, patch: Partial<TradeLog>) => void;
   addJournal:   (type: JournalLog['type'], title: string, message: string) => void;
   clearJournal: () => void;
 
@@ -1810,6 +2050,10 @@ export const useBotStore = create<BotStoreState>()(
       updateLog: (id, patch) => set(state => ({
         tradeLogs: state.tradeLogs.map(l => l.id === id ? { ...l, ...patch } : l),
       })),
+      // Alias used by trade-ws.ts (which uses store as `any`)
+      updateTradeLog: (id: string, patch: any) => set((state: any) => ({
+        tradeLogs: state.tradeLogs.map((l: any) => l.id === id ? { ...l, ...patch } : l),
+      })),
 
       addJournal: (type, title, message) => {
         const time = new Date().toLocaleTimeString([], { hour12: false });
@@ -1836,6 +2080,9 @@ export const useBotStore = create<BotStoreState>()(
       // ── Bot controls ─────────────────────────────────────────────────────────
 
       startBot: () => {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('laxprime_active_session', 'true');
+        }
         // Reset mutable engine state on each start
         eng.strategyState = {};
         eng.cooldown      = {};
@@ -1849,6 +2096,18 @@ export const useBotStore = create<BotStoreState>()(
           lockedSymbol: null,
           ticksWaited: 0,
           lastTickEpoch: 0,
+          gateBConsecWins: 0,
+          gateBConsecLosses: 0,
+          gateBTotalWins: 0,
+          gateBTotalLosses: 0,
+          gateBTotalTrades: 0,
+          gateBHistory: [],
+          inGateBCycle: false,
+          gateBRealConsecWins: 0,
+          gateBRealConsecLosses: 0,
+          gateBRealTotalWins: 0,
+          gateBRealTotalLosses: 0,
+          gateBRealTotalTrades: 0,
         };
         set({ virtualPatternStatus: undefined });
         eng.waitingForOpposite = {};
@@ -1909,6 +2168,18 @@ export const useBotStore = create<BotStoreState>()(
           lockedSymbol: null,
           ticksWaited: 0,
           lastTickEpoch: 0,
+          gateBConsecWins: 0,
+          gateBConsecLosses: 0,
+          gateBTotalWins: 0,
+          gateBTotalLosses: 0,
+          gateBTotalTrades: 0,
+          gateBHistory: [],
+          inGateBCycle: false,
+          gateBRealConsecWins: 0,
+          gateBRealConsecLosses: 0,
+          gateBRealTotalWins: 0,
+          gateBRealTotalLosses: 0,
+          gateBRealTotalTrades: 0,
         };
         const cLock = get().continuousLock;
         const isCLockActive = Boolean(cLock?.enabled);
@@ -2036,10 +2307,16 @@ export const useBotStore = create<BotStoreState>()(
           get().addJournal(logType, 'Bot Stopped', stopMsg);
         }
 
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('laxprime_active_session');
+        }
         set({ isRunning: false, botStatusMsg: reason ? `Stopped: ${reason}` : 'Bot stopped.' });
       },
 
       resetAll: () => {
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('laxprime_active_session');
+        }
         get().stopBot('Reset clicked');
         get().addJournal('info', 'Session Reset', 'All trade logs and session stats cleared.');
         eng.strategyState = {};
@@ -2099,6 +2376,18 @@ export const useBotStore = create<BotStoreState>()(
           lockedSymbol: null,
           ticksWaited: 0,
           lastTickEpoch: 0,
+          gateBConsecWins: 0,
+          gateBConsecLosses: 0,
+          gateBTotalWins: 0,
+          gateBTotalLosses: 0,
+          gateBTotalTrades: 0,
+          gateBHistory: [],
+          inGateBCycle: false,
+          gateBRealConsecWins: 0,
+          gateBRealConsecLosses: 0,
+          gateBRealTotalWins: 0,
+          gateBRealTotalLosses: 0,
+          gateBRealTotalTrades: 0,
         };
         const cLock = get().continuousLock;
         const isCLockActive = Boolean(cLock?.enabled);
@@ -2301,6 +2590,7 @@ export const useBotStore = create<BotStoreState>()(
           } else if (curPhaseB === 'gate_b') {
             processGateBResult(isRoundWinB, get, set);
           }
+          processPatternGateBResult(isRoundWinB, get, set);
           const currentRes: 'W' | 'L' = isRoundWinB ? 'W' : 'L';
           const newHistory: ('W' | 'L')[] = [...(vsV.vResultHistory || []), currentRes].slice(-50);
 
@@ -2501,8 +2791,12 @@ export const useBotStore = create<BotStoreState>()(
             }
           }
           const isVsActiveSettlement = Boolean(get().adaptiveSwitch?.enabled && get().adaptiveSwitch?.virtualSwitcher?.enabled);
+          const isPatternSwitcherActive = Boolean(vsV.patternSwitcher?.enabled);
+          const targetVirtMode = (isVsActiveSettlement || isPatternSwitcherActive)
+            ? useDerivStore.getState().virtualSettings.isVirtualMode
+            : newVirtMode;
           useDerivStore.getState().setVirtualSettings({
-            isVirtualMode: isVsActiveSettlement ? useDerivStore.getState().virtualSettings.isVirtualMode : newVirtMode,
+            isVirtualMode: targetVirtMode,
             startVirtualToReal: isVsActiveSettlement ? false : vsV.startVirtualToReal,
             startRealToVirtual: isVsActiveSettlement ? false : vsV.startRealToVirtual,
             isDoubleVirtual: isVsActiveSettlement ? false : vsV.isDoubleVirtual,
@@ -2521,12 +2815,14 @@ export const useBotStore = create<BotStoreState>()(
             } else if (curPhase === 'gate_b') {
               processGateBResult(rt.isWin, get, set);
             }
+            processPatternGateBResult(rt.isWin, get, set);
             const vsV = useDerivStore.getState().virtualSettings;
             let { vConsecWins, vConsecLosses, virtualWins, virtualLosses } = vsV;
             if (rt.isWin) { vConsecWins++; vConsecLosses = 0; virtualWins++; }
             else          { vConsecWins = 0; vConsecLosses++; virtualLosses++; }
             const isVsSingle = Boolean(get().adaptiveSwitch?.enabled && get().adaptiveSwitch?.virtualSwitcher?.enabled);
-            let newVirtMode = isVsSingle ? useDerivStore.getState().virtualSettings.isVirtualMode : vsV.isVirtualMode;
+            const isPatternSwitcherActiveSingle = Boolean(vsV.patternSwitcher?.enabled);
+            let newVirtMode = (isVsSingle || isPatternSwitcherActiveSingle) ? useDerivStore.getState().virtualSettings.isVirtualMode : vsV.isVirtualMode;
             if (vsV.startVirtualToReal && !isVsSingle && !vsV.patternSwitcher?.enabled) {
               const streak = vsV.vTriggerType === 'losses' ? vConsecLosses : vConsecWins;
               if (streak >= vsV.vThreshold) {
@@ -2535,7 +2831,7 @@ export const useBotStore = create<BotStoreState>()(
               }
             }
             useDerivStore.getState().setVirtualSettings({
-              isVirtualMode: isVsSingle ? useDerivStore.getState().virtualSettings.isVirtualMode : newVirtMode,
+              isVirtualMode: (isVsSingle || isPatternSwitcherActiveSingle) ? useDerivStore.getState().virtualSettings.isVirtualMode : newVirtMode,
               startVirtualToReal: isVsSingle ? false : vsV.startVirtualToReal,
               startRealToVirtual: isVsSingle ? false : vsV.startRealToVirtual,
               isDoubleVirtual: isVsSingle ? false : vsV.isDoubleVirtual,
@@ -2587,46 +2883,23 @@ export const useBotStore = create<BotStoreState>()(
             // - OR Continuous Lock is ON and THIS IS THE LOCKED MARKET!
             const vpConfig = vsCurrentScan.patternSwitcher;
             const vpBoxes = (vpConfig.patternBoxes || []).filter(b => b.triggers && b.triggers.length > 0);
-
-            if (vpBoxes.length > 0) {
             const vps = eng.virtualPatternState;
+
+            if (vps.inGateBCycle || vps.phase === 'gate_b' || vps.phase === 'gate_b_real') {
+              // Gate B cycle is active. Do not re-scan pattern boxes while inside Gate B!
+            } else if (vpBoxes.length > 0) {
             const mode = vpConfig.patternBoxMode || 'OR';
             const numBoxes = Math.min(4, vpBoxes.length);
             let didSwitchToReal = false;
 
             if (mode === 'OR') {
               if (evaluatePatternBoxes(vpBoxes, digits, quotes, symbol)) {
-                didSwitchToReal = true;
-                derivState.setVirtualSettings({ isVirtualMode: false });
-                const recentDigits = digits.slice(-Math.min(5, digits.length)).join('-');
-                const matchMsg = `⚡ Virtual Pattern Matched on ${symbol} (recent: [${recentDigits}])! Switched to REAL mode.`;
-                get().addJournal('info', 'Virtual → Real Switched', matchMsg);
-                set({
-                  botStatusMsg: matchMsg,
-                  virtualPatternStatus: {
-                    phase: 'scanning_box1',
-                    currentBoxIndex: 0,
-                    lockedSymbol: null,
-                    ticksWaited: 0,
-                    timeout: 0,
-                  }
-                });
+                didSwitchToReal = triggerPatternMatched(symbol, digits, get, set, derivState, eng, vpConfig);
               }
             } else if (mode === 'THEN') {
               if (numBoxes === 1) {
                 if (evaluateOnePatternBox(vpBoxes, 0, digits, quotes, symbol)) {
-                  didSwitchToReal = true;
-                  derivState.setVirtualSettings({ isVirtualMode: false });
-                  set({
-                    botStatusMsg: `⚡ Virtual Pattern Matched on ${symbol}! Switched to REAL mode.`,
-                    virtualPatternStatus: {
-                      phase: 'scanning_box1',
-                      currentBoxIndex: 0,
-                      lockedSymbol: null,
-                      ticksWaited: 0,
-                      timeout: 0,
-                    }
-                  });
+                  didSwitchToReal = triggerPatternMatched(symbol, digits, get, set, derivState, eng, vpConfig);
                 }
               } else if (vps.currentBoxIndex === 0) {
                 if (evaluateOnePatternBox(vpBoxes, 0, digits, quotes, symbol)) {
@@ -2671,22 +2944,7 @@ export const useBotStore = create<BotStoreState>()(
                     const boxPass = evaluateOnePatternBox(vpBoxes, targetBox, digits, quotes, symbol);
                     if (boxPass) {
                       if (targetBox >= numBoxes - 1) {
-                        vps.currentBoxIndex = 0;
-                        vps.phase = 'scanning_box1';
-                        vps.lockedSymbol = null;
-                        vps.ticksWaited = 0;
-                        didSwitchToReal = true;
-                        derivState.setVirtualSettings({ isVirtualMode: false });
-                        set({
-                          botStatusMsg: `⚡ Virtual Switcher: Final Box ${targetBox + 1} matched on ${symbol}! Switched to REAL mode.`,
-                          virtualPatternStatus: {
-                            phase: 'scanning_box1',
-                            currentBoxIndex: 0,
-                            lockedSymbol: null,
-                            ticksWaited: 0,
-                            timeout: 0,
-                          }
-                        });
+                        didSwitchToReal = triggerPatternMatched(symbol, digits, get, set, derivState, eng, vpConfig);
                       } else {
                         const nextBox = targetBox + 1;
                         vps.currentBoxIndex = nextBox;
@@ -2720,18 +2978,7 @@ export const useBotStore = create<BotStoreState>()(
             } else if (mode === 'THENALL') {
               if (numBoxes === 1) {
                 if (evaluateOnePatternBox(vpBoxes, 0, digits, quotes, symbol)) {
-                  didSwitchToReal = true;
-                  derivState.setVirtualSettings({ isVirtualMode: false });
-                  set({
-                    botStatusMsg: `⚡ Virtual Pattern Matched on ${symbol}! Switched to REAL mode.`,
-                    virtualPatternStatus: {
-                      phase: 'scanning_box1',
-                      currentBoxIndex: 0,
-                      lockedSymbol: null,
-                      ticksWaited: 0,
-                      timeout: 0,
-                    }
-                  });
+                  didSwitchToReal = triggerPatternMatched(symbol, digits, get, set, derivState, eng, vpConfig);
                 }
               } else if (vps.currentBoxIndex === 0) {
                 if (evaluateOnePatternBox(vpBoxes, 0, digits, quotes, symbol)) {
@@ -2780,22 +3027,7 @@ export const useBotStore = create<BotStoreState>()(
                   const boxPass = evaluateOnePatternBox(vpBoxes, targetBox, digits, quotes, symbol);
                   if (boxPass) {
                     if (targetBox >= numBoxes - 1) {
-                      vps.currentBoxIndex = 0;
-                      vps.phase = 'scanning_box1';
-                      vps.lockedSymbol = null;
-                      vps.ticksWaited = 0;
-                      didSwitchToReal = true;
-                      derivState.setVirtualSettings({ isVirtualMode: false });
-                      set({
-                        botStatusMsg: `⚡ Virtual Switcher (THENALL): Final Box ${targetBox + 1} matched on ${symbol}! Switched to REAL mode.`,
-                        virtualPatternStatus: {
-                          phase: 'scanning_box1',
-                          currentBoxIndex: 0,
-                          lockedSymbol: null,
-                          ticksWaited: 0,
-                          timeout: 0,
-                        }
-                      });
+                      didSwitchToReal = triggerPatternMatched(symbol, digits, get, set, derivState, eng, vpConfig);
                     } else {
                       const nextBox = targetBox + 1;
                       vps.currentBoxIndex = nextBox;
@@ -2829,10 +3061,6 @@ export const useBotStore = create<BotStoreState>()(
 
             if (didSwitchToReal) {
               isVirtual = false;
-              const recentDigits = digits.slice(-Math.min(5, digits.length)).join('-');
-              const matchMsg = `⚡ Virtual Pattern Matched on ${symbol} (recent: [${recentDigits}])! Switched to REAL mode.`;
-              get().addJournal('info', 'Virtual → Real Switched', matchMsg);
-              set({ botStatusMsg: matchMsg });
             }
           }
           }
@@ -2908,7 +3136,7 @@ export const useBotStore = create<BotStoreState>()(
           // ── Stale in-flight trade watchdog: auto-clear any stuck trades (> 15s) ─
           if (eng.activeTrades.size > 0) {
             for (const [reqId, tr] of eng.activeTrades.entries()) {
-              if (now - tr.startTime > 15000) {
+              if (now - tr.startTime > 60000) {
                 eng.activeTrades.delete(reqId);
               }
             }
@@ -3275,6 +3503,18 @@ export const useBotStore = create<BotStoreState>()(
                 lockedSymbol: symbol,
                 ticksWaited: 0,
                 lastTickEpoch: 0,
+                gateBConsecWins: 0,
+                gateBConsecLosses: 0,
+                gateBTotalWins: 0,
+                gateBTotalLosses: 0,
+                gateBTotalTrades: 0,
+                gateBHistory: [],
+                inGateBCycle: false,
+                gateBRealConsecWins: 0,
+                gateBRealConsecLosses: 0,
+                gateBRealTotalWins: 0,
+                gateBRealTotalLosses: 0,
+                gateBRealTotalTrades: 0,
               };
               set({
                 virtualPatternStatus: {
@@ -3614,7 +3854,8 @@ export const useBotStore = create<BotStoreState>()(
             const account = useDerivStore.getState().account;
             const balance = account?.balance;
             const totalRequiredStake = orders.length * tradeStake;
-            if (balance !== undefined && balance !== null && !isNaN(balance) && (totalRequiredStake > balance || tradeStake > balance)) {
+            // NOTE: balance===0 is transient (reconnect/stake-deduction) — only halt on confirmed positive balance.
+            if (balance !== undefined && balance !== null && !isNaN(balance) && balance > 0 && (totalRequiredStake > balance || tradeStake > balance)) {
               delete eng.roundState[roundId];
               get().stopBot(
                 `⛔ Insufficient Balance: Required stake USD ${tradeStake.toFixed(2)} exceeds account balance USD ${balance.toFixed(2)}. Bot stopped to protect remaining funds.`
@@ -3694,11 +3935,18 @@ export const useBotStore = create<BotStoreState>()(
           return;
         }
         if (type === 'TRADE_ERROR') {
+          const errMsg = String(data?.error || data?.message || '');
+          // Recoverable connection errors: keep activeTrades alive so TRADE_RESULT can still be processed
+          // after the tradeWS recovery pool re-subscribes the contract on reconnect.
+          if (data?.isRecoverable || errMsg === 'Connection Lost' || errMsg === 'Disconnected manually') {
+            get().updateLog(data.requestId, { result: 'RUNNING...' });
+            return;
+          }
+
           const errTrade = eng.activeTrades.get(data.requestId);
           eng.activeTrades.delete(data.requestId);
           get().updateLog(data.requestId, { result: 'ERROR', profit: 0 });
 
-          const errMsg = String(data?.error || data?.message || '');
           const isBalanceError = /insufficient|balance|too low|not enough/i.test(errMsg);
 
           if (isBalanceError) {
@@ -3736,7 +3984,27 @@ export const useBotStore = create<BotStoreState>()(
 
         const { requestId, profit: rawProfit, poc } = data;
         const trade = eng.activeTrades.get(requestId);
-        if (!trade) return;
+        if (!trade) {
+          // Trade may have been temporarily cleared during reconnect (recovery pool scenario).
+          // If we still have a log entry for this requestId, still record the final result
+          // so the auto-trade page watcher picks it up correctly.
+          const existingLog = get().tradeLogs.find((l: any) => l.id === requestId);
+          if (existingLog) {
+            const isWinFallback = rawProfit > 0;
+            get().updateLog(requestId, {
+              result: isWinFallback ? 'WON' : 'LOST',
+              profit: rawProfit,
+            });
+            const cur = get().globalStats;
+            set({ globalStats: {
+              won:         cur.won  + (isWinFallback ? 1 : 0),
+              lost:        cur.lost + (isWinFallback ? 0 : 1),
+              totalProfit: cur.totalProfit + rawProfit,
+              totalTrades: cur.totalTrades + 1,
+            }});
+          }
+          return;
+        }
 
         const { stratId, symbol, stake: tradeStake, roundId } = trade;
         // Global martingale state — one ladder shared by ALL strategies and markets
@@ -3858,6 +4126,18 @@ export const useBotStore = create<BotStoreState>()(
                 lockedSymbol: null,
                 ticksWaited: 0,
                 lastTickEpoch: 0,
+                gateBConsecWins: 0,
+                gateBConsecLosses: 0,
+                gateBTotalWins: 0,
+                gateBTotalLosses: 0,
+                gateBTotalTrades: 0,
+                gateBHistory: [],
+                inGateBCycle: false,
+                gateBRealConsecWins: 0,
+                gateBRealConsecLosses: 0,
+                gateBRealTotalWins: 0,
+                gateBRealTotalLosses: 0,
+                gateBRealTotalTrades: 0,
               };
               set({
                 virtualPatternStatus: {
@@ -3933,7 +4213,8 @@ export const useBotStore = create<BotStoreState>()(
 
                 const account = derivState.account;
                 const balance = account?.balance;
-                if (balance !== undefined && balance !== null && !isNaN(balance) && nextStake > balance) {
+                // NOTE: balance===0 is transient — only halt on confirmed positive balance.
+                if (balance !== undefined && balance !== null && !isNaN(balance) && balance > 0 && nextStake > balance) {
                   ss.currentStake = nextStake; // Preserve accurate stake, DO NOT reset to base!
                   get().stopBot(
                     `⛔ Max Martingale / Insufficient Balance: Next stake USD ${nextStake.toFixed(2)} exceeds account balance USD ${balance.toFixed(2)}. Bot stopped to protect remaining funds.`
@@ -3972,19 +4253,43 @@ export const useBotStore = create<BotStoreState>()(
           }
 
           let newIsVirtual = isVsActive ? useDerivStore.getState().virtualSettings.isVirtualMode : vsState.isVirtualMode;
-          if (!isVsActive && vsState.startRealToVirtual) {
-            const streak = vsState.rTriggerType === 'losses' ? rConsecLosses : rConsecWins;
-            const threshold = Math.max(1, Number(vsState.rThreshold) || 1);
-            const val = vsState.rTriggerMode === 'total' 
-              ? (vsState.rTriggerType === 'losses' ? realLosses : realWins) 
-              : streak;
-            if (val >= threshold) {
+          const curPS = vsState.patternSwitcher;
+          const isGateBCycleActive = Boolean(curPS?.enabled && curPS.gateB?.enabled && eng.virtualPatternState.inGateBCycle);
+
+          if (!isVsActive) {
+            if (isGateBCycleActive) {
+              if (roundIsWin) {
+                eng.virtualPatternState.gateBRealConsecWins = (eng.virtualPatternState.gateBRealConsecWins || 0) + 1;
+                eng.virtualPatternState.gateBRealConsecLosses = 0;
+                eng.virtualPatternState.gateBRealTotalWins = (eng.virtualPatternState.gateBRealTotalWins || 0) + 1;
+              } else {
+                eng.virtualPatternState.gateBRealConsecWins = 0;
+                eng.virtualPatternState.gateBRealConsecLosses = (eng.virtualPatternState.gateBRealConsecLosses || 0) + 1;
+                eng.virtualPatternState.gateBRealTotalLosses = (eng.virtualPatternState.gateBRealTotalLosses || 0) + 1;
+              }
+              eng.virtualPatternState.gateBRealTotalTrades = (eng.virtualPatternState.gateBRealTotalTrades || 0) + 1;
+            }
+
+            // Check Master Return: Start Real → Switch to Virtual
+            let masterReturnHit = false;
+            if (vsState.startRealToVirtual) {
+              const streak = vsState.rTriggerType === 'losses' ? rConsecLosses : rConsecWins;
+              const threshold = Math.max(1, Number(vsState.rThreshold) || 1);
+              const val = vsState.rTriggerMode === 'total' 
+                ? (vsState.rTriggerType === 'losses' ? realLosses : realWins) 
+                : streak;
+              if (val >= threshold) {
+                masterReturnHit = true;
+              }
+            }
+
+            if (masterReturnHit) {
+              // Master Return hit: Full reset back to Gate A (Digit Pattern)
               newIsVirtual = true;
               rConsecWins = 0;
               rConsecLosses = 0;
               realWins = 0;
               realLosses = 0;
-              set({ botStatusMsg: `Real threshold [${threshold}] hit! Switching to VIRTUAL.` });
               const cLockCur = get().continuousLock;
               const isLockedOn = Boolean(cLockCur?.enabled && eng.lockState.locked && eng.lockState.symbol);
               eng.virtualPatternState = {
@@ -3993,16 +4298,124 @@ export const useBotStore = create<BotStoreState>()(
                 lockedSymbol: isLockedOn ? eng.lockState.symbol : null,
                 ticksWaited: 0,
                 lastTickEpoch: 0,
+                inGateBCycle: false,
+                gateBConsecWins: 0,
+                gateBConsecLosses: 0,
+                gateBTotalWins: 0,
+                gateBTotalLosses: 0,
+                gateBTotalTrades: 0,
+                gateBHistory: [],
+                gateBRealConsecWins: 0,
+                gateBRealConsecLosses: 0,
+                gateBRealTotalWins: 0,
+                gateBRealTotalLosses: 0,
+                gateBRealTotalTrades: 0,
               };
+              const masterMsg = `⚡ Master Real Target [${vsState.rThreshold} ${vsState.rTriggerType}] hit! Returned to Gate A (Digit Pattern Scanning).`;
+              get().addJournal('switcher', 'Master Return → Gate A', masterMsg);
               set({
+                botStatusMsg: masterMsg,
                 virtualPatternStatus: {
                   phase: 'scanning_box1',
                   currentBoxIndex: 0,
                   lockedSymbol: isLockedOn ? eng.lockState.symbol : null,
                   ticksWaited: 0,
                   timeout: 0,
+                  inGateBCycle: false,
+                  gateBConsecWins: 0,
+                  gateBConsecLosses: 0,
+                  gateBTotalWins: 0,
+                  gateBTotalLosses: 0,
+                  gateBTotalTrades: 0,
+                  gateBRealConsecWins: 0,
+                  gateBRealConsecLosses: 0,
+                  gateBRealTotalWins: 0,
+                  gateBRealTotalLosses: 0,
+                  gateBRealTotalTrades: 0,
                 }
               });
+            } else if (isGateBCycleActive) {
+              // Master Return NOT hit yet: check Gate B Real -> Virtual sub-cycle return
+              const gb = curPS!.gateB!;
+              const retType = (gb.realReturnTriggerType || 'wins') as 'wins' | 'losses' | 'trades';
+              const retMode = (gb.realReturnMode || 'consec') as 'consec' | 'total';
+              const retThresh = Math.max(1, Number(gb.realReturnThreshold) || 1);
+
+              let subCount = 0;
+              if (retType === 'wins') {
+                subCount = retMode === 'consec' ? (eng.virtualPatternState.gateBRealConsecWins || 0) : (eng.virtualPatternState.gateBRealTotalWins || 0);
+              } else if (retType === 'losses') {
+                subCount = retMode === 'consec' ? (eng.virtualPatternState.gateBRealConsecLosses || 0) : (eng.virtualPatternState.gateBRealTotalLosses || 0);
+              } else {
+                subCount = eng.virtualPatternState.gateBRealTotalTrades || 0;
+              }
+
+              if (subCount >= retThresh) {
+                // Gate B Real -> Virtual Sub-cycle condition met!
+                newIsVirtual = true;
+                eng.virtualPatternState.phase = 'gate_b';
+                eng.virtualPatternState.inGateBCycle = true;
+                eng.virtualPatternState.gateBConsecWins = 0;
+                eng.virtualPatternState.gateBConsecLosses = 0;
+                eng.virtualPatternState.gateBTotalWins = 0;
+                eng.virtualPatternState.gateBTotalLosses = 0;
+                eng.virtualPatternState.gateBTotalTrades = 0;
+                eng.virtualPatternState.gateBHistory = [];
+                eng.virtualPatternState.gateBRealConsecWins = 0;
+                eng.virtualPatternState.gateBRealConsecLosses = 0;
+                eng.virtualPatternState.gateBRealTotalWins = 0;
+                eng.virtualPatternState.gateBRealTotalLosses = 0;
+                eng.virtualPatternState.gateBRealTotalTrades = 0;
+
+                const masterProgress = vsState.startRealToVirtual
+                  ? ` (Master: ${vsState.rTriggerMode === 'total' ? (vsState.rTriggerType === 'losses' ? realLosses : realWins) : (vsState.rTriggerType === 'losses' ? rConsecLosses : rConsecWins)}/${vsState.rThreshold} ${vsState.rTriggerType})`
+                  : '';
+                const cycleMsg = `🔷 Gate B Real Cycle (${retThresh} ${retMode === 'consec' ? 'streak ' : 'total '}${retType}) met! Cycling back to Gate B Virtual${masterProgress}.`;
+                get().addJournal('switcher', 'Gate B Real → Gate B Virtual', cycleMsg);
+                set({
+                  botStatusMsg: cycleMsg,
+                  virtualPatternStatus: {
+                    phase: 'gate_b',
+                    currentBoxIndex: 0,
+                    lockedSymbol: eng.virtualPatternState.lockedSymbol || (eng.lockState.locked ? eng.lockState.symbol : null),
+                    ticksWaited: 0,
+                    timeout: 0,
+                    inGateBCycle: true,
+                    gateBConsecWins: 0,
+                    gateBConsecLosses: 0,
+                    gateBTotalWins: 0,
+                    gateBTotalLosses: 0,
+                    gateBTotalTrades: 0,
+                    gateBRealConsecWins: 0,
+                    gateBRealConsecLosses: 0,
+                    gateBRealTotalWins: 0,
+                    gateBRealTotalLosses: 0,
+                    gateBRealTotalTrades: 0,
+                  }
+                });
+              } else {
+                // Real trade finished, still in Gate B Real
+                set({
+                  virtualPatternStatus: {
+                    phase: 'gate_b_real',
+                    currentBoxIndex: 0,
+                    lockedSymbol: eng.virtualPatternState.lockedSymbol || (eng.lockState.locked ? eng.lockState.symbol : null),
+                    ticksWaited: 0,
+                    timeout: 0,
+                    inGateBCycle: true,
+                    gateBConsecWins: 0,
+                    gateBConsecLosses: 0,
+                    gateBTotalWins: 0,
+                    gateBTotalLosses: 0,
+                    gateBTotalTrades: 0,
+                    gateBRealConsecWins: eng.virtualPatternState.gateBRealConsecWins || 0,
+                    gateBRealConsecLosses: eng.virtualPatternState.gateBRealConsecLosses || 0,
+                    gateBRealTotalWins: eng.virtualPatternState.gateBRealTotalWins || 0,
+                    gateBRealTotalLosses: eng.virtualPatternState.gateBRealTotalLosses || 0,
+                    gateBRealTotalTrades: eng.virtualPatternState.gateBRealTotalTrades || 0,
+                  }
+                });
+              }
             }
           }
           derivState.setVirtualSettings({
@@ -4064,9 +4477,11 @@ export const useBotStore = create<BotStoreState>()(
         }
         return localStorage;
       }),
-      // Only persist settings — NOT runtime state (isRunning, logs, stats)
+      // Persist settings AND the last 500 trade logs + global stats for long-running sessions
       partialize: (state) => ({
         stake:           state.stake,
+        tradeLogs:       (state.tradeLogs || []).slice(0, 500),
+        globalStats:     state.globalStats,
         targetProfit:    state.targetProfit,
         targetProfitMode: state.targetProfitMode,
         stopLoss:        state.stopLoss,
@@ -4081,6 +4496,17 @@ export const useBotStore = create<BotStoreState>()(
         adaptiveSwitch:  state.adaptiveSwitch,
         continuousLock:  state.continuousLock,
       }),
+      onRehydrateStorage: () => (state) => {
+        if (!state) return;
+        if (typeof window !== 'undefined') {
+          const wasActive = localStorage.getItem('laxprime_active_session') === 'true';
+          if (!wasActive) {
+            // User stopped bot and reloaded/refreshed — start fresh with clean slate
+            state.tradeLogs = [];
+            state.globalStats = { won: 0, lost: 0, totalProfit: 0, totalTrades: 0 };
+          }
+        }
+      },
     },
   ),
 );
@@ -4091,13 +4517,10 @@ const onTradeWSEvent = (type: string, data: any) => {
 };
 
 if (typeof window !== 'undefined') {
-  // Use a property on the global window object as a cross-reload singleton flag
   const WIN = window as any;
-  if (!WIN.__laxprime_bot_listener__) {
-    WIN.__laxprime_bot_listener__ = true;
-
-    // Remove any previously registered copies (defensive for HMR edge cases)
-    tradeWS.offEvent(onTradeWSEvent);
-    tradeWS.onEvent(onTradeWSEvent);
+  if (WIN.__laxprime_bot_listener_fn__) {
+    tradeWS.offEvent(WIN.__laxprime_bot_listener_fn__);
   }
+  WIN.__laxprime_bot_listener_fn__ = onTradeWSEvent;
+  tradeWS.onEvent(onTradeWSEvent);
 }

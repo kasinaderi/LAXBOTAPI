@@ -3261,6 +3261,14 @@ export default function LaxPrimePage() {
                             <span style={{ color: '#94a3b8' }}>Bot Stopped — Switcher Idle (will start in Virtual)</span>
                           ) : !virtualSettings.isVirtualMode ? (
                             <span style={{ color: '#38bdf8', fontWeight: 700 }}>⚡ Real Mode Active — Pattern Switcher Paused (Awaiting Real → Virtual)</span>
+                          ) : virtualPatternStatus?.inGateBCycle && virtualSettings.isVirtualMode ? (
+                            <span style={{ color: '#fb923c', fontWeight: 700 }}>
+                              🔷 Gate B Active — Virtual ({virtualPatternStatus.gateBConsecWins || 0}W / {virtualPatternStatus.gateBConsecLosses || 0}L streak, total {virtualPatternStatus.gateBTotalWins || 0}W / {virtualPatternStatus.gateBTotalLosses || 0}L)
+                            </span>
+                          ) : virtualPatternStatus?.inGateBCycle && !virtualSettings.isVirtualMode ? (
+                            <span style={{ color: '#38bdf8', fontWeight: 700 }}>
+                              ⚡ Gate B Active — REAL Trading ({virtualPatternStatus.gateBRealConsecWins || 0}W / {virtualPatternStatus.gateBRealConsecLosses || 0}L | Master: {virtualSettings.rConsecWins || 0}W/{virtualSettings.rThreshold || 3}W to Gate A)
+                            </span>
                           ) : (
                             <span style={{ color: '#4ade80', fontWeight: 700 }}>
                               {virtualPatternStatus?.phase === 'locked_box2' || virtualPatternStatus?.phase === 'waiting_next_box'
@@ -3276,6 +3284,213 @@ export default function LaxPrimePage() {
                           config={virtualSettings.patternSwitcher}
                           onChange={updated => setVirtualSettings({ patternSwitcher: { ...virtualSettings.patternSwitcher, ...updated, enabled: true } })}
                         />
+                        {/* ── Digit Pattern Gate B (Optional Virtual Confirmation) ── */}
+                        <div style={{
+                          marginTop: '4px',
+                          padding: '8px 10px',
+                          borderRadius: '8px',
+                          background: 'rgba(249, 115, 22, 0.05)',
+                          border: '1px solid rgba(249, 115, 22, 0.25)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '6px'
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span style={{ fontSize: '10px', fontWeight: 800, color: '#fb923c' }}>🔷 Gate B (Optional Virtual Confirmation)</span>
+                              <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '4px', background: 'rgba(249, 115, 22, 0.15)', color: '#fdba74', fontWeight: 700 }}>STAGE B GATE</span>
+                            </div>
+                            <label className="lp-vp-sw">
+                              <input
+                                type="checkbox"
+                                checked={virtualSettings.patternSwitcher?.gateB?.enabled || false}
+                                onChange={e => {
+                                  const enabled = e.target.checked;
+                                  const currentGB = virtualSettings.patternSwitcher?.gateB || {
+                                    enabled: false,
+                                    threshold: 2,
+                                    mode: 'consec' as const,
+                                    triggerType: 'losses' as const,
+                                    inEnabled: false,
+                                    inTrades: 5,
+                                  };
+                                  setVirtualSettings({
+                                    patternSwitcher: {
+                                      ...virtualSettings.patternSwitcher!,
+                                      gateB: { ...currentGB, enabled },
+                                      enabled: true,
+                                    }
+                                  });
+                                }}
+                              />
+                              <span className="lp-vp-sw-track" style={{ background: virtualSettings.patternSwitcher?.gateB?.enabled ? '#f97316' : '' }} />
+                            </label>
+                          </div>
+                          <p style={{ margin: 0, fontSize: '9px', color: '#94a3b8', lineHeight: 1.3 }}>
+                            When enabled, meeting the digit pattern condition does NOT go directly to Real. Instead, it enters Gate B to test <span style={{ color: '#fb923c', fontWeight: 700 }}>virtually</span> before switching to Real.
+                          </p>
+                          {virtualSettings.patternSwitcher?.gateB?.enabled && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px', paddingTop: '4px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                              <span style={{ fontSize: '9px', color: '#94a3b8' }}>Gate B:</span>
+                              <select
+                                className="lp-sel"
+                                value={virtualSettings.patternSwitcher?.gateB?.triggerType || 'losses'}
+                                onChange={e => {
+                                  const val = e.target.value as 'wins' | 'losses' | 'trades';
+                                  setVirtualSettings({
+                                    patternSwitcher: {
+                                      ...virtualSettings.patternSwitcher!,
+                                      gateB: { ...virtualSettings.patternSwitcher!.gateB!, triggerType: val }
+                                    }
+                                  });
+                                }}
+                              >
+                                <option value="losses">Losses</option>
+                                <option value="wins">Wins</option>
+                                <option value="trades">Trades</option>
+                              </select>
+                              <select
+                                className="lp-sel"
+                                value={virtualSettings.patternSwitcher?.gateB?.mode || 'consec'}
+                                onChange={e => {
+                                  const val = e.target.value as 'consec' | 'total';
+                                  setVirtualSettings({
+                                    patternSwitcher: {
+                                      ...virtualSettings.patternSwitcher!,
+                                      gateB: { ...virtualSettings.patternSwitcher!.gateB!, mode: val }
+                                    }
+                                  });
+                                }}
+                              >
+                                <option value="consec">Consecutive</option>
+                                <option value="total">Total</option>
+                              </select>
+                              <span style={{ fontSize: '9px', color: '#94a3b8' }}>Target:</span>
+                              <input
+                                className="lp-num lp-sm"
+                                type="number"
+                                min={1}
+                                value={virtualSettings.patternSwitcher?.gateB?.threshold ?? 2}
+                                onChange={e => {
+                                  const val = Math.max(1, parseInt(e.target.value) || 1);
+                                  setVirtualSettings({
+                                    patternSwitcher: {
+                                      ...virtualSettings.patternSwitcher!,
+                                      gateB: { ...virtualSettings.patternSwitcher!.gateB!, threshold: val }
+                                    }
+                                  });
+                                }}
+                                style={{ width: '40px', textAlign: 'center' }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const curIn = Boolean(virtualSettings.patternSwitcher?.gateB?.inEnabled);
+                                  setVirtualSettings({
+                                    patternSwitcher: {
+                                      ...virtualSettings.patternSwitcher!,
+                                      gateB: { ...virtualSettings.patternSwitcher!.gateB!, inEnabled: !curIn }
+                                    }
+                                  });
+                                }}
+                                style={{
+                                  padding: '2px 6px',
+                                  borderRadius: '5px',
+                                  fontSize: '9px',
+                                  fontWeight: 800,
+                                  cursor: 'pointer',
+                                  border: virtualSettings.patternSwitcher?.gateB?.inEnabled ? '1px solid #fb923c' : '1px solid rgba(255,255,255,0.15)',
+                                  background: virtualSettings.patternSwitcher?.gateB?.inEnabled ? '#f97316' : 'rgba(255,255,255,0.06)',
+                                  color: virtualSettings.patternSwitcher?.gateB?.inEnabled ? '#ffffff' : '#9ca3af',
+                                  transition: 'all 0.2s',
+                                }}
+                                title="Evaluate Gate B threshold within last N virtual trades"
+                              >
+                                IN
+                              </button>
+                              {virtualSettings.patternSwitcher?.gateB?.inEnabled && (
+                                <>
+                                  <input
+                                    className="lp-num lp-sm"
+                                    type="number"
+                                    min={1}
+                                    value={virtualSettings.patternSwitcher?.gateB?.inTrades ?? 5}
+                                    onChange={e => {
+                                      const val = Math.max(1, parseInt(e.target.value) || 1);
+                                      setVirtualSettings({
+                                        patternSwitcher: {
+                                          ...virtualSettings.patternSwitcher!,
+                                          gateB: { ...virtualSettings.patternSwitcher!.gateB!, inTrades: val }
+                                        }
+                                      });
+                                    }}
+                                    style={{ width: '40px', borderColor: '#fb923c', textAlign: 'center' }}
+                                  />
+                                  <span style={{ fontSize: '9px', color: '#94a3b8' }}>trades</span>
+                                </>
+                              )}
+                              <span style={{ fontSize: '9px', color: '#94a3b8' }}>in virtual → Switch to REAL</span>
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px', paddingTop: '4px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                              <span style={{ fontSize: '9px', color: '#94a3b8' }}>Switch Real → Gate B Virtual on:</span>
+                              <input
+                                className="lp-num lp-sm"
+                                type="number"
+                                min={1}
+                                value={virtualSettings.patternSwitcher?.gateB?.realReturnThreshold ?? 1}
+                                onChange={e => {
+                                  const val = Math.max(1, parseInt(e.target.value) || 1);
+                                  setVirtualSettings({
+                                    patternSwitcher: {
+                                      ...virtualSettings.patternSwitcher!,
+                                      gateB: { ...virtualSettings.patternSwitcher!.gateB!, realReturnThreshold: val }
+                                    }
+                                  });
+                                }}
+                                style={{ width: '40px', textAlign: 'center' }}
+                              />
+                              <select
+                                className="lp-sel"
+                                value={virtualSettings.patternSwitcher?.gateB?.realReturnMode || 'consec'}
+                                onChange={e => {
+                                  const val = e.target.value as 'consec' | 'total';
+                                  setVirtualSettings({
+                                    patternSwitcher: {
+                                      ...virtualSettings.patternSwitcher!, 
+                                      gateB: { ...virtualSettings.patternSwitcher!.gateB!, realReturnMode: val }
+                                    }
+                                  });
+                                }}
+                              >
+                                <option value="consec">Consecutive</option>
+                                <option value="total">Total</option>
+                              </select>
+                              <select
+                                className="lp-sel"
+                                value={virtualSettings.patternSwitcher?.gateB?.realReturnTriggerType || 'wins'}
+                                onChange={e => {
+                                  const val = e.target.value as 'wins' | 'losses' | 'trades';
+                                  setVirtualSettings({
+                                    patternSwitcher: {
+                                      ...virtualSettings.patternSwitcher!,
+                                      gateB: { ...virtualSettings.patternSwitcher!.gateB!, realReturnTriggerType: val }
+                                    }
+                                  });
+                                }}
+                              >
+                                <option value="wins">Wins</option>
+                                <option value="losses">Losses</option>
+                                <option value="trades">Trades</option>
+                              </select>
+                              <span style={{ fontSize: '9px', color: '#94a3b8' }}>in real</span>
+                            </div>
+                            <div style={{ fontSize: '8px', color: '#fbbf24', fontStyle: 'italic', paddingTop: '2px' }}>
+                              Cycles between Gate B Virtual ↔ Real until main Start Real → Switch to Virtual returns to Gate A.
+                            </div>
+                          </div>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>

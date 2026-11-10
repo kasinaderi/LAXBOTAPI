@@ -72,6 +72,17 @@ export interface LaxPrimeStepConfig {
       thenTimeout?: number;
       thenTimeouts?: number[];
       thenMaxTrades?: number;
+      gateB?: {
+        enabled: boolean;
+        threshold: number;
+        mode: 'consec' | 'total';
+        triggerType: 'wins' | 'losses' | 'trades';
+        inEnabled?: boolean;
+        inTrades?: number;
+        realReturnThreshold?: number;
+        realReturnMode?: 'consec' | 'total';
+        realReturnTriggerType?: 'wins' | 'losses' | 'trades';
+      };
     };
     virtualWins?: number;
     virtualLosses?: number;
@@ -1105,6 +1116,17 @@ export function MiniLaxPrimeModal({
       thenTimeout: 20,
       thenTimeouts: [20, 20, 20, 20],
       thenMaxTrades: 3,
+      gateB: {
+        enabled: false,
+        threshold: 2,
+        mode: 'consec' as const,
+        triggerType: 'losses' as const,
+        inEnabled: false,
+        inTrades: 5,
+        realReturnThreshold: 1,
+        realReturnMode: 'consec' as const,
+        realReturnTriggerType: 'wins' as const,
+      },
     },
     virtualWins: 0,
     virtualLosses: 0,
@@ -1159,6 +1181,17 @@ export function MiniLaxPrimeModal({
         thenTimeout: 20,
         thenTimeouts: [20, 20, 20, 20],
         thenMaxTrades: 3,
+      gateB: {
+        enabled: false,
+        threshold: 2,
+        mode: 'consec' as const,
+        triggerType: 'losses' as const,
+        inEnabled: false,
+        inTrades: 5,
+        realReturnThreshold: 1,
+        realReturnMode: 'consec' as const,
+        realReturnTriggerType: 'wins' as const,
+      },
       },
       virtualWins: 0, virtualLosses: 0,
       vConsecWins: 0, vConsecLosses: 0,
@@ -2007,10 +2040,210 @@ export function MiniLaxPrimeModal({
                     Bot starts in Virtual. When Continuous Lock is ON, pattern checking begins only after a market is locked, checking solely in that locked market. Once matched, it switches to Real execution until Start Real → Switch to Virtual returns to Virtual.
                   </p>
                   {virtualMode.patternSwitcher?.enabled && (
-                    <MiniVirtualPatternBuilder
-                      config={virtualMode.patternSwitcher}
-                      onChange={updated => updateVS({ patternSwitcher: { ...virtualMode.patternSwitcher, ...updated, enabled: true } })}
-                    />
+                    <div className="space-y-2">
+                      <MiniVirtualPatternBuilder
+                        config={virtualMode.patternSwitcher}
+                        onChange={updated => updateVS({ patternSwitcher: { ...virtualMode.patternSwitcher, ...updated, enabled: true } })}
+                      />
+                      {/* ── Digit Pattern Gate B (Optional Virtual Confirmation) ── */}
+                      <div className="rounded-lg border border-orange-500/25 bg-orange-500/5 p-2.5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-bold text-orange-400">🔷 Gate B (Optional Virtual Confirmation)</span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300 font-bold">STAGE B GATE</span>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                              type="checkbox"
+                              className="sr-only peer"
+                              checked={!!virtualMode.patternSwitcher?.gateB?.enabled}
+                              onChange={e => {
+                                const enabled = e.target.checked;
+                                const curGB = virtualMode.patternSwitcher?.gateB || {
+                                  enabled: false,
+                                  threshold: 2,
+                                  mode: 'consec' as const,
+                                  triggerType: 'losses' as const,
+                                  inEnabled: false,
+                                  inTrades: 5,
+                                };
+                                updateVS({
+                                  patternSwitcher: {
+                                    ...virtualMode.patternSwitcher!,
+                                    gateB: { ...curGB, enabled },
+                                    enabled: true,
+                                  }
+                                });
+                              }}
+                            />
+                            <div className="w-8 h-4 bg-slate-700 peer-checked:bg-orange-500 rounded-full transition-colors" />
+                            <div className="absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full transition-transform peer-checked:translate-x-4" />
+                          </label>
+                        </div>
+                        <p className="text-[9px] text-gray-400">
+                          When enabled, meeting the digit pattern does NOT immediately trade real. It satisfies Gate B in <span className="text-orange-400 font-bold">virtual</span> before switching to Real.
+                        </p>
+                        {virtualMode.patternSwitcher?.gateB?.enabled && (
+                          <div className="space-y-1.5">
+                            <div className="flex flex-wrap items-center gap-1.5 text-[9px] pt-1 border-t border-white/5">
+                            <span className="text-gray-400">Gate B:</span>
+                            <select
+                              value={virtualMode.patternSwitcher?.gateB?.triggerType || 'losses'}
+                              onChange={e => {
+                                const val = e.target.value as 'wins' | 'losses' | 'trades';
+                                updateVS({
+                                  patternSwitcher: {
+                                    ...virtualMode.patternSwitcher!,
+                                    gateB: { ...virtualMode.patternSwitcher!.gateB!, triggerType: val }
+                                  }
+                                });
+                              }}
+                              className="bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-white text-[9px]"
+                              style={{ background: '#0f172a', color: '#fff' }}
+                            >
+                              <option value="losses">Losses</option>
+                              <option value="wins">Wins</option>
+                              <option value="trades">Trades</option>
+                            </select>
+                            <select
+                              value={virtualMode.patternSwitcher?.gateB?.mode || 'consec'}
+                              onChange={e => {
+                                const val = e.target.value as 'consec' | 'total';
+                                updateVS({
+                                  patternSwitcher: {
+                                    ...virtualMode.patternSwitcher!,
+                                    gateB: { ...virtualMode.patternSwitcher!.gateB!, mode: val }
+                                  }
+                                });
+                              }}
+                              className="bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-white text-[9px]"
+                              style={{ background: '#0f172a', color: '#fff' }}
+                            >
+                              <option value="consec">Consecutive</option>
+                              <option value="total">Total</option>
+                            </select>
+                            <span className="text-gray-400">Target:</span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={99}
+                              value={virtualMode.patternSwitcher?.gateB?.threshold ?? 2}
+                              onChange={e => {
+                                const val = Math.max(1, +e.target.value || 1);
+                                updateVS({
+                                  patternSwitcher: {
+                                    ...virtualMode.patternSwitcher!,
+                                    gateB: { ...virtualMode.patternSwitcher!.gateB!, threshold: val }
+                                  }
+                                });
+                              }}
+                              className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px]"
+                              style={{ background: '#0f172a', color: '#fff' }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const curIn = Boolean(virtualMode.patternSwitcher?.gateB?.inEnabled);
+                                updateVS({
+                                  patternSwitcher: {
+                                    ...virtualMode.patternSwitcher!,
+                                    gateB: { ...virtualMode.patternSwitcher!.gateB!, inEnabled: !curIn }
+                                  }
+                                });
+                              }}
+                              className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-all ${
+                                virtualMode.patternSwitcher?.gateB?.inEnabled ? 'bg-orange-500 text-black' : 'bg-white/5 text-gray-400'
+                              }`}
+                            >
+                              IN
+                            </button>
+                            {virtualMode.patternSwitcher?.gateB?.inEnabled && (
+                              <>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={99}
+                                  value={virtualMode.patternSwitcher?.gateB?.inTrades ?? 5}
+                                  onChange={e => {
+                                    const val = Math.max(1, +e.target.value || 1);
+                                    updateVS({
+                                      patternSwitcher: {
+                                        ...virtualMode.patternSwitcher!,
+                                        gateB: { ...virtualMode.patternSwitcher!.gateB!, inTrades: val }
+                                      }
+                                    });
+                                  }}
+                                  className="w-10 bg-slate-900 border border-orange-500/50 rounded px-1 py-0.5 text-center text-white text-[9px]"
+                                  style={{ background: '#0f172a', color: '#fff' }}
+                                />
+                                <span className="text-gray-400">trades</span>
+                              </>
+                            )}
+                            <span className="text-gray-400">in virtual → REAL</span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 text-[9px] pt-1.5 border-t border-white/5">
+                            <span className="text-gray-400">Switch Real → Gate B Virtual on:</span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={99}
+                              value={virtualMode.patternSwitcher?.gateB?.realReturnThreshold ?? 1}
+                              onChange={e => {
+                                const val = Math.max(1, +e.target.value || 1);
+                                updateVS({
+                                  patternSwitcher: {
+                                    ...virtualMode.patternSwitcher!,
+                                    gateB: { ...virtualMode.patternSwitcher!.gateB!, realReturnThreshold: val }
+                                  }
+                                });
+                              }}
+                              className="w-10 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-center text-white text-[9px]"
+                              style={{ background: '#0f172a', color: '#fff' }}
+                            />
+                            {(["consec", "total"] as const).map(m => (
+                              <button
+                                key={m}
+                                type="button"
+                                onClick={() => updateVS({
+                                  patternSwitcher: {
+                                    ...virtualMode.patternSwitcher!,
+                                    gateB: { ...virtualMode.patternSwitcher!.gateB!, realReturnMode: m }
+                                  }
+                                })}
+                                className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-all ${
+                                  (virtualMode.patternSwitcher?.gateB?.realReturnMode || 'consec') === m ? 'bg-orange-500 text-black' : 'bg-white/5 text-gray-400'
+                                }`}
+                              >
+                                {m === 'consec' ? 'Streak' : 'Total'}
+                              </button>
+                            ))}
+                            <select
+                              value={virtualMode.patternSwitcher?.gateB?.realReturnTriggerType || 'wins'}
+                              onChange={e => {
+                                const val = e.target.value as 'wins' | 'losses' | 'trades';
+                                updateVS({
+                                  patternSwitcher: {
+                                    ...virtualMode.patternSwitcher!,
+                                    gateB: { ...virtualMode.patternSwitcher!.gateB!, realReturnTriggerType: val }
+                                  }
+                                });
+                              }}
+                              className="bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-white text-[9px]"
+                              style={{ background: '#0f172a', color: '#fff' }}
+                            >
+                              <option value="wins">Wins</option>
+                              <option value="losses">Losses</option>
+                              <option value="trades">Trades</option>
+                            </select>
+                            <span className="text-gray-400">in real</span>
+                          </div>
+                          <div className="text-[8px] text-amber-400/90 italic pt-0.5">
+                            Cycles between Gate B Virtual ↔ Real until main Start Real → Switch to Virtual returns to Gate A.
+                          </div>
+                        </div>
+                        )}
+                      </div>
+                    </div>
                   )}
                 </div>
 
